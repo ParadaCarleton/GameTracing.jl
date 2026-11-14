@@ -286,25 +286,38 @@ function recorded_points(
         max_steps::Integer,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    stepped = curve_step!(tracer, max_steps, context)
+    stepped = capped_step!(tracer, maximum_precision, max_steps, context)
     while !is_error(stepped)
-        point = tracer.point
-        if last(point) >= maximum_precision
-            landed = landed_point(tracer, maximum_precision, context)
-            if is_error(landed)
-                return Err(unwrap_error(landed))
-            end
-            point = unwrap(landed)
-        end
+        point = unwrap(stepped)
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
         end
         if last(point) >= maximum_precision
             return Err(TraceFailure(NoConvergence, stopped_context(:maximum_precision, point, tracer.steps, context, (; maximum_precision))))
         end
-        stepped = curve_step!(tracer, max_steps, context)
+        stepped = capped_step!(tracer, maximum_precision, max_steps, context)
     end
     return Err(unwrap_error(stepped))
+end
+
+"""
+The point of `tracer`'s next accepted step (`curve_step!`), or of its landing at `maximum_precision` once the step
+passes it (`landed_point`), or the failure of either.
+"""
+function capped_step!(
+        tracer::CurveTracing.Tracer{E},
+        maximum_precision::E,
+        max_steps::Integer,
+        context::NamedTuple,
+    )::Result{Vector{E}, TraceFailure} where {E <: Real}
+    stepped = curve_step!(tracer, max_steps, context)
+    if is_error(stepped)
+        return Err(unwrap_error(stepped))
+    end
+    if last(tracer.point) < maximum_precision
+        return Ok(tracer.point)
+    end
+    return landed_point(tracer, maximum_precision, context)
 end
 
 """
@@ -334,20 +347,25 @@ function landed_lambdas(
         precisions::AbstractVector{E},
         max_steps::Integer,
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
-    logits = Vector{Vector{E}}(undef, length(precisions))
+    points = Vector{Vector{E}}(undef, length(precisions))
     for index in sortperm(precisions)
-        context = (; lam = precisions[index])
-        while last(tracer.point) < precisions[index]
-            stepped = curve_step!(tracer, max_steps, context)
-            if is_error(stepped)
-                return Err(unwrap_error(stepped))
-            end
-        end
-        landed = landed_point(tracer, precisions[index], context)
+        landed = stepped_landing!(tracer, precisions[index], max_steps)
         if is_error(landed)
             return Err(unwrap_error(landed))
         end
-        logits[index] = collect(logits_at(unwrap(landed)))
+        points[index] = unwrap(landed)
     end
-    return Ok(logits)
+    return Ok([collect(logits_at(point)) for point in points])
+end
+
+"""The point of `tracer`'s branch at `precision`: steps until one reaches it, then lands there (`landed_point`)."""
+function stepped_landing!(tracer::CurveTracing.Tracer{E}, precision::E, max_steps::Integer)::Result{Vector{E}, TraceFailure} where {E <: Real}
+    context = (; lam = precision)
+    while last(tracer.point) < precision
+        stepped = curve_step!(tracer, max_steps, context)
+        if is_error(stepped)
+            return Err(unwrap_error(stepped))
+        end
+    end
+    return landed_point(tracer, precision, context)
 end

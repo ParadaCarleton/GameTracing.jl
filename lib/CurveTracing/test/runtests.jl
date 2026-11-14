@@ -1,0 +1,295 @@
+using CurveTracing
+using CurveTracing: AcceptAll, weighted_angle
+using CommonSolve: init, step!
+using ErrorTypes: is_error, unwrap, unwrap_error
+using LinearSolve: LUFactorization
+using Supposition: Data, @check
+using Test: @test, @testset, @test_throws
+
+"""A circle of `radius` about the origin in `(x, y)`: `H = x² + y² - radius²`."""
+struct Circle{E <: Real}
+    radius::E
+end
+
+function (circle::Circle{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    residual[1] = point[1]^2 + point[2]^2 - circle.radius^2
+    jacobian[1, 1] = 2 * point[1]
+    jacobian[1, 2] = 2 * point[2]
+    return nothing
+end
+
+"""The fold `H = u² - λ` in `(u, λ)`: λ turns back at `u = 0`."""
+struct Fold end
+
+function (::Fold)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    residual[1] = point[1]^2 - point[2]
+    jacobian[1, 1] = 2 * point[1]
+    jacobian[1, 2] = -one(E)
+    return nothing
+end
+
+"""An unfolded pitchfork `H = u³ - λ u - tilt` in `(u, λ)`; its upper branch passes close to the lower ones near `λ = 0`."""
+struct Pitchfork{E <: Real}
+    tilt::E
+end
+
+function (pitchfork::Pitchfork{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    (u, lambda) = (point[1], point[2])
+    residual[1] = u^3 - lambda * u - pitchfork.tilt
+    jacobian[1, 1] = 3 * u^2 - lambda
+    jacobian[1, 2] = -u
+    return nothing
+end
+
+"""`H = u - λ` up to `λ = edge`; past it a NaN residual, or a zero Jacobian when `singular`."""
+struct Edge{E <: Real}
+    edge::E
+    singular::Bool
+end
+
+function (edge::Edge{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    past = point[2] > edge.edge
+    residual[1] = past && !edge.singular ? E(NaN32) : point[1] - point[2]
+    jacobian[1, 1] = past && edge.singular ? zero(E) : one(E)
+    jacobian[1, 2] = past && edge.singular ? zero(E) : -one(E)
+    return nothing
+end
+
+"""`H = u - λ`, whose `bad_call`-th evaluation is NaN, or has a zero Jacobian when `singular`."""
+mutable struct Flaky
+    calls::Int
+    const bad_call::Int
+    const singular::Bool
+end
+
+function (flaky::Flaky)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    flaky.calls += 1
+    bad = flaky.calls == flaky.bad_call
+    residual[1] = bad && !flaky.singular ? E(NaN32) : point[1] - point[2]
+    jacobian[1, 1] = bad && flaky.singular ? zero(E) : one(E)
+    jacobian[1, 2] = bad && flaky.singular ? zero(E) : -one(E)
+    return nothing
+end
+
+"""A `converged` that never holds."""
+never(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = false
+
+"""The bytes a warm `step!` of `tracer` allocates."""
+function warm_bytes(tracer::Tracer)::Int
+    step!(tracer)
+    return @allocated step!(tracer)
+end
+
+"""Converged when the correction moved no coordinate more than `tolerance`."""
+struct Settled{E <: Real}
+    tolerance::E
+end
+
+function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {E <: Real}
+    largest = zero(E)
+    for index in eachindex(previous, iterate)
+        largest = max(largest, abs(iterate[index] - previous[index]))
+    end
+    return largest <= settled.tolerance
+end
+
+"""A `PseudoArclength` in `E` with Euclidean metrics and the given overrides."""
+function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::PseudoArclength where {E <: Real}
+    defaults = (;
+        corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2),
+        step_control = StepControl(;
+            nominal_contraction = one(E) / 4, nominal_distance = one(E) / 10, nominal_turn = one(E) / 10,
+            growth_limit = E(2), max_step = one(E) / 2,
+        ),
+        metric = FixedWeights(ones(E, 2)),
+        linear_solver = LUFactorization(),
+        max_refusals = 60,
+    )
+    return PseudoArclength(; merge(defaults, overrides)...)
+end
+
+"""Accepted points of `steps` steps of `problem` under `settings`, or the failure."""
+function traced(problem::CurveProblem, settings::PseudoArclength, steps::Integer; first_step::Real)::Any
+    started = init(problem, settings; first_step)
+    is_error(started) && return started
+    tracer = unwrap(started)
+    points = [copy(tracer.point)]
+    for _ in 1:steps
+        outcome = step!(tracer)
+        is_error(outcome) && return outcome
+        push!(points, copy(tracer.point))
+    end
+    return points
+end
+
+@testset "CurveTracing $E" for E in (Float32, Float64)
+    tolerance = sqrt(eps(E))
+
+    @testset "circle: every point on it, the angle rising around a full turn" begin
+        points = traced(CurveProblem(Circle(E(2)), E[2, 0], E[0, 1]), algorithm(E), 80; first_step = E(1) / 10)
+        @test all(point -> abs(hypot(point...) - 2) <= 10 * tolerance, points)
+        angles = [atan(point[2], point[1]) for point in points]
+        unwrapped = cumsum([zero(E); mod.(diff(angles) .+ E(π), 2 * E(π)) .- E(π)])
+        @test all(>(0), diff(unwrapped))
+        @test last(unwrapped) > 2 * E(π)
+    end
+
+    @testset "fold: the trace turns at u = 0 and keeps the branch" begin
+        points = traced(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E), 60; first_step = E(1) / 10)
+        us = first.(points)
+        @test all(>(0), diff(us))
+        @test last(us) > 1
+        @test minimum(last.(points)) >= -tolerance
+        @test all(point -> abs(point[1]^2 - point[2]) <= 10 * tolerance, points)
+    end
+
+    @testset "unfolded pitchfork: the upper branch stays up" begin
+        points = traced(CurveProblem(Pitchfork(E(1) / 100), E[1, 1 - E(1) / 100], E[0, -1]), algorithm(E), 60; first_step = E(1) / 10)
+        @test all(point -> point[1] > 0, points)
+        @test last(points)[2] < -1
+    end
+
+    @testset "fold traced backward stays on its branch" begin
+        points = traced(CurveProblem(Fold(), E[1, 1], E[-1, -1]), algorithm(E), 60; first_step = E(1) / 10)
+        @test all(<(0), diff(first.(points)))
+    end
+
+    @testset "the step grows by at most growth_limit and stays under max_step" begin
+        tracer = unwrap(init(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E); first_step = E(1) / 100))
+        for _ in 1:30
+            before = tracer.step_length
+            step = unwrap(step!(tracer))
+            @test step.step_length <= before
+            @test tracer.step_length <= 2 * step.step_length * (1 + eps(E))
+            @test tracer.step_length <= one(E) / 2
+        end
+    end
+
+    @testset "point weights reweight at every accepted point" begin
+        visits = Ref(0)
+        scale! = (weights, point) -> (visits[] += 1; fill!(weights, one(eltype(point))))
+        settings = algorithm(E; metric = PointWeights(scale!), turn_metric = FixedWeights(ones(E, 2)))
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10))
+        before = visits[]
+        unwrap(step!(tracer))
+        @test visits[] == before + 1
+    end
+
+    @testset "a refusing accept ends the trace Unresolved" begin
+        settings = algorithm(E; accept = (start, predicted, corrected) -> false)
+        failure = unwrap_error(traced(CurveProblem(Fold(), E[-1, 1], E[1, -1]), settings, 1; first_step = E(1) / 10))
+        @test failure.cause == Unresolved
+        @test failure.last_refusal == AcceptRefused
+    end
+
+    @testset "max_refusals ends the trace TooManyRefusals" begin
+        settings = algorithm(E; accept = (start, predicted, corrected) -> false, max_refusals = 3)
+        failure = unwrap_error(traced(CurveProblem(Fold(), E[-1, 1], E[1, -1]), settings, 1; first_step = E(1) / 10))
+        @test failure.cause == TooManyRefusals
+        @test failure.refusals == 4
+    end
+
+    @testset "a NaN residual refuses the step until the trace is unresolved" begin
+        failure = unwrap_error(traced(CurveProblem(Edge(one(E), false), E[0, 0], E[1, 1]), algorithm(E), 200; first_step = E(1) / 4))
+        @test failure.cause == Unresolved
+        @test failure.last_refusal == NotFiniteResidual
+    end
+
+    @testset "a singular bordered system refuses the step" begin
+        failure = unwrap_error(traced(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E), 200; first_step = E(1) / 4))
+        @test failure.cause == Unresolved
+        @test failure.last_refusal == SingularSystem
+    end
+
+    # Calls: 1 at the start, 2 for the one correction a line needs, 3 at the corrected point for its tangent.
+    @testset "a non-finite system at the corrected point refuses the step" begin
+        settings = algorithm(E; max_refusals = 0)
+        failure = unwrap_error(traced(CurveProblem(Flaky(0, 3, false), E[0, 0], E[1, 1]), settings, 1; first_step = E(1) / 10))
+        @test failure.last_refusal == NotFiniteResidual
+    end
+
+    @testset "a singular tangent system at the corrected point refuses the step" begin
+        settings = algorithm(E; max_refusals = 0)
+        failure = unwrap_error(traced(CurveProblem(Flaky(0, 3, true), E[0, 0], E[1, 1]), settings, 1; first_step = E(1) / 10))
+        @test failure.last_refusal == SingularSystem
+    end
+
+    @testset "one Newton iteration is not enough on a curved branch" begin
+        settings = algorithm(E; corrector = Newton(; max_iterations = 1, converged = never, contraction_limit = one(E)), max_refusals = 0)
+        failure = unwrap_error(traced(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings, 1; first_step = E(1) / 10))
+        @test failure.last_refusal == NotConverged
+    end
+
+    @testset "a tiny contraction limit refuses as diverging" begin
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = never, contraction_limit = eps(E)), max_refusals = 0)
+        failure = unwrap_error(traced(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings, 1; first_step = E(1) / 10))
+        @test failure.last_refusal == Diverging
+    end
+
+    @testset "a tight turn limit refuses a long step as too fast" begin
+        control = StepControl(;
+            nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = one(E) / 1000, growth_limit = E(2),
+            max_step = E(1),
+        )
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = one(E)))
+        step = unwrap(step!(tracer))
+        @test step.refusals > 0
+        @test step.turn <= 2 * control.nominal_turn
+    end
+
+    @testset "a custom distance measures corrections" begin
+        largest = (from, to) -> maximum(abs.(to .- from))
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, distance = largest))
+        step = unwrap(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10)) |> step!)
+        @test step.first_correction > 0
+    end
+
+    @testset "a NaN start fails NotFiniteStart" begin
+        failure = unwrap_error(init(CurveProblem(Edge(-one(E), false), E[0, 0], E[1, 1]), algorithm(E); first_step = one(E)))
+        @test failure.cause == NotFiniteStart
+    end
+
+    @testset "a direction normal to the tangent fails SingularStart" begin
+        failure = unwrap_error(init(CurveProblem(Circle(one(E)), E[1, 0], E[1, 0]), algorithm(E); first_step = one(E)))
+        @test failure.cause == SingularStart
+    end
+
+    @testset "argument checks" begin
+        @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E))
+        @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = zero(E))
+        nominal = (; nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = nothing)
+        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E) / 2, max_step = one(E))
+        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = zero(E))
+        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = one(E), refusal_factor = 0)
+        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = one(E), shrink = 1)
+        @test_throws ArgumentError StepControl(;
+            nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = -one(E), growth_limit = one(E),
+            max_step = one(E),
+        )
+        @test_throws ArgumentError algorithm(E; resolution_ulps = -1)
+        @test_throws ArgumentError algorithm(E; max_refusals = -1)
+        @test_throws ArgumentError init(CurveProblem(Fold(), E[0, 0], E[1, 0]), algorithm(E); first_step = zero(E))
+        @test_throws DimensionMismatch init(CurveProblem(Fold(), E[0, 0], E[1, 0, 0]), algorithm(E); first_step = one(E))
+        @test AcceptAll()(E[0], E[0], E[0])
+        @test weighted_angle(ones(E, 2), E[1, 0], E[0, 1]) ≈ E(π) / 2
+    end
+
+    @testset "a warm step allocates nothing" begin
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        @test warm_bytes(tracer) == 0
+    end
+
+    @testset "property: random ellipses keep every point on the curve" begin
+        ratio = Data.Floats{E}(; minimum = E(1) / 4, maximum = E(4), nans = false, infs = false)
+        @check max_examples = 30 function on_ellipse(stretch = ratio)
+            ellipse! = (residual, jacobian, point) -> begin
+                residual[1] = point[1]^2 + (point[2] / stretch)^2 - 1
+                jacobian[1, 1] = 2 * point[1]
+                jacobian[1, 2] = 2 * point[2] / stretch^2
+                nothing
+            end
+            points = traced(CurveProblem(ellipse!, E[1, 0], E[0, 1]), algorithm(E), 20; first_step = E(1) / 10)
+            points isa Vector && all(point -> abs(point[1]^2 + (point[2] / stretch)^2 - 1) <= 100 * tolerance, points)
+        end
+    end
+end

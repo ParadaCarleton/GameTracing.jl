@@ -2,7 +2,7 @@ using BifurcationKit: BifurcationKit
 using LinearAlgebra: dot
 using Logging: @debug
 """
-    CorrectorSettings{E}(; reach, max_kl, logit_tolerance, pin_tolerance, contraction_limit,
+    CorrectorSettings{E}(; reach, max_kl, logit_tolerance, settle_ulps, pin_tolerance, contraction_limit,
                          contraction_offset, newton_iterations)
 
 The corrector's controls (`CorrectorReach`); `nothing` switches a limit off. `reach`: a corrector that moves a logit
@@ -12,6 +12,8 @@ the predictor passes this is refused. A step's turn is limited by `StepControl`'
 
 Convergence is scale-free, as in Gambit's tracer (path.cc:372, `c_tol` in log probabilities): a Newton correction that
 moves no logit more than `logit_tolerance`, at a relative precision within the relative `pin_tolerance` of its pin.
+Each logit also gets `settle_ulps` ulps of its own size (`logit_corrections`). A Float32 logit near 1e3 rounds by
+1.2e-4, past the default tolerance, so without this allowance a Float32 trace stalls near λ 300 on 20x20 games.
 A correction that moves the logits more than `contraction_limit` times the one before it (plus `logit_tolerance`
 times `contraction_offset`) fails to contract; BifurcationKit's step growth reads the same rate (`corrector_quality`).
 `newton_iterations`: Newton iterations per corrector (BifurcationKit's default, 25; Gambit's is 100).
@@ -23,6 +25,8 @@ Base.@kwdef struct CorrectorSettings{E <: Real}
     shift_share::E = 0.5f0
     max_kl::Union{Nothing, E} = nothing
     logit_tolerance::E = 1.0f-4
+    # 16 ulps: Float32 solved 102 of 110 LogitNash benchmark games at maxregret 1e-4 (4 ulps: 98; none: 80). Float64 unchanged.
+    settle_ulps::Int = 16
     pin_tolerance::E = 1.0f-5
     contraction_limit::Union{Nothing, E} = 0.6f0
     contraction_offset::E = 0.1f0
@@ -36,6 +40,21 @@ function logit_change(from::AbstractVector{E}, to::AbstractVector{E})::E where {
         largest = max(largest, abs(last(to) * to[index] - last(from) * from[index]))
     end
     return largest
+end
+
+"""
+`(correction, excess)` of a Newton step from `from` to `to`, two points `[w; ρ]`: the largest change of a logit
+(`logit_change`), and the largest change past `relative` times that logit's own size, which the settle test reads.
+"""
+function logit_corrections(from::AbstractVector{E}, to::AbstractVector{E}, relative::E)::NTuple{2, E} where {E <: Real}
+    largest, excess = zero(E), zero(E)
+    for index in firstindex(to):(lastindex(to) - 1)
+        later, earlier = last(to) * to[index], last(from) * from[index]
+        change = abs(later - earlier)
+        largest = max(largest, change)
+        excess = max(excess, change - relative * max(abs(later), abs(earlier)))
+    end
+    return (largest, excess)
 end
 
 """
@@ -310,7 +329,7 @@ end
 
 `check`'s verdict on a Newton `iterate` that its other tests let `proceed`, in logits `z = ρ w`. The first iterate
 is the solve's start and never settles. Each later one is a correction `Δz` from the iterate before: it settles
-(`NewtonConverged`) when `settled`. A correction past `contraction_limit` times the one before (plus
+(`NewtonConverged`) when `settled` by the part of `Δz` past each logit's `settle_ulps`. A correction past `contraction_limit` times the one before (plus
 `logit_tolerance · contraction_offset`) fails to contract, Gambit's test (path.cc), and stops the corrector, so the
 step halves. Two in a row, each larger than the predictor's own move, are suspected noise (`noise`); the
 step still halves. A second such solve before any settles, its correction at least half the suspect's, confirms it
@@ -328,13 +347,14 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
         restate!(check; correction = E(NaN32), stalls = 0, settled_here = false)
         return proceed
     end
-    correction, before = logit_change(check.iterate, iterate.x), check.state[].correction
+    before = check.state[].correction
+    correction, excess = logit_corrections(check.iterate, iterate.x, check.settings.settle_ulps * eps(E))
     copyto!(check.iterate, iterate.x)
     restate!(check; correction)
     if !proceed
         return false
     end
-    if settled(check, iterate, correction)
+    if settled(check, iterate, excess)
         restate!(check; settled_here = true, noise = NoiseRecord(check.state[].noise.accuracy, nothing))
         return BifurcationKit.NewtonConverged()
     end
@@ -378,8 +398,9 @@ function pin_residual(iterate::NamedTuple)::eltype(iterate.x)
 end
 
 """
-Whether `check`'s corrector has settled `iterate`, reached by a Newton `correction` in logits: the correction moved no
-logit more than `logit_tolerance`, and the relative precision `ρ` is at its pin to the relative `pin_tolerance`. The pin
+Whether `check`'s corrector has settled `iterate`, reached by a Newton step whose largest logit move past that
+logit's `settle_ulps` is `correction` (`logit_corrections`): the step moved no logit more than `logit_tolerance` past
+its rounding, and the relative precision `ρ` is at its pin to the relative `pin_tolerance`. The pin
 needs its own test: a far target's logits barely move with `ρ`, so they would pass a `ρ` that never left its start.
 """
 function settled(check::CorrectorReach, iterate::I, correction::Real)::Bool where {

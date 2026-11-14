@@ -23,7 +23,7 @@ end
 
 The `logits` of a trace at its target precision, a root of the game in effect there, the continuation `steps` it took
 over every segment, and `logit_accuracy`: the largest last Newton correction in logits of any accepted point, at most
-the corrector's `logit_tolerance`.
+the corrector's `logit_tolerance` plus `settle_ulps` ulps of the largest logit it moved.
 """
 struct Traced{E <: Real}
     logits::Vector{E}

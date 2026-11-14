@@ -136,6 +136,28 @@ end
     @test !GameTracing.settled(check, (; x = point, res_f = zeros(Float32, 3)), nextfloat(tolerance))
 end
 
+@testset "a correction within a logit's settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
+    settings = CorrectorSettings{element}()
+    tolerance, ulps = settings.logit_tolerance, settings.settle_ulps
+    # A logit whose rounding alone passes the tolerance: 4 ulps of it is 256 tolerances.
+    large = 64 * tolerance / eps(element)
+    rounded = large + 4 * eps(large)
+    @test GameTracing.logit_change(element[large, 1], element[rounded, 1]) > tolerance
+    @test last(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element))) <= 0
+    @test first(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element))) == rounded - large
+    # Twice the logit's allowance leaves an excess of about one allowance, 1024 tolerances.
+    beyond = large + 2 * ulps * eps(element) * large
+    @test last(GameTracing.logit_corrections(element[large, 1], element[beyond, 1], ulps * eps(element))) > tolerance
+    # A small logit has no allowance to speak of: twice the tolerance stays past it.
+    @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element))) > tolerance
+    # The corrector settles the large logit's rounding at its first correction.
+    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), element[large, 0, 1], element[large, 0, 1], one(element))
+    GameTracing.restate!(check; predictor_move = one(element))
+    verdicts = [GameTracing.corrected!(check, (; x = element[first, 0, 1], res_f = zeros(element, 3), step), true) for (step, first) in ((0, large), (1, rounded))]
+    @test last(verdicts) isa GameTracing.BifurcationKit.NewtonConverged
+    @test check.state[].correction == rounded - large
+end
+
 """A fresh `CorrectorReach` whose current step's predictor moved the logits `predictor_move`."""
 function fresh_check(predictor_move::E)::GameTracing.CorrectorReach{GameTracing.AcceptAll, E} where {E <: Real}
     check = GameTracing.CorrectorReach(

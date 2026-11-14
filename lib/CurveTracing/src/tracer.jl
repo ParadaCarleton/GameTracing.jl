@@ -136,11 +136,11 @@ function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailu
         refusals += 1
         last_refusal = attempt.refusal
         if refusals > algorithm.max_refusals
-            return Err(StepFailure(TooManyRefusals, last_refusal, tracer.step_length, refusals))
+            break
         end
         tracer.step_length *= algorithm.step_control.shrink
     end
-    return
+    return Err(StepFailure(TooManyRefusals, last_refusal, tracer.step_length, refusals))
 end
 
 """One step attempt's verdict and, when accepted, its corrector's figures, its turn and its step factor."""

@@ -1,6 +1,6 @@
 using CommonSolve: CommonSolve
 using CurveTracing: CurveTracing
-using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
+using ErrorTypes: Err, Ok, Result, @?, is_error, unwrap, unwrap_error
 using LinearSolve: LinearSolve
 using Logging: @debug
 
@@ -147,7 +147,7 @@ end
 
 """
 CurveTracing's `init` of the principal branch of `gains` in `[w; λ]`: a `Tracer` from the flat start toward rising
-`λ`, or the `StepFailure` there (`start_failure`).
+`λ`, or the `StepFailure` there (`start_context`).
 """
 function curve_init(
         gains::NormalFormGains,
@@ -164,29 +164,24 @@ function curve_init(
     )
 end
 
-"""The `TraceFailure` of CurveTracing's start `failure` over `width` logits: `NotFinite` or `Singular`, with `context`."""
-function start_failure(failure::CurveTracing.StepFailure{E}, width::Integer, context::NamedTuple)::TraceFailure where {E <: Real}
-    cause = ifelse(failure.cause == CurveTracing.NotFiniteStart, NotFinite, Singular)
-    return TraceFailure(cause, (; context..., reason = :start, precision = zero(E), logits = zeros(E, width), steps = 0))
+"""The context of CurveTracing's start `failure` over `width` logits: `context` and the flat start."""
+function start_context(failure::CurveTracing.StepFailure{E}, width::Integer, context::NamedTuple)::NamedTuple where {E <: Real}
+    return (; context..., reason = Symbol(failure.cause), precision = zero(E), logits = zeros(E, width), steps = 0)
 end
 
 """
-The `TraceFailure` of a trace that stopped at `point = [w; λ]` after `steps` steps for `reason`: `cause`, with
-`context`, the precision and logits there, the steps and `details`.
+The context of a trace that stopped at `point = [w; λ]` after `steps` steps for `reason`: `context`, the precision
+and logits there, the steps and `details`.
 """
-function curve_failure(
-        cause::TraceCause,
+function stopped_context(
         reason::Symbol,
         point::AbstractVector{E},
         steps::Integer,
         context::NamedTuple,
         details::NamedTuple,
-    )::TraceFailure where {E <: Real}
+    )::NamedTuple where {E <: Real}
     @debug "trace stopped" _group = :trace reason
-    return TraceFailure(
-        cause,
-        (; context..., reason, precision = last(point), logits = collect(logits_at(point)), steps, details...),
-    )
+    return (; context..., reason, precision = last(point), logits = collect(logits_at(point)), steps, details...)
 end
 
 """
@@ -200,14 +195,14 @@ function curve_step!(
         context::NamedTuple,
     )::Result{CurveTracing.AcceptedStep{E}, TraceFailure} where {E <: Real}
     if tracer.steps >= max_steps
-        return Err(curve_failure(NoConvergence, :max_steps, tracer.point, tracer.steps, context, (;)))
+        return Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
     end
     stepped = CommonSolve.step!(tracer)
     if is_error(stepped)
         failure = unwrap_error(stepped)
         reason = ifelse(failure.cause == CurveTracing.Unresolved, :unresolved_step, :refusals)
         details = (; failure.last_refusal, failure.step_length, failure.refusals)
-        return Err(curve_failure(TraceStuck, reason, tracer.point, tracer.steps, context, details))
+        return Err(TraceFailure(TraceStuck, stopped_context(reason, tracer.point, tracer.steps, context, details)))
     end
     @debug "trace point" _group = :trace step = tracer.steps precision = last(tracer.point) step_length = unwrap(stepped).step_length
     return Ok(unwrap(stepped))
@@ -220,7 +215,8 @@ The point of `tracer`'s branch at precision `precision`, which its last step rea
 function landed_point(tracer::CurveTracing.Tracer{E}, precision::E, context::NamedTuple)::Result{Vector{E}, TraceFailure} where {E <: Real}
     landed = CurveTracing.land!(tracer, length(tracer.point), precision)
     if is_error(landed)
-        return Err(curve_failure(TraceStuck, :landing, tracer.point, tracer.steps, context, (; target = precision, refusal = unwrap_error(landed))))
+        details = (; target = precision, refusal = unwrap_error(landed))
+        return Err(TraceFailure(TraceStuck, stopped_context(:landing, tracer.point, tracer.steps, context, details)))
     end
     return Ok(unwrap(landed))
 end
@@ -239,7 +235,9 @@ function engine_points(
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
     started = curve_init(gains, settings)
     if is_error(started)
-        return Err(start_failure(unwrap_error(started), logit_count(gains), context))
+        failure = unwrap_error(started)
+        cause = ifelse(failure.cause == CurveTracing.NotFiniteStart, NotFinite, Singular)
+        return Err(TraceFailure(cause, start_context(failure, logit_count(gains), context)))
     end
     return recorded_points(unwrap(started), BranchRecorder(gains, one(E), tolerance), maximum_precision, settings.max_steps, context)
 end
@@ -256,17 +254,13 @@ function recorded_points(
     while !is_error(stepped)
         point = tracer.point
         if last(point) >= maximum_precision
-            landed = landed_point(tracer, maximum_precision, context)
-            if is_error(landed)
-                return Err(unwrap_error(landed))
-            end
-            point = unwrap(landed)
+            point = @? landed_point(tracer, maximum_precision, context)
         end
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
         end
         if last(point) >= maximum_precision
-            return Err(curve_failure(NoConvergence, :maximum_precision, point, tracer.steps, context, (; maximum_precision)))
+            return Err(TraceFailure(NoConvergence, stopped_context(:maximum_precision, point, tracer.steps, context, (; maximum_precision))))
         end
         stepped = curve_step!(tracer, max_steps, context)
     end
@@ -287,7 +281,9 @@ function engine_lambdas(
     end
     started = curve_init(gains, settings)
     if is_error(started)
-        return Err(start_failure(unwrap_error(started), logit_count(gains), (;)))
+        failure = unwrap_error(started)
+        cause = ifelse(failure.cause == CurveTracing.NotFiniteStart, NotFinite, Singular)
+        return Err(TraceFailure(cause, start_context(failure, logit_count(gains), (;))))
     end
     return landed_lambdas(unwrap(started), precisions, settings.max_steps)
 end
@@ -302,16 +298,9 @@ function landed_lambdas(
     for index in sortperm(precisions)
         context = (; lam = precisions[index])
         while last(tracer.point) < precisions[index]
-            stepped = curve_step!(tracer, max_steps, context)
-            if is_error(stepped)
-                return Err(unwrap_error(stepped))
-            end
+            @? curve_step!(tracer, max_steps, context)
         end
-        landed = landed_point(tracer, precisions[index], context)
-        if is_error(landed)
-            return Err(unwrap_error(landed))
-        end
-        logits[index] = collect(logits_at(unwrap(landed)))
+        logits[index] = collect(logits_at(@? landed_point(tracer, precisions[index], context)))
     end
     return Ok(logits)
 end

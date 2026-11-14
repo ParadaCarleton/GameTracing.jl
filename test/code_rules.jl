@@ -31,8 +31,8 @@ using Corset:
     where_return_sites
 
 # Corset classifies `Head{…}` by `Head` alone (`names_concrete_type`): a concrete struct head is concrete, whatever
-# the parameters. `TraceResult{E}` (an ErrorTypes `Result`) is generic in `E`, and `TraceFailure{C}` in its context,
-# with no abstract supertype to name instead; a rename would not change the head's kind.
+# the parameters. `TraceResult{E}` (an ErrorTypes `Result`) is generic in `E`, with no
+# abstract supertype to name instead; a rename would not change the head's kind.
 const GENERIC_RESULTS = (
     "trace.jl trace_endpoint",
     "trace.jl reached_state",
@@ -44,8 +44,6 @@ const GENERIC_RESULTS = (
     "logit_solve.jl last_profile",
     "logit_solve.jl logit_solve_branch",
     "logit_solve.jl logit_solve",
-    "curve_engine.jl curve_failure",
-    "curve_engine.jl start_failure",
 )
 const SOURCE_DIRECTORIES = ("src", "test", "benchmark")
 

@@ -161,8 +161,12 @@ end
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = CurveSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
-    @test unwrap_error(logit_solve(NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0])); settings = CurveSettings{element}())).cause ==
-        GameTracing.NotFinite
+    poisoned = NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0]))
+    @test unwrap_error(logit_solve(poisoned; settings = CurveSettings{element}())).cause == GameTracing.NotFinite
+    @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = CurveSettings{element}())).context.reason == :NotFiniteStart
+    # Step control without its turn and contraction terms still solves.
+    plain = CurveSettings{element}(; nominal_contraction = nothing, nominal_turn = nothing)
+    @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
     @test_throws ArgumentError logit_solve_lambda(gains, -1; settings = CurveSettings{element}())
 end
 

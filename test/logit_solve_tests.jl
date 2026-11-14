@@ -97,6 +97,22 @@ end
     @test failure.context.reason == :maximum_precision
 end
 
+# The 3x3 game of seed 8 in benchmark/logitnash_speed.jl. Its Float32 logits pass 1e3 before maxregret 1e-4, where their
+# rounding passes `logit_tolerance`; before `settle_ulps` that trace stalled at λ ≈ 541 (TraceStuck).
+@testset "logit_solve meets maxregret where the logits' rounding passes the corrector's tolerance ($element)" for element in (Float32, widen(Float32))
+    rng = Xoshiro(8)
+    payoffs = ntuple(_ -> randn(rng, (3, 3)), 2)
+    gains = NormalFormGains(map(table -> element.(table), payoffs))
+    result = logit_solve(gains; maxregret = 1.0f-4)
+    @test !is_error(result)
+    if !is_error(result)
+        (; logits) = unwrap(result)
+        @test GameTracing.max_regret(gains, logits) <= 1.0f-4 * GameTracing.payoff_range(gains)
+        # Logits whose Float32 ulp passes the tolerance: the stall's cause.
+        @test maximum(abs, logits) * eps(Float32) > CorrectorSettings{Float32}().logit_tolerance
+    end
+end
+
 @testset "the solvers return the trace's failure when it runs out of steps" begin
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
     settings = TraceSettings{Float32}(; max_steps = 1)

@@ -177,7 +177,7 @@ end
     # A failed double trace throws here, an error of this testset.
     doubled = unwrap(traced_result(UNFOLDED_PITCHFORK_GAME, precision * float(1), double_settings))
     double_logits = doubled.logits
-    @test doubled.logit_accuracy <= double_settings.corrector.logit_tolerance
+    @test doubled.logit_accuracy <= settle_bound(double_settings.corrector, double_logits)
     @test agreeing(first_choices(double_logits), oracle.first_choices)
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
     # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under growth 1.1 this includes
@@ -187,7 +187,7 @@ end
         @test !is_error(result)
         if !is_error(result)
             (; logits, logit_accuracy) = unwrap(result)
-            @test logit_accuracy <= settings.corrector.logit_tolerance
+            @test logit_accuracy <= settle_bound(settings.corrector, logits)
             @test agreeing(first_choices(logits), oracle.first_choices)
             @test agreeing(first_choices(logits), first_choices(double_logits))
             @test maximum(abs, logits .- double_logits) <= logit_accuracy + doubled.logit_accuracy

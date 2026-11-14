@@ -279,9 +279,17 @@ function newton_correction(pass::Any, logits::AbstractVector, precision::P)::typ
     return maximum(abs, (one(gains.logit_slope) .- gains.logit_slope) \ (root .- gains.response))
 end
 
-"""Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `logit_tolerance`."""
+"""
+The largest last correction a settled corrector leaves at `logits`: `logit_tolerance` plus twice its `settle_ulps` ulps
+of the largest logit, as a step may land on a logit larger than the one it left.
+"""
+function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::E where {E <: Real}
+    return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * E(maximum(abs, logits))
+end
+
+"""Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `settle_bound`."""
 function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::TraceSettings)::Bool
-    return newton_correction(pass, logits, precision) <= settings.corrector.logit_tolerance
+    return newton_correction(pass, logits, precision) <= settle_bound(settings.corrector, logits)
 end
 
 """`(; residual, jacobian)` of the branch equations `z - T(z, λ) = 0` of `pass` at `point = [z; λ]`."""

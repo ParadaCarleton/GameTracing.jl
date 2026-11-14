@@ -46,7 +46,8 @@ end
     Tracer
 
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
-the metrics' weights at `point`, the accepted `steps`, and work arrays for the bordered systems. `init` builds one and
+the metrics' weights at `point`, the accepted `steps`, and work arrays for the bordered systems; `row` is the
+border row of the next bordered system. `init` builds one and
 `step!` advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
@@ -61,6 +62,7 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
     const residual::Vector{E}
     const jacobian::Matrix{E}
     const bordered::Matrix{E}
+    const row::Vector{E}
     const rhs::Vector{E}
     const predicted::Vector{E}
     const iterate::Vector{E}
@@ -85,11 +87,12 @@ function CommonSolve.init(
     length(problem.direction) == size || throw(DimensionMismatch("start and direction differ in length"))
     bordered = zeros(E, size, size)
     rhs = zeros(E, size)
-    linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver)
+    # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
+    linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
         problem, algorithm, collect(problem.start), zeros(E, size), E(first_step), 0, zeros(E, size), zeros(E, size),
-        zeros(E, size - 1), zeros(E, size - 1, size), bordered, rhs, zeros(E, size), zeros(E, size), zeros(E, size),
-        zeros(E, size), linear,
+        zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
+        zeros(E, size), zeros(E, size), linear,
     )
     return started(tracer)
 end
@@ -164,6 +167,7 @@ control's factor.
 """
 function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
+    tracer.row .= tracer.weights .* tracer.tangent
     corrected = correct!(tracer)
     if corrected.refusal != NoRefusal
         return corrected
@@ -187,8 +191,9 @@ function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
 end
 
 """
-Newton's method from `tracer.predicted` on `[H(x); ⟨t, x - x̂⟩] = 0`, leaving its last iterate in `tracer.iterate`.
-An `Attempt` with the iterations, the contraction and the first correction once `converged` holds, else its refusal.
+Newton's method from `tracer.predicted` on `[H(x); r ⋅ (x - x̂)] = 0`, `r = tracer.row`, leaving its last iterate in
+`tracer.iterate`. An `Attempt` with the iterations, the contraction and the first correction once `converged` holds,
+else its refusal.
 """
 function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     (; corrector) = tracer.algorithm
@@ -200,9 +205,9 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         if !(all(isfinite, tracer.residual) && all(isfinite, tracer.jacobian))
             return refused(E, NotFiniteResidual)
         end
-        border!(tracer, tracer.weights, tracer.tangent)
+        border!(tracer)
         @views tracer.rhs[1:width] .= .-tracer.residual
-        tracer.rhs[end] = -weighted_offset(tracer.weights, tracer.tangent, tracer.predicted, tracer.iterate)
+        tracer.rhs[end] = -row_offset(tracer.row, tracer.predicted, tracer.iterate)
         if !bordered_solve!(tracer, tracer.candidate)
             return refused(E, SingularSystem)
         end
@@ -241,17 +246,18 @@ The tangent at the point whose Jacobian `tracer.jacobian` holds, into `tracer.ca
 the solve succeeded.
 """
 function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Bool where {E <: Real}
-    border!(tracer, tracer.turn_weights, previous)
+    tracer.row .= tracer.turn_weights .* previous
+    border!(tracer)
     fill!(tracer.rhs, zero(E))
     tracer.rhs[end] = one(E)
     return bordered_solve!(tracer, tracer.candidate)
 end
 
-"""Fill `tracer.bordered` with the Jacobian over the row `weights ∘ row`."""
-function border!(tracer::Tracer{E}, weights::AbstractVector{E}, row::AbstractVector{E})::Matrix{E} where {E <: Real}
+"""Fill `tracer.bordered` with the Jacobian over `tracer.row`."""
+function border!(tracer::Tracer{E})::Matrix{E} where {E <: Real}
     width = length(tracer.residual)
     @views tracer.bordered[1:width, :] .= tracer.jacobian
-    @views tracer.bordered[end, :] .= weights .* row
+    @views tracer.bordered[end, :] .= tracer.row
     return tracer.bordered
 end
 
@@ -310,4 +316,27 @@ function accept_point!(tracer::Tracer{E}, factor::E)::Tracer{E} where {E <: Real
     tracer.step_length = min(tracer.step_length / factor, algorithm.step_control.max_step)
     tracer.steps += 1
     return tracer
+end
+
+"""
+    land!(tracer, coordinate, value)
+
+The curve's point where `x[coordinate] = value`, near `tracer.point`, or the `Refusal` that stopped its corrector. The
+predictor follows the tangent from `tracer.point` to that hyperplane, and Newton's method corrects on it. A tangent
+parallel to the hyperplane refuses as `SingularSystem`. The tracer keeps its point, tangent and step.
+"""
+function land!(tracer::Tracer{E}, coordinate::Integer, value::Real)::Result{Vector{E}, Refusal} where {E <: Real}
+    slope = tracer.tangent[coordinate]
+    if iszero(slope)
+        return Err(SingularSystem)
+    end
+    tracer.predicted .= tracer.point .+ ((E(value) - tracer.point[coordinate]) / slope) .* tracer.tangent
+    tracer.predicted[coordinate] = E(value)
+    fill!(tracer.row, zero(E))
+    tracer.row[coordinate] = one(E)
+    corrected = correct!(tracer)
+    if corrected.refusal != NoRefusal
+        return Err(corrected.refusal)
+    end
+    return Ok(copy(tracer.iterate))
 end

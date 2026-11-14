@@ -38,6 +38,9 @@ while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
 end
 ```
 
+`land!(tracer, coordinate, value)` corrects onto the curve's point where one coordinate takes `value`, near the last
+point. Use it to stop at an exact parameter value that a step passed.
+
 ## Settings
 
 - `Newton`: the corrector's iterations, convergence test, contraction limit and correction length.

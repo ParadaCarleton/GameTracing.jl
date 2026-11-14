@@ -244,6 +244,26 @@ end
         @test step.first_correction > 0
     end
 
+    @testset "land! corrects onto a coordinate's value and keeps the tracer's point" begin
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        step!(tracer)
+        before = copy(tracer.point)
+        for value in (E(1) / 4, E(1) / 20)
+            landed = unwrap(land!(tracer, 2, value))
+            @test landed[2] ≈ value atol = 10 * eps(E)
+            @test landed[1] ≈ sqrt(1 - value^2) atol = 100 * tolerance
+        end
+        @test tracer.point == before
+    end
+
+    @testset "land! refuses a hyperplane along the tangent, and a corrector that does not converge" begin
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        @test unwrap_error(land!(tracer, 1, one(E) / 2)) == SingularSystem
+        stubborn = algorithm(E; corrector = Newton(; max_iterations = 2, converged = never, contraction_limit = one(E)))
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), stubborn; first_step = E(1) / 10))
+        @test unwrap_error(land!(tracer, 2, one(E) / 4)) == NotConverged
+    end
+
     @testset "a NaN start fails NotFiniteStart" begin
         failure = unwrap_error(init(CurveProblem(Edge(-one(E), false), E[0, 0], E[1, 1]), algorithm(E); first_step = one(E)))
         @test failure.cause == NotFiniteStart

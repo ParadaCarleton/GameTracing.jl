@@ -3,7 +3,7 @@ using LinearAlgebra: dot
 using Logging: @debug
 """
     CorrectorSettings{E}(; reach, max_kl, logit_tolerance, settle_ulps, pin_tolerance, contraction_limit,
-                         contraction_offset, newton_iterations)
+                         contraction_offset, noise_ratio, newton_iterations)
 
 The corrector's controls (`CorrectorReach`); `nothing` switches a limit off. `reach`: a corrector that moves a logit
 further from the predictor than this times the predictor's own largest logit move is refused. `shift_share`: the share
@@ -16,6 +16,9 @@ Each logit also gets `settle_ulps` ulps of its own size (`logit_corrections`). A
 1.2e-4, past the default tolerance, so without this allowance a Float32 trace stalls near λ 300 on 20x20 games.
 A correction that moves the logits more than `contraction_limit` times the one before it (plus `logit_tolerance`
 times `contraction_offset`) fails to contract; BifurcationKit's step growth reads the same rate (`corrector_quality`).
+Suspected noise is confirmed when the halved step's stalled correction is at least `noise_ratio` of the suspect's
+(`corrected!`). Halving keeps noise's corrections alike (ratio 1); it halves those of a predictor off the branch's
+tangent (ratio 1/2) and quarters those of its curvature (1/4). The default, `1/√2`, splits 1/2 from 1.
 `newton_iterations`: Newton iterations per corrector (BifurcationKit's default, 25; Gambit's is 100).
 """
 Base.@kwdef struct CorrectorSettings{E <: Real}
@@ -30,6 +33,8 @@ Base.@kwdef struct CorrectorSettings{E <: Real}
     pin_tolerance::E = 1.0f-5
     contraction_limit::Union{Nothing, E} = 0.6f0
     contraction_offset::E = 0.1f0
+    # At 1/2 the 3x3x3 benchmark game of seed 5 confirmed noise at a ratio of 0.5007, at λ 3.24 in Float64 too.
+    noise_ratio::E = inv(sqrt(2.0f0))
     newton_iterations::Int = 25
 end
 
@@ -332,8 +337,9 @@ is the solve's start and never settles. Each later one is a correction `Δz` fro
 (`NewtonConverged`) when `settled` by the part of `Δz` past each logit's `settle_ulps`. A correction past `contraction_limit` times the one before (plus
 `logit_tolerance · contraction_offset`) fails to contract, Gambit's test (path.cc), and stops the corrector, so the
 step halves. Two in a row, each larger than the predictor's own move, are suspected noise (`noise`); the
-step still halves. A second such solve before any settles, its correction at least half the suspect's, confirms it
-(`noise_confirmed`): halving shrinks the corrections of a predictor past a fold, not noise. Every later solve refuses.
+step still halves. A second such solve before any settles, its correction at least `noise_ratio` of the suspect's,
+confirms it (`noise_confirmed`): halving shrinks the corrections of a predictor past a fold, not noise. Every later
+solve refuses.
 """
 function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::Bool)::Union{
         Bool,
@@ -378,9 +384,8 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
     if restate!(check; stalls = check.state[].stalls + 1).stalls < 2
         return true
     end
-    # Halving leaves noise's corrections alike (ratio 1) and shrinks an overshot predictor's by 1/4; 1/2 splits them.
     suspect = check.state[].noise.suspect
-    confirmed = !isnothing(suspect) && correction >= suspect.correction / 2
+    confirmed = !isnothing(suspect) && correction >= check.settings.noise_ratio * suspect.correction
     @debug "corrector stopped" _group = :trace reason = :noise confirmed correction predictor_move = check.state[].predictor_move
     restate!(
         check;

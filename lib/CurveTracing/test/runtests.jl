@@ -1,5 +1,5 @@
 using CurveTracing
-using CurveTracing: AcceptAll, weighted_angle
+using CurveTracing: AcceptAll, factored_sign, weighted_angle
 using CommonSolve: init, step!
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LinearSolve: LUFactorization
@@ -28,7 +28,10 @@ function (::Fold)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, poin
     return nothing
 end
 
-"""An unfolded pitchfork `H = u³ - λ u - tilt` in `(u, λ)`; its upper branch passes close to the lower ones near `λ = 0`."""
+"""
+A pitchfork `H = u³ - λ u - tilt` in `(u, λ)`. Untilted, the branch `u = 0` crosses a simple bifurcation point at the
+origin; tilted, its upper branch passes close to the lower ones near `λ = 0`.
+"""
 struct Pitchfork{E <: Real}
     tilt::E
 end
@@ -102,6 +105,7 @@ function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::Pse
             growth_limit = E(2), max_step = one(E) / 2,
         ),
         metric = FixedWeights(ones(E, 2)),
+        orientation = DeterminantSign(; persistence = 2),
         linear_solver = LUFactorization(),
         max_refusals = 60,
     )
@@ -147,6 +151,31 @@ end
         points = traced(CurveProblem(Pitchfork(E(1) / 100), E[1, 1 - E(1) / 100], E[0, -1]), algorithm(E), 60; first_step = E(1) / 10)
         @test all(point -> point[1] > 0, points)
         @test last(points)[2] < -1
+    end
+
+    @testset "a bifurcation crossing is refused persistence times, then accepted as flipped" begin
+        for persistence in (0, 2)
+            settings = algorithm(E; orientation = DeterminantSign(; persistence))
+            tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
+            @test tracer.orientation == 1
+            steps = [unwrap(step!(tracer)) for _ in 1:12]
+            crossing = only(findall(step -> step.flipped, steps))
+            @test sum(step -> step.refusals, steps[1:crossing]) >= persistence
+            @test persistence > 0 || steps[crossing].refusals == 0
+            @test tracer.orientation == -1
+            @test tracer.flip_streak == 0
+            @test tracer.point[1] == 0
+            @test tracer.point[2] > 0
+        end
+    end
+
+    @testset "without an orientation check, a bifurcation crossing goes unremarked" begin
+        settings = algorithm(E; orientation = nothing)
+        tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
+        steps = [unwrap(step!(tracer)) for _ in 1:6]
+        @test !any(step -> step.flipped || step.refusals > 0, steps)
+        @test tracer.orientation == 0
+        @test tracer.point[2] > 0
     end
 
     @testset "fold traced backward stays on its branch" begin
@@ -286,12 +315,14 @@ end
             nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = -one(E), growth_limit = one(E),
             max_step = one(E),
         )
+        @test_throws ArgumentError DeterminantSign(; persistence = -1)
         @test_throws ArgumentError algorithm(E; resolution_ulps = -1)
         @test_throws ArgumentError algorithm(E; max_refusals = -1)
         @test_throws ArgumentError init(CurveProblem(Fold(), E[0, 0], E[1, 0]), algorithm(E); first_step = zero(E))
         @test_throws DimensionMismatch init(CurveProblem(Fold(), E[0, 0], E[1, 0, 0]), algorithm(E); first_step = one(E))
         @test AcceptAll()(E[0], E[0], E[0])
         @test weighted_angle(ones(E, 2), E[1, 0], E[0, 1]) ≈ E(π) / 2
+        @test factored_sign(E[1 0; 0 NaN32], [1, 2]) == 0
     end
 
     @testset "a warm step allocates nothing" begin
@@ -312,4 +343,12 @@ end
             points isa Vector && all(point -> abs(point[1]^2 + (point[2] / stretch)^2 - 1) <= 100 * tolerance, points)
         end
     end
+end
+
+@testset "CurveTracing BigFloat: the orientation check runs on a generic LU" begin
+    settings = algorithm(BigFloat; orientation = DeterminantSign(; persistence = 0))
+    tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
+    steps = [unwrap(step!(tracer)) for _ in 1:6]
+    @test count(step -> step.flipped, steps) == 1
+    @test tracer.orientation == -1
 end

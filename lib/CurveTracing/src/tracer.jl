@@ -8,17 +8,17 @@ one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not fini
 """
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
 was not finite at an iterate (`NotFiniteResidual`), a bordered system was singular (`SingularSystem`), `accept`
-returned `false` (`AcceptRefused`), or step control found the step too long (`TooFast`). `NoRefusal` marks an
-accepted attempt.
+returned `false` (`AcceptRefused`), step control found the step too long (`TooFast`), or the orientation check found
+a changed sign (`OrientationFlip`). `NoRefusal` marks an accepted attempt.
 """
-@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast
+@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip
 
 """
-    AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
+    AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn, flipped)
 
 One accepted step: its predictor's length in the step metric, the corrector's iterations, the refusals before it, the
-ratio of the corrector's second correction to its first (NaN after one correction), the first correction's length
-and the tangent's turn in radians.
+ratio of the corrector's second correction to its first (NaN after one correction), the first correction's length,
+the tangent's turn in radians, and whether it accepted a changed orientation sign (`DeterminantSign`).
 """
 struct AcceptedStep{E <: Real}
     step_length::E
@@ -27,6 +27,7 @@ struct AcceptedStep{E <: Real}
     contraction::E
     first_correction::E
     turn::E
+    flipped::Bool
 end
 
 """
@@ -46,9 +47,9 @@ end
     Tracer
 
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
-the metrics' weights at `point`, the accepted `steps`, and work arrays for the bordered systems; `row` is the
-border row of the next bordered system. `init` builds one and
-`step!` advances it. Read its fields; do not write them.
+the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the `flip_streak` of
+orientation refusals in the current run of steps that each met one, the metrics' weights at `point`, and work arrays; `row` is the border row of the next bordered system. `init` builds one and `step!`
+advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
     const problem::P
@@ -57,6 +58,8 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
     const tangent::Vector{E}
     step_length::E
     steps::Int
+    orientation::Int8
+    flip_streak::Int
     const weights::Vector{E}
     const turn_weights::Vector{E}
     const residual::Vector{E}
@@ -68,6 +71,8 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
     const iterate::Vector{E}
     const previous::Vector{E}
     const candidate::Vector{E}
+    const oriented::Matrix{E}
+    const pivots::Vector{LinearAlgebra.BlasInt}
     const linear::C
 end
 
@@ -90,9 +95,9 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), E(first_step), 0, zeros(E, size), zeros(E, size),
-        zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
-        zeros(E, size), zeros(E, size), linear,
+        problem, algorithm, collect(problem.start), zeros(E, size), E(first_step), 0, Int8(0), 0, zeros(E, size),
+        zeros(E, size), zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size),
+        zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
     )
     return started(tracer)
 end
@@ -110,6 +115,7 @@ function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tr
         return Err(StepFailure(SingularStart, NoRefusal, tracer.step_length, 0))
     end
     tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
+    tracer.orientation = orientation_sign!(tracer, algorithm.orientation, tracer.tangent)
     return Ok(tracer)
 end
 
@@ -122,21 +128,27 @@ refused attempt shrinks the step and tries again.
 function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailure{E}} where {E <: Real}
     (; algorithm) = tracer
     refusals = 0
+    flips = tracer.flip_streak
     last_refusal = NoRefusal
     while true
         tracer.predicted .= tracer.point .+ tracer.step_length .* tracer.tangent
         if unresolved(tracer.point, tracer.predicted, algorithm.resolution_ulps)
             return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
         end
-        attempt = attempt_step!(tracer)
+        attempt = attempt_step!(tracer, flips)
         if attempt.refusal == NoRefusal
             taken = tracer.step_length
-            accept_point!(tracer, attempt.factor)
+            flipped = attempt.orientation != tracer.orientation
+            tracer.flip_streak = ifelse(flipped || flips == tracer.flip_streak, 0, flips)
+            accept_point!(tracer, attempt)
             return Ok(
-                AcceptedStep(taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn)
+                AcceptedStep(
+                    taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn, flipped,
+                )
             )
         end
         refusals += 1
+        flips += attempt.refusal == OrientationFlip
         last_refusal = attempt.refusal
         if refusals > algorithm.max_refusals
             break
@@ -146,7 +158,10 @@ function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailu
     return Err(StepFailure(TooManyRefusals, last_refusal, tracer.step_length, refusals))
 end
 
-"""One step attempt's verdict and, when accepted, its corrector's figures, its turn and its step factor."""
+"""
+One step attempt's verdict and, when accepted, its corrector's figures, its turn, its step factor and the orientation
+sign at its point.
+"""
 struct Attempt{E <: Real}
     refusal::Refusal
     iterations::Int
@@ -154,18 +169,19 @@ struct Attempt{E <: Real}
     first_correction::E
     turn::E
     factor::E
+    orientation::Int8
 end
 
 """A refused `Attempt` for `refusal`."""
 function refused(::Type{E}, refusal::Refusal)::Attempt{E} where {E <: Real}
-    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), E(NaN32))
+    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), E(NaN32), Int8(0))
 end
 
 """
-Correct `tracer.predicted`, then test the corrected point: `accept`, a finite system there, its tangent, and step
-control's factor.
+Correct `tracer.predicted`, then test the corrected point: `accept`, a finite system there, its tangent, step
+control's factor and its orientation sign, after a streak of `flips` orientation refusals.
 """
-function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
+function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
     tracer.row .= tracer.weights .* tracer.tangent
     corrected = correct!(tracer)
@@ -187,7 +203,53 @@ function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     if factor > algorithm.step_control.refusal_factor
         return refused(E, TooFast)
     end
-    return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor)
+    orientation = orientation_sign!(tracer, algorithm.orientation, tracer.candidate)
+    if flip_refused(algorithm.orientation, tracer.orientation, orientation, flips)
+        return refused(E, OrientationFlip)
+    end
+    return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
+end
+
+"""The sign of `det([J; tᵀ])` for `J = tracer.jacobian` and `t = tangent` under `check`; zero without a check."""
+orientation_sign!(::Tracer, ::Nothing, ::AbstractVector)::Int8 = Int8(0)
+
+function orientation_sign!(tracer::Tracer{E}, ::DeterminantSign, tangent::AbstractVector{E})::Int8 where {E <: Real}
+    width = length(tracer.residual)
+    @views tracer.oriented[1:width, :] .= tracer.jacobian
+    @views tracer.oriented[end, :] .= tangent
+    (factors, pivots) = factor!(tracer.oriented, tracer.pivots)
+    return factored_sign(factors, pivots)
+end
+
+"""`matrix`'s pivoted LU factors in place and its row swaps: LAPACK's `getrf!` for BLAS floats, else `lu!`."""
+function factor!(
+        matrix::Matrix{E},
+        pivots::Vector{LinearAlgebra.BlasInt},
+    )::Tuple{Matrix{E}, Vector{LinearAlgebra.BlasInt}} where {E <: LinearAlgebra.BlasReal}
+    LinearAlgebra.LAPACK.getrf!(matrix, pivots; check = false)
+    return (matrix, pivots)
+end
+
+function factor!(matrix::Matrix{E}, ::Vector{LinearAlgebra.BlasInt})::Tuple{Matrix{E}, Vector{LinearAlgebra.BlasInt}} where {E <: Real}
+    factored = LinearAlgebra.lu!(matrix; check = false)
+    return (factored.factors, factored.ipiv)
+end
+
+"""The sign of a determinant from its pivoted LU `factors` and row swaps `pivots`; zero for a zero or NaN pivot."""
+function factored_sign(factors::AbstractMatrix{E}, pivots::AbstractVector{<:Integer})::Int8 where {E <: Real}
+    signed = Int8(1)
+    for index in eachindex(pivots)
+        pivot = factors[index, index]
+        signed *= (Int8(pivot > 0) - Int8(pivot < 0)) * ifelse(pivots[index] == index, Int8(1), Int8(-1))
+    end
+    return signed
+end
+
+"""Whether `check` refuses a step whose orientation sign went from `before` to `after`, after `flips` such refusals."""
+flip_refused(::Nothing, ::Int8, ::Int8, ::Integer)::Bool = false
+
+function flip_refused(check::DeterminantSign, before::Int8, after::Int8, flips::Integer)::Bool
+    return after != before && flips < check.persistence
 end
 
 """
@@ -225,7 +287,7 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         end
         before = correction
         if corrector.converged(tracer.previous, tracer.iterate, tracer.residual)
-            return Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32))
+            return Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32), Int8(0))
         end
     end
     return refused(E, NotConverged)
@@ -306,14 +368,18 @@ function factor_term(nominal::E, measured::E)::E where {E <: Real}
     return isnan(measured) ? zero(E) : measured / nominal
 end
 
-"""Move `tracer` to its corrected point with the new tangent, reweight both metrics there and size the next step."""
-function accept_point!(tracer::Tracer{E}, factor::E)::Tracer{E} where {E <: Real}
+"""
+Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, reweight both metrics there and
+size the next step.
+"""
+function accept_point!(tracer::Tracer{E}, attempt::Attempt{E})::Tracer{E} where {E <: Real}
     (; algorithm) = tracer
     copyto!(tracer.point, tracer.iterate)
+    tracer.orientation = attempt.orientation
     reweight!(tracer.weights, algorithm.metric, tracer.point)
     reweight!(tracer.turn_weights, algorithm.turn_metric, tracer.point)
     tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
-    tracer.step_length = min(tracer.step_length / factor, algorithm.step_control.max_step)
+    tracer.step_length = min(tracer.step_length / attempt.factor, algorithm.step_control.max_step)
     tracer.steps += 1
     return tracer
 end

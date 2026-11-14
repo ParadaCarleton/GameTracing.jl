@@ -1,0 +1,53 @@
+# CurveTracing.jl
+
+Trace one solution curve of `H(x) = 0`, `H: ℝⁿ⁺¹ → ℝⁿ`, by pseudo-arclength continuation.
+
+Each step predicts along the tangent, corrects by Newton's method on the hyperplane normal to it, and sizes the
+next step from the corrector and the tangent's turn (Allgower and Georg, *Numerical Continuation Methods*, §6.1).
+The caller owns the loop and its stopping rule. Failures are values (ErrorTypes.jl), and a warm `step!` allocates
+nothing.
+
+```julia
+using CurveTracing
+using CommonSolve: init, step!
+using ErrorTypes: is_error, unwrap
+using LinearSolve: LUFactorization
+
+# The unit circle: H(x, y) = x² + y² - 1, with its Jacobian, from one call.
+function circle!(residual, jacobian, point)
+    residual[1] = point[1]^2 + point[2]^2 - 1
+    jacobian[1, 1], jacobian[1, 2] = 2point[1], 2point[2]
+    return nothing
+end
+
+settled(previous, iterate, residual) = maximum(abs, iterate - previous) <= 1e-10
+
+algorithm = PseudoArclength(;
+    corrector = Newton(; max_iterations = 8, converged = settled, contraction_limit = 0.5),
+    step_control = StepControl(;
+        nominal_contraction = 0.25, nominal_distance = 0.1, nominal_turn = 0.1, growth_limit = 2.0, max_step = 0.5,
+    ),
+    metric = FixedWeights([1.0, 1.0]),
+    linear_solver = LUFactorization(),
+    max_refusals = 60,
+)
+tracer = unwrap(init(CurveProblem(circle!, [1.0, 0.0], [0.0, 1.0]), algorithm; first_step = 0.1))
+while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
+    outcome = step!(tracer)
+    is_error(outcome) && break
+end
+```
+
+## Settings
+
+- `Newton`: the corrector's iterations, convergence test, contraction limit and correction length.
+- `StepControl`: the nominal contraction, first correction and turn, the growth limit and the largest step.
+- `FixedWeights`, `PointWeights`: the step metric and the turn metric. `PointWeights` reweights at each accepted
+  point.
+- `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.
+- `accept`: a test on each converged point.
+
+## Failures
+
+`init` fails `NotFiniteStart` or `SingularStart`. `step!` fails `Unresolved` when the predictor falls below the
+float type's resolution, and `TooManyRefusals` past `max_refusals`. Each failure names the last `Refusal`.

@@ -42,6 +42,31 @@ jobs:
         if: matrix.version == '1.13'
         with:
           coverage: false
+  curve-tracing:
+    name: CurveTracing - Julia 1.13
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.13"
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+        with:
+          project: lib/CurveTracing
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          project: lib/CurveTracing
+      - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: lib/CurveTracing/src
+      - name: Require 100% line coverage
+        run: |
+          sudo apt-get install -y lcov
+          lcov --summary lcov.info 2>&1 | tee summary.txt
+          awk '/^SF:/ {file = substr($0, 4)} /^DA:[0-9]+,0$/ {print "uncovered:", file, substr($0, 4)}' lcov.info
+          grep -Eq 'lines\.*: 100\.0%' summary.txt
   lint:
     runs-on: ubuntu-latest
     steps:

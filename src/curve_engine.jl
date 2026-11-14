@@ -1,18 +1,21 @@
 using CommonSolve: CommonSolve
 using CurveTracing: CurveTracing
-using ErrorTypes: Err, Ok, Result, @?, is_error, unwrap, unwrap_error
+using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
 using LinearSolve: LinearSolve
+using LogExpFunctions: logistic
 using Logging: @debug
 
 """
     CurveSettings{E}(; first_step, max_step, max_steps, logit_tolerance, settle_ulps, reach, newton_iterations,
                      contraction_limit, nominal_contraction, nominal_distance, nominal_turn, growth_limit,
-                     max_refusals, resolution_ulps, linear_solver)
+                     orientation, max_refusals, resolution_ulps, geometry, linear_solver)
 
 The controls of a trace on CurveTracing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
-trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`. Its steps are Euclidean arclength there.
+trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
-- `first_step`, `max_step`: the first and the largest step.
+- `geometry`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
+  accepted point.
+- `first_step`, `max_step`: the first and the largest step in that norm.
 - `max_steps`: accepted steps before the trace fails as `NoConvergence`.
 - `logit_tolerance`, `settle_ulps`: the corrector converges on a correction that moves no logit more than
   `logit_tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`).
@@ -21,6 +24,9 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`. It
 - `newton_iterations`, `contraction_limit`: CurveTracing's `Newton`, its corrections in logits (`logit_change`).
 - `nominal_contraction`, `nominal_distance`, `nominal_turn`, `growth_limit`: CurveTracing's `StepControl`. The
   distance is the first correction's largest logit move; `nothing` drops a term.
+- `orientation`: CurveTracing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
+  changes, as a step that runs back along the branch; a change that persists is a bifurcation crossing. `nothing`
+  switches the check off.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `resolution_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -38,13 +44,16 @@ struct CurveSettings{E <: Real, L} <: EngineSettings{E}
     nominal_distance::Union{Nothing, E}
     nominal_turn::Union{Nothing, E}
     growth_limit::E
+    orientation::Union{Nothing, CurveTracing.DeterminantSign}
     max_refusals::Int
     resolution_ulps::Int
+    geometry::TraceGeometry{E}
     linear_solver::L
 end
 
-# Defaults: the faster of two step-control arms on one game per LogitNash benchmark size (nominal distance 1 and turn
-# 0.3 rad, growth 4, against 0.4, 0.2 and 2); `benchmark/logitnash_speed.jl` compares the engines.
+# Defaults: the cheapest step control that keeps Gambit's branch on ten benchmark games where others left it. Nominal
+# distance 1 jumped branches on two 5x5x5 games; 0.5 did not, at about the same step count as 1.
+# Without the orientation check, five of them ran back along the branch. `benchmark/logitnash_speed.jl` compares engines.
 function CurveSettings{E}(;
         first_step::Real = 0.03f0,
         max_step::Real = 1.0f7,
@@ -55,17 +64,20 @@ function CurveSettings{E}(;
         newton_iterations::Integer = 8,
         contraction_limit::Real = 0.5f0,
         nominal_contraction::Union{Nothing, Real} = 0.25f0,
-        nominal_distance::Union{Nothing, Real} = 1.0f0,
+        nominal_distance::Union{Nothing, Real} = 0.5f0,
         nominal_turn::Union{Nothing, Real} = 0.3f0,
         growth_limit::Real = 4.0f0,
+        orientation::Union{Nothing, CurveTracing.DeterminantSign} = CurveTracing.DeterminantSign(; persistence = 4),
         max_refusals::Integer = 80,
         resolution_ulps::Integer = 4,
+        geometry::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::CurveSettings{E, L} where {E <: Real, L}
     return CurveSettings{E, L}(
         E(first_step), E(max_step), Int(max_steps), E(logit_tolerance), Int(settle_ulps), E(reach), Int(newton_iterations),
         E(contraction_limit), optional_limit(E, nominal_contraction), optional_limit(E, nominal_distance),
-        optional_limit(E, nominal_turn), E(growth_limit), Int(max_refusals), Int(resolution_ulps), linear_solver,
+        optional_limit(E, nominal_turn), E(growth_limit), orientation, Int(max_refusals),
+        Int(resolution_ulps), geometry, linear_solver,
     )
 end
 
@@ -73,6 +85,29 @@ end
 optional_limit(::Type{<:Real}, ::Nothing)::Nothing = nothing
 function optional_limit(::Type{E}, limit::Real)::E where {E <: Real}
     return E(limit)
+end
+
+"""
+    GeometryWeights(geometry)
+
+CurveTracing's `PointWeights` for `geometry` over points `[w; λ]`, at precision `λ` in place of the relative one
+(`StepDistance`). Each gap weighs `coordinate_weight`, or for a Fisher distance `state_weight σ(z)σ(-z)` at its logit
+`z = λ w`. The precision weighs `level_weight`, or `1 / (1 + λ)²` for `FisherLogPrecisionDistance`.
+"""
+struct GeometryWeights{E <: Real}
+    geometry::TraceGeometry{E}
+end
+
+function (weighting::GeometryWeights{E})(weights::AbstractVector{E}, point::AbstractVector{E})::AbstractVector{E} where {E <: Real}
+    (; distance, state_weight) = weighting.geometry
+    precision, gaps = last(point), payoff_gaps(point)
+    if distance == FisherDistance || distance == FisherLogPrecisionDistance
+        payoff_gaps(weights) .= state_weight .* logistic.(precision .* gaps) .* logistic.(.-(precision .* gaps))
+    else
+        fill!(payoff_gaps(weights), coordinate_weight(weighting.geometry, length(gaps)))
+    end
+    weights[end] = ifelse(distance == FisherLogPrecisionDistance, inv(one(E) + abs(precision))^2, level_weight(weighting.geometry))
+    return weights
 end
 
 """
@@ -124,8 +159,8 @@ function (within::WithinReach{E})(start::AbstractVector{E}, predicted::AbstractV
     return !(move > 0) || logit_change(predicted, corrected) <= within.reach * move
 end
 
-"""CurveTracing's `PseudoArclength` for `settings` over `width` payoff gaps."""
-function curve_algorithm(settings::CurveSettings{E}, width::Integer)::CurveTracing.PseudoArclength where {E <: Real}
+"""CurveTracing's `PseudoArclength` for `settings`."""
+function curve_algorithm(settings::CurveSettings{E})::CurveTracing.PseudoArclength where {E <: Real}
     return CurveTracing.PseudoArclength(;
         corrector = CurveTracing.Newton(;
             max_iterations = settings.newton_iterations,
@@ -137,7 +172,8 @@ function curve_algorithm(settings::CurveSettings{E}, width::Integer)::CurveTraci
             settings.nominal_contraction, settings.nominal_distance, settings.nominal_turn, settings.growth_limit,
             settings.max_step,
         ),
-        metric = CurveTracing.FixedWeights(ones(E, width + 1)),
+        metric = CurveTracing.PointWeights(GeometryWeights(settings.geometry)),
+        settings.orientation,
         settings.linear_solver,
         accept = WithinReach(settings.reach),
         settings.resolution_ulps,
@@ -159,7 +195,7 @@ function curve_init(
     direction = setindex!(zeros(E, width + 1), one(E), width + 1)
     return CommonSolve.init(
         CurveTracing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
-        curve_algorithm(settings, width);
+        curve_algorithm(settings);
         settings.first_step,
     )
 end
@@ -254,7 +290,11 @@ function recorded_points(
     while !is_error(stepped)
         point = tracer.point
         if last(point) >= maximum_precision
-            point = @? landed_point(tracer, maximum_precision, context)
+            landed = landed_point(tracer, maximum_precision, context)
+            if is_error(landed)
+                return Err(unwrap_error(landed))
+            end
+            point = unwrap(landed)
         end
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
@@ -298,9 +338,16 @@ function landed_lambdas(
     for index in sortperm(precisions)
         context = (; lam = precisions[index])
         while last(tracer.point) < precisions[index]
-            @? curve_step!(tracer, max_steps, context)
+            stepped = curve_step!(tracer, max_steps, context)
+            if is_error(stepped)
+                return Err(unwrap_error(stepped))
+            end
         end
-        logits[index] = collect(logits_at(@? landed_point(tracer, precisions[index], context)))
+        landed = landed_point(tracer, precisions[index], context)
+        if is_error(landed)
+            return Err(unwrap_error(landed))
+        end
+        logits[index] = collect(logits_at(unwrap(landed)))
     end
     return Ok(logits)
 end

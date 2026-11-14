@@ -71,7 +71,7 @@ function max_regret(gains::NormalFormGains, logits::AbstractVector{E})::E where 
 end
 
 """Refuse `settings` whose element type is not `float` of the payoffs' of `gains`: the trace and its profiles run in the settings' type."""
-function require_payoff_type(gains::NormalFormGains, ::TraceSettings{E})::Nothing where {E <: Real}
+function require_payoff_type(gains::NormalFormGains, ::EngineSettings{E})::Nothing where {E <: Real}
     if E != float(eltype(gains))
         throw(ArgumentError("settings trace in $E, but the payoffs are $(eltype(gains)); build the settings in $(float(eltype(gains)))"))
     end
@@ -108,13 +108,13 @@ function (recorder::BranchRecorder{G, E})(logits::AbstractVector{E}, relative_pr
     return max_regret!(recorder.work, recorder.gains, logits) > recorder.tolerance
 end
 
-"""The `LogitQREProfile` at precision `lam` on the principal branch of `gains`, traced with `settings`."""
-function lambda_profile(gains::NormalFormGains{N}, lam::E, settings::TraceSettings{E})::ProfileResult{E, N} where {N, E <: Real}
+"""The logits at precision `lam` on the principal branch of `gains`, traced with `settings`."""
+function lambda_logits(gains::NormalFormGains, lam::E, settings::TraceSettings{E})::Result{Vector{E}, TraceFailure} where {E <: Real}
     result = trace_endpoint(LogitGame(gains, lam), logit_count(gains), settings; context = (; lam))
     if is_error(result)
         return Err(unwrap_error(result))
     end
-    return Ok(LogitQREProfile(gains, lam, unwrap(result).logits))
+    return Ok(unwrap(result).logits)
 end
 
 """
@@ -122,20 +122,37 @@ end
 
 pygambit's `logit_solve_lambda`: the `LogitQREProfile` on the principal branch of the normal-form game `gains`
 (`NormalFormGains`) at each precision in `lam`, a number or a vector, in `lam`'s order, or the first trace's failure.
-`first_step` and `max_accel` set the trace's steps (`gambit_settings`); `settings` replaces them whole. Profiles take
-`float` of the payoffs' element type (Float64 for integer payoffs), and `settings` must share it (`ArgumentError`
-otherwise).
+`first_step` and `max_accel` set the trace's steps (`gambit_settings`); `settings`, an `EngineSettings`, replaces
+them whole. `CurveSettings` trace once and land on each precision at its first crossing; they refuse a negative one.
+Profiles take `float` of the payoffs' element type (Float64 for integer payoffs), and `settings` must share it
+(`ArgumentError` otherwise).
 """
 function logit_solve_lambda(
         gains::NormalFormGains{N},
         lam::AbstractVector{<:Real};
         first_step::Real = 0.03f0,
         max_accel::Real = 1.1f0,
-        settings::TraceSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
+        settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
     )::BranchResult{E, N} where {N, E <: Real}
     require_payoff_type(gains, settings)
-    # ponytail: one trace per precision; one trace stopping at each would save the repeated low-precision steps.
-    results = lambda_profile.((gains,), E.(lam), (settings,))
+    logits = engine_lambdas(gains, E.(lam), settings)
+    if is_error(logits)
+        return Err(unwrap_error(logits))
+    end
+    return Ok(LogitQREProfile.((gains,), E.(lam), unwrap(logits)))
+end
+
+"""
+`logit_solve_lambda` on BifurcationKit: the logits of `gains`' principal branch at each precision of `precisions`, one
+trace each (`lambda_logits`), or the first failure.
+"""
+function engine_lambdas(
+        gains::NormalFormGains,
+        precisions::AbstractVector{E},
+        settings::TraceSettings{E},
+    )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
+    # ponytail: one trace per precision; `CurveSettings` land on each precision in one trace instead.
+    results = lambda_logits.((gains,), precisions, (settings,))
     for result in results
         if is_error(result)
             return Err(unwrap_error(result))
@@ -161,21 +178,35 @@ function settled_points(
         first_step::Real = 0.03f0,
         max_accel::Real = 1.1f0,
         maximum_precision::Real = 1.0f6,
-        settings::TraceSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
+        settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
         maxregret::Real = sqrt(eps(typeof(settings.first_step))),
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
     if !(maxregret > 0)
         throw(ArgumentError("maxregret must be positive; got $maxregret"))
     end
     require_payoff_type(gains, settings)
-    recorder = BranchRecorder(gains, E(maximum_precision), E(maxregret) * E(payoff_range(gains)))
-    result = trace_endpoint(LogitGame(gains, E(maximum_precision)), logit_count(gains), settings; keep_going = recorder, context = (; maxregret))
+    return engine_points(gains, settings, E(maximum_precision), E(maxregret) * E(payoff_range(gains)), (; maxregret))
+end
+
+"""
+`settled_points` on BifurcationKit: the accepted points of a trace of `gains` to `maximum_precision`, to the first
+whose largest regret is at most `tolerance`, or the failure with `context`.
+"""
+function engine_points(
+        gains::NormalFormGains,
+        settings::TraceSettings{E},
+        maximum_precision::E,
+        tolerance::E,
+        context::NamedTuple,
+    )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
+    recorder = BranchRecorder(gains, maximum_precision, tolerance)
+    result = trace_endpoint(LogitGame(gains, maximum_precision), logit_count(gains), settings; keep_going = recorder, context)
     settled = !isempty(recorder.logits) && max_regret!(recorder.work, gains, last(recorder.logits)) <= recorder.tolerance
     if !settled && is_error(result)
         return Err(unwrap_error(result))
     end
     if !settled
-        return Err(TraceFailure(NoConvergence, (; maxregret, maximum_precision, reason = :maximum_precision)))
+        return Err(TraceFailure(NoConvergence, (; context..., maximum_precision, reason = :maximum_precision)))
     end
     return Ok((; recorder.precisions, recorder.logits))
 end

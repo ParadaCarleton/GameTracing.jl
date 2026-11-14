@@ -19,23 +19,29 @@ end
 
 const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
-@testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision" begin
+"""Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and CurveTracing's."""
+function engine_settings(::Type{E})::Vector{Pair{String, EngineSettings{E}}} where {E <: Real}
+    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), 1.1f0), "CurveTracing" => CurveSettings{E}()]
+end
+
+@testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision ($engine)" for (engine, settings) in engine_settings(Float32)
     rng = fresh_rng()
     random_games = [ntuple(_ -> 3 .* randn(rng, counts), length(counts)) for counts in ((3, 3), (2, 3, 2), (4, 2))]
     games = [LOGITNASH_GAMES.prisoners_dilemma, LOGITNASH_GAMES.matching_pennies, ROCK_PAPER_SCISSORS, random_games...]
     for payoffs in games
         gains = NormalFormGains(map(table -> Float32.(table), payoffs))
-        profiles = unwrap(logit_solve_lambda(gains, [1, 4]))
-        @test [profile.lam for profile in profiles] == Float32[1, 4]
+        # Out of order, so a single trace must land on each precision in rising order and return them as given.
+        profiles = unwrap(logit_solve_lambda(gains, [4, 1]; settings))
+        @test [profile.lam for profile in profiles] == Float32[4, 1]
         for profile in profiles
             oracle = gambit_strategies(payoffs, profile.lam)
             @test largest_gap(profile.profile, oracle.strategies) < profile_bound(profile) + GAMBIT_PROBABILITY_TOLERANCE
         end
     end
-    @test length(unwrap(logit_solve_lambda(NormalFormGains(map(table -> Float32.(table), ROCK_PAPER_SCISSORS)), 2))) == 1
+    @test length(unwrap(logit_solve_lambda(NormalFormGains(map(table -> Float32.(table), ROCK_PAPER_SCISSORS)), 2; settings))) == 1
 end
 
-@testset "logit_solve ends at the Nash equilibrium of games whose equilibrium is known" begin
+@testset "logit_solve ends at the Nash equilibrium of games whose equilibrium is known ($engine)" for (engine, settings) in engine_settings(Float32)
     uniform = fill(1.0f0 / 3, 3)
     for (payoffs, equilibrium) in (
             (LOGITNASH_GAMES.prisoners_dilemma, (Float32[0, 1], Float32[0, 1])),
@@ -43,7 +49,7 @@ end
             (ROCK_PAPER_SCISSORS, (uniform, uniform)),
         )
         gains = NormalFormGains(map(table -> Float32.(table), payoffs))
-        result = logit_solve(gains)
+        result = logit_solve(gains; settings)
         @test !is_error(result)
         solved = unwrap(result)
         # Regret sqrt(eps) of the payoff range bounds a dominated strategy's weight near sqrt(eps) of the gap it loses.
@@ -56,18 +62,25 @@ end
 # mixed equilibrium (λ ≈ 47) and the (2, 2, 2) game at the pure profile (2, 1, 2) (λ ≈ 1.5).
 const STUCK_BRANCH_SEED = 0x126798e4d8bed9ec
 
+# A fresh draw of a CI run: its branch folds (λ peaks near 2.72) before it meets maxregret. Its λ-fixed map is singular
+# at the fold, and Gambit's `logit_solve_lambda` returns the first crossing of the end's λ, so neither check holds there.
+const FOLDING_BRANCH_GAME = (
+    Float32[-1.7090197f0 3.4388857f0 4.108635f0; 1.6385761f0 -2.7659307f0 5.6244125f0; -2.6847887f0 -0.8351383f0 -6.3075285f0],
+    Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
+)
+
 """The random games of the branch testset, one per strategy count in `((3, 3), (2, 2, 2))`, drawn from `rng`."""
 function branch_games(rng::AbstractRNG)::AbstractVector
     return [ntuple(_ -> 3 .* randn(rng, Float32, counts), length(counts)) for counts in ((3, 3), (2, 2, 2))]
 end
 
-@testset "logit_solve_branch: each point solves the logit map at its precision, and the last meets maxregret" begin
+@testset "logit_solve_branch: each point solves the logit map at its precision, and the last meets maxregret ($engine)" for (engine, settings) in engine_settings(Float32)
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., branch_games(fresh_rng())...)
+    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, branch_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
-        result = logit_solve_branch(gains)
+        result = logit_solve_branch(gains; settings)
         @test !is_error(result)
         if is_error(result)
             @error "logit_solve_branch failed" payoffs = repr(payoffs) payoff_bits = map(table -> reinterpret.(UInt32, table), payoffs) failure = unwrap_error(result)
@@ -75,35 +88,42 @@ end
         end
         branch = unwrap(result)
         @test all(profile -> profile.lam > 0, branch)
+        @test all(profile -> all(isfinite, profile.logits), branch)
+        @test GameTracing.max_regret(gains, last(branch).logits) <= sqrt(eps(Float32)) * GameTracing.payoff_range(gains)
+        solved = unwrap(logit_solve(gains; settings))
+        @test solved.lam == last(branch).lam
+        # A fold leaves the λ-fixed checks below without a unique answer (`FOLDING_BRANCH_GAME`), even past its peak.
+        folded = !issorted([profile.lam for profile in branch])
+        # A fresh draw may fold too; the fixed game must.
+        @test folded || payoffs !== FOLDING_BRANCH_GAME
+        if folded
+            continue
+        end
         for profile in branch
             @test settled_logits(gains, profile.logits, profile.lam, TraceSettings{eltype(profile.logits)}())
-            @test all(isfinite, profile.logits)
         end
-        @test GameTracing.max_regret(gains, last(branch).logits) <= sqrt(eps(Float32)) * GameTracing.payoff_range(gains)
-        # The last point is on Gambit's branch, logit_solve returns it, and logit_solve_lambda finds it at its precision.
+        # The last point is on Gambit's branch, and logit_solve_lambda finds it at its precision.
         @test largest_gap(last(branch).profile, gambit_strategies(payoffs, last(branch).lam).strategies) <
             profile_bound(last(branch)) + GAMBIT_PROBABILITY_TOLERANCE
-        solved = unwrap(logit_solve(gains))
-        @test solved.lam == last(branch).lam
-        again = only(unwrap(logit_solve_lambda(gains, solved.lam)))
+        again = only(unwrap(logit_solve_lambda(gains, solved.lam; settings)))
         @test largest_gap(again.profile, solved.profile) < profile_bound(again) + profile_bound(solved)
     end
 end
 
-@testset "logit_solve_branch fails NoConvergence when maximum_precision comes before maxregret" begin
+@testset "logit_solve_branch fails NoConvergence when maximum_precision comes before maxregret ($engine)" for (engine, settings) in engine_settings(Float32)
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    failure = unwrap_error(logit_solve_branch(gains; maximum_precision = 1))
+    failure = unwrap_error(logit_solve_branch(gains; maximum_precision = 1, settings))
     @test failure.cause == GameTracing.NoConvergence
     @test failure.context.reason == :maximum_precision
 end
 
 # The 3x3 game of seed 8 in benchmark/logitnash_speed.jl. Its Float32 logits pass 1e3 before maxregret 1e-4, where their
 # rounding passes `logit_tolerance`; before `settle_ulps` that trace stalled at λ ≈ 541 (TraceStuck).
-@testset "logit_solve meets maxregret where the logits' rounding passes the corrector's tolerance ($element)" for element in (Float32, widen(Float32))
+@testset "logit_solve meets maxregret where the logits' rounding passes the corrector's tolerance ($element, $engine)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
     rng = Xoshiro(8)
     payoffs = ntuple(_ -> randn(rng, (3, 3)), 2)
     gains = NormalFormGains(map(table -> element.(table), payoffs))
-    result = logit_solve(gains; maxregret = 1.0f-4)
+    result = logit_solve(gains; maxregret = 1.0f-4, settings)
     @test !is_error(result)
     if !is_error(result)
         (; logits) = unwrap(result)
@@ -115,11 +135,11 @@ end
 
 # The 3x3x3 game of seed 5 in benchmark/logitnash_speed.jl. At λ ≈ 3.24 a halved step's stall shrank to 0.5007 of the
 # one before, which the old 1/2 split confirmed as noise: Float32 and Float64 both failed PrecisionExhausted there.
-@testset "logit_solve passes a stall that halves with the step, on Gambit's branch ($element)" for element in (Float32, widen(Float32))
+@testset "logit_solve passes a stall that halves with the step, on Gambit's branch ($element, $engine)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
     rng = Xoshiro(5)
     payoffs = ntuple(_ -> randn(rng, (3, 3, 3)), 3)
     gains = NormalFormGains(map(table -> element.(table), payoffs))
-    result = logit_solve(gains; maxregret = 1.0f-4)
+    result = logit_solve(gains; maxregret = 1.0f-4, settings)
     @test !is_error(result)
     if !is_error(result)
         profile = unwrap(result)
@@ -128,6 +148,30 @@ end
         oracle = gambit_strategies(payoffs, profile.lam)
         @test largest_gap(profile.profile, oracle.strategies) < profile_bound(profile) + GAMBIT_PROBABILITY_TOLERANCE
     end
+end
+
+@testset "CurveTracing's spent steps, refusals and unresolved steps fail as values ($element)" for element in (Float32, widen(Float32))
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
+    spent = unwrap_error(logit_solve(gains; settings = CurveSettings{element}(; max_steps = 1)))
+    @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
+    @test unwrap_error(logit_solve_lambda(gains, 100; settings = CurveSettings{element}(; max_steps = 1))).context.lam == 100
+    # A first step a hundred times past its nominal distance is refused, and no refusal is allowed.
+    refused = unwrap_error(logit_solve(gains; settings = CurveSettings{element}(; first_step = 100, nominal_distance = 1.0f-2, max_refusals = 0)))
+    @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
+    # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
+    unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = CurveSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
+    @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
+    @test unwrap_error(logit_solve(NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0])); settings = CurveSettings{element}())).cause ==
+        GameTracing.NotFinite
+    @test_throws ArgumentError logit_solve_lambda(gains, -1; settings = CurveSettings{element}())
+end
+
+@testset "a CurveTracing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
+    settings = CurveSettings{element}(; newton_iterations = 1, logit_tolerance = eps(element), settle_ulps = 0)
+    tracer = unwrap(GameTracing.curve_init(gains, settings))
+    failure = unwrap_error(GameTracing.landed_point(tracer, element(1), (; lam = 1)))
+    @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :landing, 1)
 end
 
 @testset "the solvers return the trace's failure when it runs out of steps" begin
@@ -158,10 +202,12 @@ end
         @test eltype(unwrap(logit_solve(gains)).logits) == element
         @test eltype(only(unwrap(logit_solve_lambda(gains, 2))).logits) == element
         other = element == Float32 ? float(Int) : Float32
-        settings = TraceSettings{other}()
-        @test_throws ArgumentError logit_solve_lambda(gains, 2; settings)
-        @test_throws ArgumentError logit_solve_branch(gains; settings)
-        @test_throws ArgumentError logit_solve(gains; settings)
+        for settings in (TraceSettings{other}(), CurveSettings{other}())
+            @test_throws ArgumentError logit_solve_lambda(gains, 2; settings)
+            @test_throws ArgumentError logit_solve_branch(gains; settings)
+            @test_throws ArgumentError logit_solve(gains; settings)
+        end
+        @test unwrap(logit_solve(gains; settings = CurveSettings{element}())).lam isa element
     end
     # Integer payoffs trace in `float(Int)`, as Julia promotes them.
     integer = NormalFormGains(ROCK_PAPER_SCISSORS)

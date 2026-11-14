@@ -28,6 +28,7 @@ algorithm = PseudoArclength(;
         nominal_contraction = 0.25, nominal_distance = 0.1, nominal_turn = 0.1, growth_limit = 2.0, max_step = 0.5,
     ),
     metric = FixedWeights([1.0, 1.0]),
+    orientation = DeterminantSign(; persistence = 4),
     linear_solver = LUFactorization(),
     max_refusals = 60,
 )
@@ -38,6 +39,9 @@ while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
 end
 ```
 
+`land!(tracer, coordinate, value)` corrects onto the curve's point where one coordinate takes `value`, near the last
+point. Use it to stop at an exact parameter value that a step passed.
+
 ## Settings
 
 - `Newton`: the corrector's iterations, convergence test, contraction limit and correction length.
@@ -45,6 +49,9 @@ end
 - `FixedWeights`, `PointWeights`: the step metric and the turn metric. `PointWeights` reweights at each accepted
   point.
 - `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.
+- `orientation`: `DeterminantSign` refuses a step where `sign det([J; tᵀ])` changes. A long step near a fold can
+  land where the oriented tangent runs back along the curve; this check catches it. A persistent change is accepted
+  as a bifurcation crossing. `nothing` switches the check off.
 - `accept`: a test on each converged point.
 
 ## Failures

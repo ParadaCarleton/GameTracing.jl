@@ -2,6 +2,14 @@ using BifurcationKit: BifurcationKit
 using ErrorTypes: Err, Ok
 using LinearAlgebra: LU
 """
+    EngineSettings{E}
+
+The settings of a trace engine in element type `E`: `TraceSettings` (BifurcationKit) or `CurveSettings`
+(CurveTracing). `logit_solve` and its kin take either as `settings`.
+"""
+abstract type EngineSettings{E <: Real} end
+
+"""
     StepControl{E}(; distance_limit, growth_limit, turn_limit)
 
 BifurcationKit's `CorrectorQuality` thresholds, which shrink a step whose corrector looks poor. `distance_limit` is the
@@ -61,7 +69,7 @@ struct TraceSettings{
         C,
         P <: NamedTuple,
         O <: NamedTuple,
-    }
+    } <: EngineSettings{E}
     first_step::E
     max_step::E
     aggressiveness::E

@@ -50,13 +50,11 @@ function weighted_distance(weights::AbstractVector{E}, from::AbstractVector{E}, 
     return sqrt(total)
 end
 
-"""`⟨vector, to - from⟩` over `weights`, without a difference vector."""
-function weighted_offset(
-        weights::AbstractVector{E}, vector::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E},
-    )::E where {E <: Real}
+"""`row ⋅ (to - from)`, without a difference vector."""
+function row_offset(row::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     total = zero(E)
-    for index in eachindex(weights, vector, from, to)
-        total += weights[index] * vector[index] * (to[index] - from[index])
+    for index in eachindex(row, from, to)
+        total += row[index] * (to[index] - from[index])
     end
     return total
 end

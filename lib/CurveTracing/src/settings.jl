@@ -95,8 +95,27 @@ function optional(::Type{E}, limit::Real)::E where {E <: Real}
 end
 
 """
-    PseudoArclength(; corrector, step_control, metric, turn_metric = metric, linear_solver, accept = AcceptAll(),
-                    resolution_ulps = 4, max_refusals)
+    DeterminantSign(; persistence)
+
+`PseudoArclength`'s orientation check: the sign of `det([J; tᵀ])` at each corrected point, with `J` the Jacobian and
+`t` the tangent there. The sign is constant along a branch between bifurcation points. It changes when the corrector
+lands where the oriented tangent runs back along the curve, or when the step crosses a simple bifurcation point. A
+changed sign refuses the step (`OrientationFlip`). After `persistence` such refusals in a run of steps that each met
+one, the next changed sign is accepted as a bifurcation crossing (`AcceptedStep`'s `flipped`). The run spans steps
+because the step that follows a refusal grows again and can stop short of the bifurcation point.
+"""
+struct DeterminantSign
+    persistence::Int
+end
+
+function DeterminantSign(; persistence::Integer)::DeterminantSign
+    persistence >= 0 || throw(ArgumentError("persistence must be non-negative; got $persistence"))
+    return DeterminantSign(Int(persistence))
+end
+
+"""
+    PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation, linear_solver,
+                    accept = AcceptAll(), resolution_ulps = 4, max_refusals)
 
 Pseudo-arclength continuation with an Euler predictor along the bordered tangent.
 
@@ -105,17 +124,20 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
 - `metric`: the step metric (`FixedWeights` or `PointWeights`). Step lengths, the corrector's hyperplane and the
   tangent's unit length are in it.
 - `turn_metric`: the metric that orients each tangent along the one before and measures their turn.
+- `orientation`: a `DeterminantSign`, or `nothing` to orient each tangent by the turn metric alone. Without it, a long
+  step near a fold can land where the oriented tangent runs back along the curve.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
 - `resolution_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
   as `Unresolved`; smaller steps cannot add a point.
 - `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
 """
-struct PseudoArclength{C <: Newton, S <: StepControl, M, T, L, A}
+struct PseudoArclength{C <: Newton, S <: StepControl, M, T, O <: Union{Nothing, DeterminantSign}, L, A}
     corrector::C
     step_control::S
     metric::M
     turn_metric::T
+    orientation::O
     linear_solver::L
     accept::A
     resolution_ulps::Int
@@ -128,12 +150,13 @@ struct AcceptAll end
 (::AcceptAll)(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = true
 
 function PseudoArclength(;
-        corrector::C, step_control::S, metric::M, turn_metric::T = metric, linear_solver::L, accept::A = AcceptAll(),
-        resolution_ulps::Integer = 4, max_refusals::Integer,
-    )::PseudoArclength{C, S, M, T, L, A} where {C <: Newton, S <: StepControl, M, T, L, A}
+        corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation::O, linear_solver::L,
+        accept::A = AcceptAll(), resolution_ulps::Integer = 4, max_refusals::Integer,
+    )::PseudoArclength{C, S, M, T, O, L, A} where {C <: Newton, S <: StepControl, M, T, O <: Union{Nothing, DeterminantSign}, L, A}
     resolution_ulps >= 0 || throw(ArgumentError("resolution_ulps must be non-negative; got $resolution_ulps"))
     max_refusals >= 0 || throw(ArgumentError("max_refusals must be non-negative; got $max_refusals"))
-    return PseudoArclength{C, S, M, T, L, A}(
-        corrector, step_control, metric, turn_metric, linear_solver, accept, Int(resolution_ulps), Int(max_refusals),
+    return PseudoArclength{C, S, M, T, O, L, A}(
+        corrector, step_control, metric, turn_metric, orientation, linear_solver, accept, Int(resolution_ulps),
+        Int(max_refusals),
     )
 end

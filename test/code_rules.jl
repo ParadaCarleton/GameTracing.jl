@@ -38,7 +38,6 @@ const GENERIC_RESULTS = (
     "trace.jl reached_state",
     "trace.jl redrawn_trace",
     "logit_solve.jl gambit_settings",
-    "logit_solve.jl lambda_profile",
     "logit_solve.jl logit_solve_lambda",
     "logit_solve.jl settled_points",
     "logit_solve.jl branch_profiles",

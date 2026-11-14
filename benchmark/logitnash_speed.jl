@@ -1,9 +1,9 @@
-# Wall time of GameTracing's `logit_solve` (Float64 and Float32) against LogitNash's `solve` on random normal-form
+# Wall time of GameTracing's `logit_solve` (Float64 and Float32, on each engine) against LogitNash's `solve` on random normal-form
 # games. Each run stops at the first point whose largest regret is at most a tolerance times the game's payoff range.
 # Usage: julia --project=benchmark benchmark/logitnash_speed.jl rows.csv [seeds per size] [seconds per timing]
 # Prints a row per run as it finishes and rewrites rows.csv after each game, then prints a summary per size.
 # Run it under `timeout`: a killed run keeps every finished game in rows.csv.
-using GameTracing: NormalFormGains, logit_solve, logit_solve_branch
+using GameTracing: NormalFormGains, CurveSettings, logit_solve, logit_solve_branch
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
 using Pkg: Pkg
@@ -20,20 +20,30 @@ const SIZES = ((2, 2), (3, 3), (5, 5), (10, 10), (20, 20), (2, 2, 2), (3, 3, 3),
 # A run whose single timed call takes longer than this is timed once; a faster one is sampled by Chairmarks.
 const SLOW_SECONDS = 0.5f0
 
-"""GameTracing's `logit_solve` in element type `E`."""
-struct Tracing{E <: Real} end
+"""GameTracing's `logit_solve` in element type `E`, on BifurcationKit (`curve` false) or CurveTracing (`curve` true)."""
+struct Tracing{E <: Real, curve} end
 
 """LogitNash's `solve`, which runs in Float64."""
 struct Nash end
 
 # Float32 rounds a probability near 1 to about 6e-8, which floors its regret near 1e-6; it runs at 1e-4 only.
 const RUNS = (
-    (Tracing{WIDE}(), 1.0f-4), (Tracing{Float32}(), 1.0f-4), (Nash(), 1.0f-4),
-    (Tracing{WIDE}(), 1.0f-6), (Nash(), 1.0f-6),
+    (Tracing{WIDE, false}(), 1.0f-4), (Tracing{Float32, false}(), 1.0f-4),
+    (Tracing{WIDE, true}(), 1.0f-4), (Tracing{Float32, true}(), 1.0f-4), (Nash(), 1.0f-4),
+    (Tracing{WIDE, false}(), 1.0f-6), (Tracing{WIDE, true}(), 1.0f-6), (Nash(), 1.0f-6),
 )
 
-function solver_name(::Tracing{E})::String where {E}
-    return string("GameTracing ", E)
+function solver_name(::Tracing{E, curve})::String where {E, curve}
+    return string(curve ? "CurveTracing " : "GameTracing ", E)
+end
+
+"""The `settings` keyword of `solver`: none for BifurcationKit, which takes `logit_solve`'s default, else `CurveSettings`."""
+function settings_keywords(::Tracing{E, false})::NamedTuple where {E}
+    return (;)
+end
+
+function settings_keywords(::Tracing{E, true})::NamedTuple where {E}
+    return (; settings = CurveSettings{E}())
 end
 
 solver_name(::Nash)::String = "LogitNash"
@@ -76,7 +86,7 @@ end
 solver_input(::Nash, payoffs::Tuple, tolerance::Real)::Tuple = (payoffs, tolerance * payoff_range(payoffs))
 
 """`solver`'s result on `input` (`solver_input`)."""
-solve(::Tracing, input::Tuple)::Any = logit_solve(first(input); maxregret = last(input))
+solve(solver::Tracing, input::Tuple)::Any = logit_solve(first(input); maxregret = last(input), settings_keywords(solver)...)
 solve(::Nash, input::Tuple)::Tuple = LogitNash.solve(first(input); stop_iters = 10^7, stop_lambda = WIDE(1.0f6), stop_eps = last(input))
 
 """
@@ -84,13 +94,13 @@ solve(::Nash, input::Tuple)::Tuple = LogitNash.solve(first(input); stop_iters = 
 Float64, or `nothing` when the run missed the regret bound. `steps` is GameTracing's recorded branch points, LogitNash's
 iterations. A failed trace gives the precision and steps of its last accepted point, NaN and 0 where its context has none.
 """
-function run_outcome(::Tracing, input::Tuple, result::Any)::NamedTuple
+function run_outcome(solver::Tracing, input::Tuple, result::Any)::NamedTuple
     if is_error(result)
         (; cause, context) = unwrap_error(result)
         return (; strategies = nothing, outcome = string(cause), lam = WIDE(get(context, :precision, NaN32)), steps = get(context, :steps, 0))
     end
     profile = unwrap(result)
-    steps = length(unwrap(logit_solve_branch(first(input); maxregret = last(input))))
+    steps = length(unwrap(logit_solve_branch(first(input); maxregret = last(input), settings_keywords(solver)...)))
     return (; strategies = map(strategy -> WIDE.(strategy), profile.profile), outcome = "Ok", lam = WIDE(profile.lam), steps)
 end
 

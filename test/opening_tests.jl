@@ -210,6 +210,21 @@ end
     @test solve_verdicts(noisy, Float32[0]) == [false]
 end
 
+@testset "a stall that halves with the step is a predictor off the tangent, not noise ($element)" for element in (Float32, widen(Float32))
+    stalled = element[0, 1.0f-2, 2.0f-2, 3.0f-2]
+    check = fresh_check(element(1.0f-3))
+    @test solve_verdicts(check, stalled) == [true, true, true, false]
+    @test !GameTracing.noise_confirmed(check)
+    # Corrections of 0.5007 the suspect's, as on the 3x3x3 benchmark game of seed 5: a half passed the old 1/2 split.
+    GameTracing.restate!(check; predictor_move = element(5.0f-4))
+    @test solve_verdicts(check, element(0.5007f0) .* stalled) == [true, true, true, false]
+    @test !GameTracing.noise_confirmed(check)
+    # Three quarters is noise's side of `noise_ratio`.
+    GameTracing.restate!(check; predictor_move = element(2.5f-4))
+    @test solve_verdicts(check, element(0.5007f0 * 0.75f0) .* stalled) == [true, true, true, false]
+    @test GameTracing.noise_confirmed(check)
+end
+
 @testset "a gain with noise of size η fails PrecisionExhausted where λ η passes the logit tolerance" begin
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
     # stalled the opening at ρ ≈ 4e-19, whatever η: zero-slope gains whose every evaluation jumps leave no first step.

@@ -113,6 +113,23 @@ end
     end
 end
 
+# The 3x3x3 game of seed 5 in benchmark/logitnash_speed.jl. At λ ≈ 3.24 a halved step's stall shrank to 0.5007 of the
+# one before, which the old 1/2 split confirmed as noise: Float32 and Float64 both failed PrecisionExhausted there.
+@testset "logit_solve passes a stall that halves with the step, on Gambit's branch ($element)" for element in (Float32, widen(Float32))
+    rng = Xoshiro(5)
+    payoffs = ntuple(_ -> randn(rng, (3, 3, 3)), 3)
+    gains = NormalFormGains(map(table -> element.(table), payoffs))
+    result = logit_solve(gains; maxregret = 1.0f-4)
+    @test !is_error(result)
+    if !is_error(result)
+        profile = unwrap(result)
+        @test profile.lam > 4
+        @test GameTracing.max_regret(gains, profile.logits) <= 1.0f-4 * GameTracing.payoff_range(gains)
+        oracle = gambit_strategies(payoffs, profile.lam)
+        @test largest_gap(profile.profile, oracle.strategies) < profile_bound(profile) + GAMBIT_PROBABILITY_TOLERANCE
+    end
+end
+
 @testset "the solvers return the trace's failure when it runs out of steps" begin
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
     settings = TraceSettings{Float32}(; max_steps = 1)

@@ -183,6 +183,9 @@ end
     end
     # A distance in another element type is refused.
     @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
+    # The error estimate's safety converts to the element type.
+    halved = PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.ContractionEstimate(; safety = 1 // 2))
+    @test halved.error_estimate.safety === element(1 // 2)
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
@@ -229,13 +232,15 @@ end
     large = 64 * tolerance / eps(element)
     rounded = large + 4 * eps(large)
     @test GameTracing.FisherRaoChange((1:2,))(element[large, large, 1], element[rounded, large, 1]) > tolerance
-    @test settled(element[large, large, 1], element[rounded, large, 1], element[])
+    @test settled(element[large, large, 1], element[rounded, large, 1], element[], one(element))
     # A logit gap of four allowances moves the strategy two, one allowance past the test.
     beyond = large + 4 * ulps * eps(element) * large
-    @test !settled(element[large, large, 1], element[beyond, large, 1], element[])
+    @test !settled(element[large, large, 1], element[beyond, large, 1], element[], one(element))
+    # Newton's error estimate scales the move: a tenth of it settles.
+    @test settled(element[large, large, 1], element[beyond, large, 1], element[], element(1 // 10))
     # Small logits have no allowance to speak of: a move of four tolerances stays past it.
-    @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[])
-    @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[])
+    @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[], one(element))
+    @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[], one(element))
 end
 
 @testset "WithinReach passes a correction within the settle tolerance, however short the step ($element)" for element in (Float32, widen(Float32))

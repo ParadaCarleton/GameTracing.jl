@@ -285,8 +285,9 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         if iteration > 1 && !(correction <= corrector.contraction_limit * before)
             return refused(E, Diverging)
         end
+        scale = error_scale(corrector.error_estimate, correction, before)
         before = correction
-        if corrector.converged(tracer.previous, tracer.iterate, tracer.residual)
+        if corrector.converged(tracer.previous, tracer.iterate, tracer.residual, scale)
             return Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32), Int8(0))
         end
     end

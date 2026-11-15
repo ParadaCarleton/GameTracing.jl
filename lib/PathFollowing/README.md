@@ -20,10 +20,13 @@ function circle!(residual, jacobian, point)
     return nothing
 end
 
-settled(previous, iterate, residual) = maximum(abs, iterate - previous) <= 1e-10
+# `scale` turns the last correction into an estimate of the error left in `iterate`.
+settled(previous, iterate, residual, scale) = scale * maximum(abs, iterate - previous) <= 1e-10
 
 algorithm = PseudoArclength(;
-    corrector = Newton(; max_iterations = 8, converged = settled, contraction_limit = 0.5),
+    corrector = Newton(;
+        max_iterations = 8, converged = settled, contraction_limit = 0.5, error_estimate = ContractionEstimate(; safety = 0.1),
+    ),
     step_control = StepControl(;
         nominal_contraction = 0.25, nominal_distance = 0.1, nominal_turn = 0.1, growth_limit = 2.0, max_step = 0.5,
     ),
@@ -44,7 +47,9 @@ point. Use it to stop at an exact parameter value that a step passed.
 
 ## Settings
 
-- `Newton`: the corrector's iterations, convergence test, contraction limit and correction length.
+- `Newton`: the corrector's iterations, convergence test, contraction limit, error estimate and correction length.
+  `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the tolerance;
+  `LastCorrection()` settles on the last correction, often one iteration later.
 - `StepControl`: the nominal contraction, first correction and turn, the growth limit and the largest step.
 - `FixedWeights`, `PointWeights`: the step metric and the turn metric. `PointWeights` reweights at each accepted
   point.

@@ -49,15 +49,16 @@ end
 
 """
 `(correction, excess)` of a Newton step from `from` to `to`, two points `[w; ρ]`: the largest change of a logit
-(`logit_change`), and the largest change past `relative` times that logit's own size, which the settle test reads.
+(`logit_change`), and the largest change times `scale` past `relative` times that logit's own size, which the settle
+test reads. `scale` turns a change into an estimate of the error it leaves (PathFollowing's `error_estimate`).
 """
-function logit_corrections(from::AbstractVector{E}, to::AbstractVector{E}, relative::E)::NTuple{2, E} where {E <: Real}
+function logit_corrections(from::AbstractVector{E}, to::AbstractVector{E}, relative::E, scale::E)::NTuple{2, E} where {E <: Real}
     largest, excess = zero(E), zero(E)
     for index in firstindex(to):(lastindex(to) - 1)
         later, earlier = last(to) * to[index], last(from) * from[index]
         change = abs(later - earlier)
         largest = max(largest, change)
-        excess = max(excess, change - relative * max(abs(later), abs(earlier)))
+        excess = max(excess, scale * change - relative * max(abs(later), abs(earlier)))
     end
     return (largest, excess)
 end
@@ -354,7 +355,7 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
         return proceed
     end
     before = check.state[].correction
-    correction, excess = logit_corrections(check.iterate, iterate.x, check.settings.settle_ulps * eps(E))
+    correction, excess = logit_corrections(check.iterate, iterate.x, check.settings.settle_ulps * eps(E), one(E))
     copyto!(check.iterate, iterate.x)
     restate!(check; correction)
     if !proceed

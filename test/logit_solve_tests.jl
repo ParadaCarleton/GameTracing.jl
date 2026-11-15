@@ -177,8 +177,12 @@ end
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
     # A first step a hundred times past its nominal distance is refused, and no refusal is allowed.
-    refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; first_step = 100, nominal_distance = 1.0f-2, max_refusals = 0)))
-    @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
+    for distance in (StrategyDistance{element}(; nominal = 1.0f-2), LogitDistance{element}(; nominal = 1.0f-2))
+        refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; first_step = 100, distance, max_refusals = 0)))
+        @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
+    end
+    # A distance in another element type is refused.
+    @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
@@ -199,6 +203,51 @@ end
     # The control: the same trace without the check ends elsewhere.
     unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation = nothing)))
     @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
+end
+
+@testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
+    one_player = GameTracing.FisherRaoChange((1:1,))
+    # From even odds to odds of 1:3 the Bhattacharyya angle is 15°, so the distance is twice that: π / 6.
+    @test one_player(element[0, 1], element[log(element(3)), 1]) ≈ element(π) / 6
+    # The same strategy at twice the precision and half the gap.
+    @test one_player(element[0, 1], element[log(element(3)) / 2, 2]) ≈ element(π) / 6
+    @test isnan(one_player(element[NaN32, 1], element[0, 1]))
+    two_players = GameTracing.FisherRaoChange((1:2, 3:3))
+    @test two_players(element[0, 0, 0, 1], element[0, 0, log(element(3)), 1]) ≈ element(π) / 6
+    # A strategy outside the support moves 500 logits, but no probability.
+    @test two_players(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) <= eps(element)
+    @test GameTracing.logit_change(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) == 500
+    # A player whose first strategy left the support: its logits move together, and its strategy does not.
+    @test two_players(element[1000, 1000, 0, 1], element[1500, 1500, 0, 1]) <= eps(element)
+end
+
+@testset "a strategy move within its logits' settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
+    distance = StrategyDistance{element}()
+    tolerance, ulps = distance.tolerance, distance.settle_ulps
+    settled = GameTracing.settle_test(distance, GameTracing.FisherRaoChange((1:2,)))
+    # Strategies 2 and 3 share a large logit; the first has left the support. Their rounding alone passes the tolerance.
+    large = 64 * tolerance / eps(element)
+    rounded = large + 4 * eps(large)
+    @test GameTracing.FisherRaoChange((1:2,))(element[large, large, 1], element[rounded, large, 1]) > tolerance
+    @test settled(element[large, large, 1], element[rounded, large, 1], element[])
+    # A logit gap of four allowances moves the strategy two, one allowance past the test.
+    beyond = large + 4 * ulps * eps(element) * large
+    @test !settled(element[large, large, 1], element[beyond, large, 1], element[])
+    # Small logits have no allowance to speak of: a move of four tolerances stays past it.
+    @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[])
+    @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[])
+end
+
+@testset "StrategyDistance takes long steps where a strategy leaves the support ($element)" for element in (Float32, widen(Float32))
+    # The five-player game of `randn(Xoshiro(1), (2, 2, 2, 2, 2))` per player: its branch ends mixed, and a strategy
+    # outside the support has a logit that grows like λ. Measured in logits, its corrections hold the steps short.
+    rng = Xoshiro(1)
+    gains = NormalFormGains(ntuple(_ -> element.(randn(rng, (2, 2, 2, 2, 2))), 5))
+    branches = map((StrategyDistance{element}(), LogitDistance{element}())) do distance
+        unwrap(logit_solve_branch(gains; maxregret = 1.0f-5, settings = PathFollowingSettings{element}(; distance)))
+    end
+    @test 2 * length(first(branches)) < length(last(branches))
+    @test largest_gap(last(first(branches)).profile, last(last(branches)).profile) < 1.0f-3
 end
 
 """The Bernoulli Fisher weight `σ(z)σ(-z)` of a logit `z`."""
@@ -222,10 +271,11 @@ end
 
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    settings = PathFollowingSettings{element}(; newton_iterations = 1, logit_tolerance = eps(element), settle_ulps = 0)
-    tracer = unwrap(GameTracing.path_init(gains, settings))
-    failure = unwrap_error(GameTracing.landed_point(tracer, element(1), (; lam = 1)))
-    @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :landing, 1)
+    for distance in (StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), LogitDistance{element}(; tolerance = eps(element), settle_ulps = 0))
+        tracer = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; newton_iterations = 1, distance)))
+        failure = unwrap_error(GameTracing.landed_point(tracer, element(1), (; lam = 1)))
+        @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :landing, 1)
+    end
 end
 
 @testset "the solvers return the trace's failure when it runs out of steps" begin

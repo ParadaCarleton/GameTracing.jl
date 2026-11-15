@@ -2,7 +2,8 @@ using PathFollowing
 using PathFollowing: AcceptAll, factored_sign, weighted_angle
 using CommonSolve: init, step!
 using ErrorTypes: is_error, unwrap, unwrap_error
-using LinearSolve: LUFactorization
+using LinearAlgebra: det
+using LinearSolve: LUFactorization, QRFactorization
 using Supposition: Data, @check
 using Test: @test, @testset, @test_throws
 
@@ -166,6 +167,23 @@ end
             @test tracer.flip_streak == 0
             @test tracer.point[1] == 0
             @test tracer.point[2] > 0
+        end
+    end
+
+    @testset "the orientation sign is the sign of det([J; tᵀ]), from the solve's LU or a second factorization" begin
+        for linear_solver in (LUFactorization(), QRFactorization())
+            settings = algorithm(E; orientation = DeterminantSign(; persistence = 0), linear_solver)
+            tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
+            signs = [tracer.orientation]
+            @test tracer.orientation == sign(det([tracer.jacobian; tracer.tangent']))
+            for _ in 1:6
+                unwrap(step!(tracer))
+                push!(signs, tracer.orientation)
+                @test tracer.orientation == sign(det([tracer.jacobian; tracer.tangent']))
+            end
+            @test signs[1] == 1 && signs[end] == -1
+            # Only the fallback fills the matrix of the second factorization.
+            @test all(iszero, tracer.oriented) == (linear_solver isa LUFactorization)
         end
     end
 
@@ -370,9 +388,12 @@ end
 end
 
 @testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin
-    settings = algorithm(BigFloat; orientation = DeterminantSign(; persistence = 0))
-    tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
-    steps = [unwrap(step!(tracer)) for _ in 1:6]
-    @test count(step -> step.flipped, steps) == 1
-    @test tracer.orientation == -1
+    for linear_solver in (LUFactorization(), QRFactorization())
+        settings = algorithm(BigFloat; orientation = DeterminantSign(; persistence = 0), linear_solver)
+        tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
+        steps = [unwrap(step!(tracer)) for _ in 1:6]
+        @test count(step -> step.flipped, steps) == 1
+        @test tracer.orientation == -1
+        @test all(iszero, tracer.oriented) == (linear_solver isa LUFactorization)
+    end
 end

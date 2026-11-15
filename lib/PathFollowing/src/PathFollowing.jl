@@ -10,7 +10,7 @@ stopping rule holds. `land!` corrects onto the point where one coordinate takes 
 module PathFollowing
 
 using CommonSolve: CommonSolve
-using ErrorTypes: Err, Ok, Result
+using ErrorTypes: Err, Ok, Option, Result, is_error, none, some, unwrap
 using LinearAlgebra: LinearAlgebra
 using LinearSolve: LinearSolve
 using SciMLBase: SciMLBase

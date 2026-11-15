@@ -1,6 +1,7 @@
 [deps]
 CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
 ErrorTypes = "7f495686-c6d2-4c77-9e8e-e4c865675f9d"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 Supposition = "5a0628fe-1738-4658-9b6d-0b7605a9755b"
@@ -12,6 +13,7 @@ PathFollowing = {path = ".."}
 [compat]
 CommonSolve = "0.2.4"
 ErrorTypes = "0.5.2"
+LinearAlgebra = "1"
 LinearSolve = "3, 4, 5"
 Supposition = "0.3"
 Test = "1"

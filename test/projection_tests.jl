@@ -42,7 +42,7 @@ function projected_residual(
         on_branch::NamedTuple,
         offset::Real,
         direction::AbstractVector,
-        settings::TraceSettings,
+        settings::BifurcationKitSettings,
     )::typeof(float(offset))
     projected = branch_projection(game, on_branch.logits .+ offset .* direction, on_branch.relative_precision, settings)
     return norm(branch_equations(game, [projected.logits ./ projected.relative_precision; projected.relative_precision]).residual)
@@ -51,7 +51,7 @@ end
 @testset "branch_projection converges quadratically onto the branch" begin
     rng = Xoshiro(rand(RandomDevice(), UInt))
     game = LogitGame(LinearGainPass(randn(rng, 3, 3), randn(rng, 3)), float(2))
-    settings = TraceSettings{typeof(float(1))}()
+    settings = BifurcationKitSettings{typeof(float(1))}()
     on_branch = (; logits = zeros(3), relative_precision = float(1 // 2))
     for _ in 1:10
         on_branch = branch_projection(game, on_branch.logits, on_branch.relative_precision, settings)
@@ -66,7 +66,7 @@ end
 
 @testset "branch_projection applies one projection_step in the trace's norm" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    settings = TraceSettings{Float32}(geometry = TraceGeometry{Float32}(state_weight = 3 // 10))
+    settings = BifurcationKitSettings{Float32}(geometry = TraceGeometry{Float32}(state_weight = 3 // 10))
     logits, relative_precision = Float32[1 // 10, -1 // 5], 3.0f0 / 4
     step = projection_step(game, logits, relative_precision, settings.geometry)
     projected = branch_projection(game, logits, relative_precision, settings)
@@ -84,7 +84,7 @@ end
 @testset "a projection that would leave the positive relative precisions throws" begin
     # From far off the branch of G = λ the Gauss–Newton step overshoots ρ = 0, to ρ = -4.95.
     game = LogitGame(PrecisionGainPass(), 1.0f0)
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     @test_throws DomainError branch_projection(game, Float32[-1], 0.1f0, settings)
     # Near the branch z = λ² the same game projects to a positive relative precision.
     @test branch_projection(game, Float32[0.26f0], 0.5f0, settings).relative_precision > 0
@@ -97,8 +97,8 @@ end
 end
 
 @testset "branch_projection leaves a point on the branch where it is" begin
-    traced = unwrap(trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, TraceSettings{Float32}()))
-    projected = branch_projection(LogitGame(GAME, TARGET_PRECISION), traced.logits, 1.0f0, TraceSettings{Float32}())
+    traced = unwrap(trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, BifurcationKitSettings{Float32}()))
+    projected = branch_projection(LogitGame(GAME, TARGET_PRECISION), traced.logits, 1.0f0, BifurcationKitSettings{Float32}())
     @test maximum(abs, projected.logits .- traced.logits) < 1.0f-4
     @test abs(projected.relative_precision - 1) < 1.0f-4
 end
@@ -124,7 +124,7 @@ end
     @test abs(only(at_fold.residual)) <= inv(float(10^10))
     @test abs(first(at_fold.jacobian)) <= inv(float(10^8)) * norm(at_fold.jacobian)
     # Newton at fixed precision meets a double root here and converges only linearly; the projection stays quadratic.
-    settings = TraceSettings{typeof(float(1))}(geometry = TraceGeometry{typeof(float(1))}(state_weight = 2 // 5))
+    settings = BifurcationKitSettings{typeof(float(1))}(geometry = TraceGeometry{typeof(float(1))}(state_weight = 2 // 5))
     on_branch = (; logits = [fold], relative_precision = fold_precision)
     for direction in ([-one(fold)], [one(fold)])
         coarse = projected_residual(game, on_branch, inv(float(100)), direction, settings)

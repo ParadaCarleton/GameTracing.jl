@@ -28,18 +28,18 @@ const BranchResult{E, N} = Result{Vector{QREProfile{E, N}}, TraceFailure}
 """
     gambit_settings(first_step, max_accel)
 
-`TraceSettings` for pygambit's step arguments: `first_step` is the first arclength step and `max_accel` caps each
+`BifurcationKitSettings` for pygambit's step arguments: `first_step` is the first arclength step and `max_accel` caps each
 step's growth (`aggressiveness = max_accel - 1`). The trace steps in `FisherLogPrecisionDistance`, whose precision
 term is the step in `log(1 + λ)`, so a trace to a far precision opens at the scale of a near one.
 """
-function gambit_settings(first_step::E, max_accel::Real)::TraceSettings{E} where {E <: Real}
+function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings{E} where {E <: Real}
     if !(first_step > 0)
         throw(ArgumentError("first_step must be positive; got $first_step"))
     end
     if !(max_accel >= 1)
         throw(ArgumentError("max_accel must be at least 1; got $max_accel"))
     end
-    return TraceSettings{E}(;
+    return BifurcationKitSettings{E}(;
         first_step,
         aggressiveness = E(max_accel) - one(E),
         geometry = TraceGeometry{E}(; distance = FisherLogPrecisionDistance),
@@ -109,7 +109,7 @@ function (recorder::BranchRecorder{G, E})(logits::AbstractVector{E}, relative_pr
 end
 
 """The logits at precision `lam` on the principal branch of `gains`, traced with `settings`."""
-function lambda_logits(gains::NormalFormGains, lam::E, settings::TraceSettings{E})::Result{Vector{E}, TraceFailure} where {E <: Real}
+function lambda_logits(gains::NormalFormGains, lam::E, settings::BifurcationKitSettings{E})::Result{Vector{E}, TraceFailure} where {E <: Real}
     result = trace_endpoint(LogitGame(gains, lam), logit_count(gains), settings; context = (; lam))
     if is_error(result)
         return Err(unwrap_error(result))
@@ -149,7 +149,7 @@ trace each (`lambda_logits`), or the first failure.
 function engine_lambdas(
         gains::NormalFormGains,
         precisions::AbstractVector{E},
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
     # ponytail: one trace per precision; `PathFollowingSettings` land on each precision in one trace instead.
     results = lambda_logits.((gains,), precisions, (settings,))
@@ -194,7 +194,7 @@ whose largest regret is at most `tolerance`, or the failure with `context`.
 """
 function engine_points(
         gains::NormalFormGains,
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         maximum_precision::E,
         tolerance::E,
         context::NamedTuple,

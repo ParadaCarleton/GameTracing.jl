@@ -3,7 +3,7 @@ using Logging: Debug
 using Random: RandomDevice, Xoshiro
 using Test: collect_test_logs
 
-const REDRAW_SETTINGS = TraceSettings{Float32}()
+const REDRAW_SETTINGS = BifurcationKitSettings{Float32}()
 
 """The trace of `swap` that redraws its game from `before` to `after` at `swap.swap_level`."""
 function swapped_trace(swap::MapSwap)::TraceResult{Float32}
@@ -125,7 +125,7 @@ end
     @test !shift_passes(FAR_SWAP)
     @test !shift_passes(FOLD_SWAP)
     @test !shift_passes(PITCHFORK_SWAP)
-    off = TraceSettings{Float32}(; corrector = GameTracing.CorrectorSettings{Float32}(; reach = nothing))
+    off = BifurcationKitSettings{Float32}(; corrector = GameTracing.CorrectorSettings{Float32}(; reach = nothing))
     @test GameTracing.RootShift(Float32[1, 1], Float32[0.1f0, 0.1f0], Float32[0, 1], off.corrector)(LogitGame(FAR_SWAP.after, 1.0f0)).within
 end
 
@@ -307,7 +307,7 @@ end
 
 @testset "a redraw at the last step the budget allows fails NoConvergence there, with no segment after it" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    result = trace_endpoint(game, WIDTH, TraceSettings{Float32}(; max_steps = 3); redraw = EveryPointCopy(game))
+    result = trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}(; max_steps = 3); redraw = EveryPointCopy(game))
     @test is_error(result)
     @test unwrap_error(result).cause == GameTracing.NoConvergence
     @test unwrap_error(result).context.relative_precision < 1

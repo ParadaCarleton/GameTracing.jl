@@ -27,7 +27,7 @@ reference; every endpoint must also solve the map as the corrector settles it (`
 function strategies_cross_checked!(payoffs::Tuple, precision::Real)::Nothing
     cross = logitnash_profile(payoffs, precision)
     gains = NormalFormGains(map(table -> Float32.(table), payoffs))
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     result = trace_endpoint(LogitGame(gains, cross.precision), logit_count(gains), settings)
     @test !is_error(result)
     if is_error(result)
@@ -215,7 +215,7 @@ end
 @testset "rock-paper-scissors traces to the uniform mixture at every precision" begin
     beats = [0 -1 1; 1 0 -1; -1 1 0]
     game = LogitGame(NormalFormGains((Float32.(beats), Float32.(-beats))), 5.0f0)
-    traced = unwrap(trace_endpoint(game, logit_count(game.pass!), TraceSettings{Float32}()))
+    traced = unwrap(trace_endpoint(game, logit_count(game.pass!), BifurcationKitSettings{Float32}()))
     @test profile_gap(mixed_strategies(game.pass!, traced.logits), (fill(1.0f0 / 3, 3), fill(1.0f0 / 3, 3))) < 1.0f-4
 end
 

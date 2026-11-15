@@ -40,7 +40,7 @@ function branch_projection(
         game::LogitGame,
         logits::AbstractVector{E},
         relative_precision::Real,
-        settings::TraceSettings,
+        settings::BifurcationKitSettings,
     )::NamedTuple{(:logits, :relative_precision), Tuple{Vector{E}, E}} where {E <: Real}
     step = projection_step(game, logits, relative_precision, settings.geometry)
     moved = [logits ./ E(relative_precision); E(relative_precision)] .+ step

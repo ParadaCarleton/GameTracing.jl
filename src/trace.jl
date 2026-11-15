@@ -4,8 +4,8 @@ using LinearAlgebra: LU
 """
     EngineSettings{E}
 
-The settings of a trace engine in element type `E`: `TraceSettings` (BifurcationKit) or `PathFollowingSettings`
-(PathFollowing). `logit_solve` and its kin take either as `settings`.
+The settings of a trace engine in element type `E`: `BifurcationKitSettings` or `PathFollowingSettings`.
+`logit_solve` and its kin take either as `settings`.
 """
 abstract type EngineSettings{E <: Real} end
 
@@ -26,7 +26,7 @@ Base.@kwdef struct StepControl{E <: Real}
 end
 
 """
-    TraceSettings{E}(; first_step, max_step, aggressiveness, geometry,
+    BifurcationKitSettings{E}(; first_step, max_step, aggressiveness, geometry,
                      corrector, max_steps, tangent, bordered_solver, step_control, orientation_check, palc_corrector,
                      palc_options, continuation_options)
 
@@ -58,12 +58,12 @@ distance (`TraceGeometry`).
 - `palc_options`: a `NamedTuple` of further keywords for `BifurcationKit.PALC`, which override the trace's own
   (`tangent`, `θ`, `dotθ`, `bls`, `step_control`, `orientation_check`, `corrector`, `orientation_dot`). Do not override
   `step_control`, `orientation_check`, `orientation_dot`, `θ`, `dotθ` or `bls`: the trace's step shrinking, tangent orientation
-  and geometry rest on them, and `TraceSettings` fields set them consistently.
+  and geometry rest on them, and `BifurcationKitSettings` fields set them consistently.
 - `continuation_options`: a `NamedTuple` of further keywords for `BifurcationKit.ContinuationPar`, which override the trace's
   own. Do not override `newton_options`, `p_min`, `p_max`, `ds` or the `dsmin`/`dsmax` pair: `CorrectorReach` converges a
   corrector on its own test and needs `tol = 0`, and the trace ends at `p_max`.
 """
-struct TraceSettings{
+struct BifurcationKitSettings{
         E <: Real,
         T <: BifurcationKit.AbstractTangentComputation,
         C,
@@ -86,7 +86,7 @@ struct TraceSettings{
 end
 
 # Each keyword is named, not splatted: a splatted `keywords...` leaves the field conversions to runtime dispatch.
-function TraceSettings{E}(;
+function BifurcationKitSettings{E}(;
         first_step::Real = 0.05f0,
         max_step::Real = 1000.0f0,
         aggressiveness::Real = 0.5f0,
@@ -100,10 +100,10 @@ function TraceSettings{E}(;
         palc_corrector::C = nothing,
         palc_options::P = (;),
         continuation_options::O = (;),
-    )::TraceSettings{E, T, C, P, O} where {
+    )::BifurcationKitSettings{E, T, C, P, O} where {
         E <: Real, T <: BifurcationKit.AbstractTangentComputation, C, P <: NamedTuple, O <: NamedTuple,
     }
-    return TraceSettings{E, T, C, P, O}(
+    return BifurcationKitSettings{E, T, C, P, O}(
         E(first_step), E(max_step), E(aggressiveness), geometry, corrector,
         Int(max_steps), tangent, bordered_solver, step_control, orientation_check, palc_corrector, palc_options,
         continuation_options,
@@ -172,7 +172,7 @@ BifurcationKit's PALC for `settings` over a trace of `width` logits to precision
 oriented by the bordered determinant where `orientation_check` holds (`settings.orientation_check` by default).
 """
 function palc_algorithm(
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         width::Integer,
         target_precision::Real;
         orientation_check::Bool = settings.orientation_check,
@@ -191,7 +191,7 @@ BifurcationKit's PALC for `settings` over `width` logits in `geometry` (`palc_ge
 distance, with the bordered determinant's `orientation_check` (with `MatrixSolve` only) and `orientation`.
 """
 function palc_with_geometry(
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         width::Integer,
         geometry::NamedTuple,
         orientation_check::Bool,
@@ -224,7 +224,7 @@ BifurcationKit's continuation parameters for `settings`, from relative precision
 only its endpoint.
 """
 function continuation_options(
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         step_length::E,
         max_steps::Integer,
     )::BifurcationKit.ContinuationPar where {E <: Real}
@@ -265,7 +265,7 @@ and passed on without a named local; it runs once per segment.
 function trace_iterator(
         game::LogitGame,
         start::AbstractVector{E},
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         finalise::TraceFinalise,
         corrector::CorrectorReach,
         step_length::E,
@@ -407,7 +407,7 @@ corrector lands on the new map under the same step control. The endpoint, with n
 function trace_endpoint(
         game::LogitGame,
         width::Integer,
-        settings::TraceSettings{E};
+        settings::BifurcationKitSettings{E};
         keep_going::Any = AcceptAll(),
         accept_corrected::Any = AcceptAll(),
         redraw::Any = NoRedraw(),
@@ -460,7 +460,7 @@ root shift onto the new game's root, as a new segment counted on from its steps.
 function redrawn_trace(
         outcome::NamedTuple,
         finalise::TraceFinalise,
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         accept_corrected::Any,
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
@@ -514,7 +514,7 @@ non-finite Jacobian reaches LAPACK, and so does a singular restart tangent. Any 
 function guarded_trace(
         start::AbstractVector{E},
         old_tangent::Union{AbstractVector{E}, OpeningTangent{E}},
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         finalise::TraceFinalise,
         accept_corrected::Any,
         opening::TraceProgress{E},
@@ -760,7 +760,7 @@ function reached_state(
         progress::TraceProgress{E},
         outcome::NamedTuple,
         game::LogitGame,
-        settings::TraceSettings{E},
+        settings::BifurcationKitSettings{E},
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
     target_precision = game.target_precision

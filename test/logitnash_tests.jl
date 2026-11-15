@@ -12,7 +12,7 @@ function logitnash_equilibrium(payoffs::Tuple, precision::Real)::NamedTuple
 end
 
 """GameTracing's `TraceResult` for `payoffs` at `precision`."""
-function traced_result(payoffs::Tuple, precision::E, settings::TraceSettings{E})::TraceResult{E} where {E <: Real}
+function traced_result(payoffs::Tuple, precision::E, settings::BifurcationKitSettings{E})::TraceResult{E} where {E <: Real}
     return trace_endpoint(LogitGame(NormalFormPass(map(table -> E.(table), payoffs)), precision), length(payoffs), settings)
 end
 
@@ -25,7 +25,7 @@ end
 agreeing(left::AbstractVector, right::AbstractVector)::Bool = maximum(abs, left .- right) < 1.0f-3
 
 """`settled_logits` for the two-action payoff tables `payoffs` (`NormalFormPass`)."""
-function settled_endpoint(payoffs::Tuple, logits::AbstractVector{E}, precision::Real, settings::TraceSettings{E})::Bool where {E <: Real}
+function settled_endpoint(payoffs::Tuple, logits::AbstractVector{E}, precision::Real, settings::BifurcationKitSettings{E})::Bool where {E <: Real}
     return settled_logits(NormalFormPass(map(table -> E.(table), payoffs)), logits, precision, settings)
 end
 
@@ -40,7 +40,7 @@ reach the target skips the comparison; every endpoint must also solve the map to
 Gambit's branch folds before the target (`gambit_folds_before`), Gambit's answer may be a later crossing, so the Gambit
 comparisons are skipped and the reference decides. Returns whether they were skipped.
 """
-function cross_checked!(payoffs::Tuple, precision::Real, settings::TraceSettings{Float32})::Bool
+function cross_checked!(payoffs::Tuple, precision::Real, settings::BifurcationKitSettings{Float32})::Bool
     cross = logitnash_equilibrium(payoffs, precision)
     result = traced_result(payoffs, cross.precision, settings)
     @test !is_error(result)
@@ -125,7 +125,7 @@ end
 @testset "the trace reaches the reference equilibrium on LogitNash's games" begin
     for (name, payoffs) in pairs(LOGITNASH_GAMES), precision in (1, 4), tangent in (BifurcationKit.Bordered(), BifurcationKit.Secant())
         if !(name in PITCHFORK_GAMES)
-            cross_checked!(payoffs, precision, TraceSettings{Float32}(; tangent))
+            cross_checked!(payoffs, precision, BifurcationKitSettings{Float32}(; tangent))
         end
     end
 end
@@ -133,7 +133,7 @@ end
 @testset "past an exact pitchfork the trace ends at an equilibrium or fails as Singular, PrecisionExhausted or a stall" begin
     for name in PITCHFORK_GAMES, tangent in (BifurcationKit.Bordered(), BifurcationKit.Secant())
         pass = NormalFormPass(map(table -> Float32.(table), LOGITNASH_GAMES[name]))
-        result = trace_endpoint(LogitGame(pass, 4.0f0), length(pass.payoffs), TraceSettings{Float32}(; tangent))
+        result = trace_endpoint(LogitGame(pass, 4.0f0), length(pass.payoffs), BifurcationKitSettings{Float32}(; tangent))
         # The cause depends on whether rounding breaks the symmetry: an exact branch point factors singular, while one
         # that rounding unfolds by about eps (battle_of_the_sexes, rcond ≥ 1e-5) is near-singular and exhausts. A step
         # the turn test refuses at the branch point halves until its predictor cannot move the point (`unresolved`), or an
@@ -156,7 +156,7 @@ end
     rng = fresh_rng()
     for scale in inv.(float.((10^4, 10^3, 10^2, 10))), _ in 1:3
         payoffs = map(table -> table .+ scale .* randn(rng, 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
-        cross_checked!(payoffs, 4, TraceSettings{Float32}())
+        cross_checked!(payoffs, 4, BifurcationKitSettings{Float32}())
     end
 end
 
@@ -173,7 +173,7 @@ end
     oracle = gambit_branch(UNFOLDED_PITCHFORK_GAME, precision)
     @test agreeing(reference.first_choices, oracle.first_choices)
     # At Gambit's precision the trace keeps the 1e-4 rule: its accepted corrections all lie within it.
-    double_settings = TraceSettings{typeof(float(1))}()
+    double_settings = BifurcationKitSettings{typeof(float(1))}()
     # A failed double trace throws here, an error of this testset.
     doubled = unwrap(traced_result(UNFOLDED_PITCHFORK_GAME, precision * float(1), double_settings))
     double_logits = doubled.logits
@@ -182,7 +182,7 @@ end
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
     # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under growth 1.1 this includes
     # fisher_log_precision_reach at state weight 0.01, which before exhausted near λ 0.808 (runs 40803122294, 40806444224).
-    for (_, settings) in ["default" => TraceSettings{Float32}(); arm_variants()]
+    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants()]
         result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
         @test !is_error(result)
         if !is_error(result)
@@ -198,7 +198,7 @@ end
 
 @testset "a step past the target precision lands where the branch first reaches it" begin
     # Traced at the requested precisions themselves, both short of the fold, so the reference must reach them.
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     for precision in (3.0f0, 3.1f0)
         result = traced_result(OVERSHOT_GAME, precision, settings)
         @test !is_error(result)
@@ -213,10 +213,10 @@ end
 @testset "where Gambit's default steps leave the branch, the trace meets Gambit at fine steps" begin
     # The oracle is Gambit at a 1e-3 first step that never grows; its default steps end elsewhere (`GAMBIT_LEAVES_GAME`).
     oracle = gambit_branch(GAMBIT_LEAVES_GAME, 3.0f0; first_step = 1 // 1000, max_accel = 1)
-    traced = traced_result(GAMBIT_LEAVES_GAME, oracle.precision, TraceSettings{Float32}())
+    traced = traced_result(GAMBIT_LEAVES_GAME, oracle.precision, BifurcationKitSettings{Float32}())
     @test !is_error(traced)
     @test agreeing(first_choices(unwrap(traced).logits), oracle.first_choices)
-    @test settled_endpoint(GAMBIT_LEAVES_GAME, unwrap(traced).logits, oracle.precision, TraceSettings{Float32}())
+    @test settled_endpoint(GAMBIT_LEAVES_GAME, unwrap(traced).logits, oracle.precision, BifurcationKitSettings{Float32}())
 end
 
 @testset "random games with two actions each: the trace follows the principal branch" begin
@@ -225,7 +225,7 @@ end
     for _ in 1:20
         players = rand(rng, 2:4)
         payoffs = ntuple(_ -> 3 .* randn(rng, ntuple(_ -> 2, players)), players)
-        skipped += cross_checked!(payoffs, 3, TraceSettings{Float32}())
+        skipped += cross_checked!(payoffs, 3, BifurcationKitSettings{Float32}())
     end
     @info "Gambit comparisons skipped where its branch folds before the target" skipped
 end
@@ -240,8 +240,8 @@ end
     precision = logitnash_equilibrium(FOLDED_GAMBIT_GAME, 3).precision
     reference = branch_reference(NormalFormPass(map(float, FOLDED_GAMBIT_GAME)), length(FOLDED_GAMBIT_GAME), precision)
     @test reference.reached
-    traced = first_choices(unwrap(traced_result(FOLDED_GAMBIT_GAME, precision, TraceSettings{Float32}())).logits)
+    traced = first_choices(unwrap(traced_result(FOLDED_GAMBIT_GAME, precision, BifurcationKitSettings{Float32}())).logits)
     @test agreeing(traced, reference.first_choices)
     # Whether Gambit's comparison runs here depends on pygambit's step sizes, so only the checks it runs are asserted.
-    cross_checked!(FOLDED_GAMBIT_GAME, 3, TraceSettings{Float32}())
+    cross_checked!(FOLDED_GAMBIT_GAME, 3, BifurcationKitSettings{Float32}())
 end

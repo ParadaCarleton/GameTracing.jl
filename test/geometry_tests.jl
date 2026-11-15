@@ -105,14 +105,14 @@ end
 
 @testset "a projection in the summed norm lands on the branch" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    traced = unwrap(trace_endpoint(game, WIDTH, TraceSettings{Float32}()))
-    settings = TraceSettings{Float32}(geometry = TraceGeometry{Float32}(distance = SummedDistance))
+    traced = unwrap(trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}()))
+    settings = BifurcationKitSettings{Float32}(geometry = TraceGeometry{Float32}(distance = SummedDistance))
     projected = branch_projection(game, traced.logits .+ 1.0f-2, 1.0f0, settings)
     @test residual_norm(GAME, projected.logits, TARGET_PRECISION * projected.relative_precision) < 1.0f-3
 end
 
 """Whether `settings` traces `payoffs` to the fine Float64 reference at `precision`, or to an equilibrium where the branch folds back."""
-function reaches_reference(payoffs::Tuple, precision::Real, settings::TraceSettings{Float32})::Bool
+function reaches_reference(payoffs::Tuple, precision::Real, settings::BifurcationKitSettings{Float32})::Bool
     pass = NormalFormPass(map(table -> Float32.(table), payoffs))
     result = trace_endpoint(LogitGame(pass, Float32(precision)), length(payoffs), settings)
     if is_error(result)

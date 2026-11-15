@@ -37,7 +37,7 @@ end
 (stop::StopAtPrecision)(::AbstractVector, relative_precision::Real)::Bool = relative_precision * stop.target < stop.precision
 
 const FAR_TARGET = 1.0f6
-const LOG_PRECISION_SETTINGS = TraceSettings{Float32}(; geometry = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
+const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; geometry = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
 
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
     for payoffs in (far_opening_games(Xoshiro(FAR_OPENING_SEED))..., far_opening_games(fresh_rng())...)
@@ -72,7 +72,7 @@ end
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
-    settings_wide = TraceSettings{wide}(; geometry = TraceGeometry{wide}(; distance = FisherLogPrecisionDistance))
+    settings_wide = BifurcationKitSettings{wide}(; geometry = TraceGeometry{wide}(; distance = FisherLogPrecisionDistance))
     reached = unwrap_error(
         trace_endpoint(
             LogitGame(gains_wide, wide(FAR_TARGET)),
@@ -229,7 +229,7 @@ end
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
     # stalled the opening at ρ ≈ 4e-19, whatever η: zero-slope gains whose every evaluation jumps leave no first step.
     pass, target = NoisyFlatPass(1.0f-4, 1.0f-7, 10.0f0), 1.0f5
-    settings = TraceSettings{Float32}(; LOG_PRECISION_SETTINGS.geometry, max_steps = 20_000)
+    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.geometry, max_steps = 20_000)
     tolerance = settings.corrector.logit_tolerance
     failure = unwrap_error(trace_endpoint(LogitGame(pass, target), 1, settings))
     @info "noisy trace" failure.cause failure.context.precision failure.context.steps failure.context.step_length
@@ -293,7 +293,7 @@ end
 @testset "at precision zero the gap Jacobian is the identity and the opening tangent is the factored tangent ($width)" for width in (2, 3, 5)
     rng = Xoshiro(0x0123456789abcdef + width)
     game = LogitGame(LinearGainPass(randn(rng, Float32, width, width), randn(rng, Float32, width)), TARGET_PRECISION)
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     start = GameTracing.trace_start(game, zeros(Float32, width))
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))
     @test system.jacobian[1:width, 1:width] == I(width)
@@ -305,11 +305,11 @@ end
 # With noise 0.1 below precision 1e-3 the secant to a solve at first_step / 150 (the old opening) turned 1.16 rad from the branch, and
 # BifurcationKit's turn test refused every step (TraceStuck, no accepted point), as on irv-extremism study draw 116.
 @testset "noise in the secant's solve does not stop the trace" begin
-    clean = unwrap(trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, TraceSettings{Float32}()))
+    clean = unwrap(trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, BifurcationKitSettings{Float32}()))
     noisy = trace_endpoint(
         LogitGame(WindowNoisePass(GAME, 0.1f0, 1.0f-3), TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}(),
+        BifurcationKitSettings{Float32}(),
     )
     @test !is_error(noisy)
     @test isapprox(unwrap(noisy).logits, clean.logits; atol = 1.0f-3)

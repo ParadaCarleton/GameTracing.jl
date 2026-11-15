@@ -228,12 +228,24 @@ function write_gain_slope!(
         player::Integer,
         rival::Integer,
     )::Nothing where {E <: Real}
-    rival_strategy = work.strategies[rival]
-    sensitivity = @view work.sensitivities[rival][axes(payoff, player), axes(payoff, rival)]
-    expected = view(work.expected, axes(payoff, player))
-    own, other = axes(sensitivity)
-    own_later, later = (first(own) + 1):last(own), (first(other) + 1):last(other)
-    first_row = @view sensitivity[first(own):first(own), later]
-    block .= transpose(view(rival_strategy, later)) .* (@view(sensitivity[own_later, later]) .- view(expected, own_later) .- first_row .+ first(expected))
+    own, other = axes(payoff, player), axes(payoff, rival)
+    if size(block) != (length(own) - 1, length(other) - 1)
+        throw(DimensionMismatch("a block of size $(size(block)) does not fit $(length(own)) by $(length(other)) strategies"))
+    end
+    # Loops: a broadcast over small views spends more on alias checks and axes than on its sums. One bounds check per
+    # array lets the inner loop vectorize.
+    rival_strategy, sensitivity, expected = work.strategies[rival], work.sensitivities[rival], work.expected
+    checkbounds(rival_strategy, other)
+    checkbounds(sensitivity, own, other)
+    checkbounds(expected, own)
+    # Block row and column `i` hold strategies `i + shift` of `player` and `rival`: the first strategy has none.
+    row_shift, column_shift = first(own) + 1 - firstindex(block, 1), first(other) + 1 - firstindex(block, 2)
+    @inbounds for column in axes(block, 2)
+        later = column + column_shift
+        weight, offset = rival_strategy[later], expected[first(own)] - sensitivity[first(own), later]
+        @simd for row in axes(block, 1)
+            block[row, column] = weight * (sensitivity[row + row_shift, later] - expected[row + row_shift] + offset)
+        end
+    end
     return nothing
 end

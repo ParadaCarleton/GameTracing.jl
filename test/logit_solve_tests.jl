@@ -19,9 +19,9 @@ end
 
 const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
-"""Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and CurveTracing's."""
+"""Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and PathFollowing's."""
 function engine_settings(::Type{E})::Vector{Pair{String, EngineSettings{E}}} where {E <: Real}
-    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), 1.1f0), "CurveTracing" => CurveSettings{E}()]
+    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), 1.1f0), "PathFollowing" => PathFollowingSettings{E}()]
 end
 
 @testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision ($engine)" for (engine, settings) in engine_settings(Float32)
@@ -69,7 +69,7 @@ const FOLDING_BRANCH_GAME = (
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
 )
 
-# The (3, 3, 2) game of `3 .* randn(Xoshiro(152), Float32, (3, 3, 2))` per player. A long early CurveTracing step lands
+# The (3, 3, 2) game of `3 .* randn(Xoshiro(152), Float32, (3, 3, 2))` per player. A long early PathFollowing step lands
 # where its oriented tangent runs back along the branch; without the orientation check the trace ends at another
 # equilibrium, 0.9995 away in probability from Gambit's pure one at λ ≈ 3.8.
 const REVERSAL_GAME = (
@@ -171,40 +171,40 @@ end
     end
 end
 
-@testset "CurveTracing's spent steps, refusals and unresolved steps fail as values ($element)" for element in (Float32, widen(Float32))
+@testset "PathFollowing's spent steps, refusals and unresolved steps fail as values ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    spent = unwrap_error(logit_solve(gains; settings = CurveSettings{element}(; max_steps = 1)))
+    spent = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; max_steps = 1)))
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
-    @test unwrap_error(logit_solve_lambda(gains, 100; settings = CurveSettings{element}(; max_steps = 1))).context.lam == 100
+    @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
     # A first step a hundred times past its nominal distance is refused, and no refusal is allowed.
-    refused = unwrap_error(logit_solve(gains; settings = CurveSettings{element}(; first_step = 100, nominal_distance = 1.0f-2, max_refusals = 0)))
+    refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; first_step = 100, nominal_distance = 1.0f-2, max_refusals = 0)))
     @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
-    unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = CurveSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
+    unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
     poisoned = NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0]))
-    @test unwrap_error(logit_solve(poisoned; settings = CurveSettings{element}())).cause == GameTracing.NotFinite
-    @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = CurveSettings{element}())).context.reason == :NotFiniteStart
+    @test unwrap_error(logit_solve(poisoned; settings = PathFollowingSettings{element}())).cause == GameTracing.NotFinite
+    @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = PathFollowingSettings{element}())).context.reason == :NotFiniteStart
     # Step control without its turn and contraction terms still solves.
-    plain = CurveSettings{element}(; nominal_contraction = nothing, nominal_turn = nothing)
+    plain = PathFollowingSettings{element}(; nominal_contraction = nothing, nominal_turn = nothing)
     @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
-    @test_throws ArgumentError logit_solve_lambda(gains, -1; settings = CurveSettings{element}())
+    @test_throws ArgumentError logit_solve_lambda(gains, -1; settings = PathFollowingSettings{element}())
 end
 
-@testset "CurveTracing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))
+@testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), REVERSAL_GAME))
-    checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = CurveSettings{element}()))
+    checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
     # The control: the same trace without the check ends elsewhere.
-    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = CurveSettings{element}(; orientation = nothing)))
+    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation = nothing)))
     @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
 end
 
 """The Bernoulli Fisher weight `σ(z)σ(-z)` of a logit `z`."""
 fisher_weight(logit::Real)::Real = exp(-abs(logit)) / (1 + exp(-abs(logit)))^2
 
-@testset "CurveTracing's geometry weighs each payoff gap and the precision ($element)" for element in (Float32, widen(Float32))
+@testset "PathFollowing's geometry weighs each payoff gap and the precision ($element)" for element in (Float32, widen(Float32))
     # Payoff gaps (1, -2) at precision 3, so logits (3, -6).
     point = element[1, -2, 3]
     weights = zeros(element, 3)
@@ -216,14 +216,14 @@ fisher_weight(logit::Real)::Real = exp(-abs(logit)) / (1 + exp(-abs(logit)))^2
     GameTracing.GeometryWeights(TraceGeometry{element}(; distance = SummedDistance, state_weight = 1 // 2))(weights, point)
     @test weights == element[1 // 2, 1 // 2, 1]
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
-    solved = unwrap(logit_solve(gains; settings = CurveSettings{element}(; geometry = log_precision)))
+    solved = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}(; geometry = log_precision)))
     @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
 end
 
-@testset "a CurveTracing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
+@testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    settings = CurveSettings{element}(; newton_iterations = 1, logit_tolerance = eps(element), settle_ulps = 0)
-    tracer = unwrap(GameTracing.curve_init(gains, settings))
+    settings = PathFollowingSettings{element}(; newton_iterations = 1, logit_tolerance = eps(element), settle_ulps = 0)
+    tracer = unwrap(GameTracing.path_init(gains, settings))
     failure = unwrap_error(GameTracing.landed_point(tracer, element(1), (; lam = 1)))
     @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :landing, 1)
 end
@@ -256,12 +256,12 @@ end
         @test eltype(unwrap(logit_solve(gains)).logits) == element
         @test eltype(only(unwrap(logit_solve_lambda(gains, 2))).logits) == element
         other = element == Float32 ? float(Int) : Float32
-        for settings in (TraceSettings{other}(), CurveSettings{other}())
+        for settings in (TraceSettings{other}(), PathFollowingSettings{other}())
             @test_throws ArgumentError logit_solve_lambda(gains, 2; settings)
             @test_throws ArgumentError logit_solve_branch(gains; settings)
             @test_throws ArgumentError logit_solve(gains; settings)
         end
-        @test unwrap(logit_solve(gains; settings = CurveSettings{element}())).lam isa element
+        @test unwrap(logit_solve(gains; settings = PathFollowingSettings{element}())).lam isa element
     end
     # Integer payoffs trace in `float(Int)`, as Julia promotes them.
     integer = NormalFormGains(ROCK_PAPER_SCISSORS)

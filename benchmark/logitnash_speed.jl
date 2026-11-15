@@ -3,7 +3,7 @@
 # Usage: julia --project=benchmark benchmark/logitnash_speed.jl rows.csv [seeds per size] [seconds per timing]
 # Prints a row per run as it finishes and rewrites rows.csv after each game, then prints a summary per size.
 # Run it under `timeout`: a killed run keeps every finished game in rows.csv.
-using GameTracing: NormalFormGains, CurveSettings, logit_solve, logit_solve_branch
+using GameTracing: NormalFormGains, PathFollowingSettings, logit_solve, logit_solve_branch
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
 using Pkg: Pkg
@@ -20,8 +20,8 @@ const SIZES = ((2, 2), (3, 3), (5, 5), (10, 10), (20, 20), (2, 2, 2), (3, 3, 3),
 # A run whose single timed call takes longer than this is timed once; a faster one is sampled by Chairmarks.
 const SLOW_SECONDS = 0.5f0
 
-"""GameTracing's `logit_solve` in element type `E`, on BifurcationKit (`curve` false) or CurveTracing (`curve` true)."""
-struct Tracing{E <: Real, curve} end
+"""GameTracing's `logit_solve` in element type `E`, on BifurcationKit (`path_following` false) or PathFollowing (`path_following` true)."""
+struct Tracing{E <: Real, path_following} end
 
 """LogitNash's `solve`, which runs in Float64."""
 struct Nash end
@@ -33,17 +33,17 @@ const RUNS = (
     (Tracing{WIDE, false}(), 1.0f-6), (Tracing{WIDE, true}(), 1.0f-6), (Nash(), 1.0f-6),
 )
 
-function solver_name(::Tracing{E, curve})::String where {E, curve}
-    return string(curve ? "CurveTracing " : "GameTracing ", E)
+function solver_name(::Tracing{E, path_following})::String where {E, path_following}
+    return string(path_following ? "PathFollowing " : "GameTracing ", E)
 end
 
-"""The `settings` keyword of `solver`: none for BifurcationKit, which takes `logit_solve`'s default, else `CurveSettings`."""
+"""The `settings` keyword of `solver`: none for BifurcationKit, which takes `logit_solve`'s default, else `PathFollowingSettings`."""
 function settings_keywords(::Tracing{E, false})::NamedTuple where {E}
     return (;)
 end
 
 function settings_keywords(::Tracing{E, true})::NamedTuple where {E}
-    return (; settings = CurveSettings{E}())
+    return (; settings = PathFollowingSettings{E}())
 end
 
 solver_name(::Nash)::String = "LogitNash"

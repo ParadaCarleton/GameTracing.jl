@@ -1,5 +1,5 @@
 """
-    CurveTracing
+    PathFollowing
 
 Trace one solution curve of `H(x) = 0`, `H: ℝⁿ⁺¹ → ℝⁿ`, by pseudo-arclength continuation. Each step predicts along
 the curve's tangent, corrects by Newton's method on the hyperplane normal to that tangent, and sizes the next step
@@ -7,7 +7,7 @@ from the corrector and the tangent's turn; an orientation check keeps it from ru
 caller owns the loop: `init` a `Tracer`, call `step!` until its own
 stopping rule holds. `land!` corrects onto the point where one coordinate takes a given value, near the last point.
 """
-module CurveTracing
+module PathFollowing
 
 using CommonSolve: CommonSolve
 using ErrorTypes: Err, Ok, Result

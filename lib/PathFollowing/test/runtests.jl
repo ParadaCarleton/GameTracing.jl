@@ -1,5 +1,5 @@
-using CurveTracing
-using CurveTracing: AcceptAll, factored_sign, weighted_angle
+using PathFollowing
+using PathFollowing: AcceptAll, factored_sign, weighted_angle
 using CommonSolve: init, step!
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LinearSolve: LUFactorization
@@ -126,7 +126,7 @@ function traced(problem::CurveProblem, settings::PseudoArclength, steps::Integer
     return points
 end
 
-@testset "CurveTracing $E" for E in (Float32, Float64)
+@testset "PathFollowing $E" for E in (Float32, Float64)
     tolerance = sqrt(eps(E))
 
     @testset "circle: every point on it, the angle rising around a full turn" begin
@@ -345,7 +345,7 @@ end
     end
 end
 
-@testset "CurveTracing BigFloat: the orientation check runs on a generic LU" begin
+@testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin
     settings = algorithm(BigFloat; orientation = DeterminantSign(; persistence = 0))
     tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
     steps = [unwrap(step!(tracer)) for _ in 1:6]

@@ -1,16 +1,17 @@
 using CommonSolve: CommonSolve
-using CurveTracing: CurveTracing
 using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
 using LinearSolve: LinearSolve
 using LogExpFunctions: logistic
 using Logging: @debug
+using PathFollowing: PathFollowing
 
 """
-    CurveSettings{E}(; first_step, max_step, max_steps, logit_tolerance, settle_ulps, reach, newton_iterations,
-                     contraction_limit, nominal_contraction, nominal_distance, nominal_turn, growth_limit,
-                     orientation, max_refusals, resolution_ulps, geometry, linear_solver)
+    PathFollowingSettings{E}(; first_step, max_step, max_steps, logit_tolerance, settle_ulps, reach,
+                             newton_iterations, contraction_limit, nominal_contraction, nominal_distance,
+                             nominal_turn, growth_limit, orientation, max_refusals, resolution_ulps, geometry,
+                             linear_solver)
 
-The controls of a trace on CurveTracing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
+The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
 - `geometry`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
@@ -21,17 +22,17 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   `logit_tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`).
 - `reach`: refuse a corrected point whose logits move further from the predictor's than `reach` times the
   predictor's own largest logit move (`WithinReach`). `Inf32` switches the test off.
-- `newton_iterations`, `contraction_limit`: CurveTracing's `Newton`, its corrections in logits (`logit_change`).
-- `nominal_contraction`, `nominal_distance`, `nominal_turn`, `growth_limit`: CurveTracing's `StepControl`. The
+- `newton_iterations`, `contraction_limit`: PathFollowing's `Newton`, its corrections in logits (`logit_change`).
+- `nominal_contraction`, `nominal_distance`, `nominal_turn`, `growth_limit`: PathFollowing's `StepControl`. The
   distance is the first correction's largest logit move; `nothing` drops a term.
-- `orientation`: CurveTracing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
+- `orientation`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
   changes, as a step that runs back along the branch; a change that persists is a bifurcation crossing. `nothing`
   switches the check off.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `resolution_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 """
-struct CurveSettings{E <: Real, L} <: EngineSettings{E}
+struct PathFollowingSettings{E <: Real, L} <: EngineSettings{E}
     first_step::E
     max_step::E
     max_steps::Int
@@ -44,7 +45,7 @@ struct CurveSettings{E <: Real, L} <: EngineSettings{E}
     nominal_distance::Union{Nothing, E}
     nominal_turn::Union{Nothing, E}
     growth_limit::E
-    orientation::Union{Nothing, CurveTracing.DeterminantSign}
+    orientation::Union{Nothing, PathFollowing.DeterminantSign}
     max_refusals::Int
     resolution_ulps::Int
     geometry::TraceGeometry{E}
@@ -54,7 +55,7 @@ end
 # Defaults: the cheapest step control that keeps Gambit's branch on ten benchmark games where others left it. Nominal
 # distance 1 jumped branches on two 5x5x5 games; 0.5 did not, at about the same step count as 1.
 # Without the orientation check, five of them ran back along the branch. `benchmark/logitnash_speed.jl` compares engines.
-function CurveSettings{E}(;
+function PathFollowingSettings{E}(;
         first_step::Real = 0.03f0,
         max_step::Real = 1.0f7,
         max_steps::Integer = 2_000,
@@ -67,13 +68,13 @@ function CurveSettings{E}(;
         nominal_distance::Union{Nothing, Real} = 0.5f0,
         nominal_turn::Union{Nothing, Real} = 0.3f0,
         growth_limit::Real = 4.0f0,
-        orientation::Union{Nothing, CurveTracing.DeterminantSign} = CurveTracing.DeterminantSign(; persistence = 4),
+        orientation::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(; persistence = 4),
         max_refusals::Integer = 80,
         resolution_ulps::Integer = 4,
         geometry::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
         linear_solver::L = LinearSolve.LUFactorization(),
-    )::CurveSettings{E, L} where {E <: Real, L}
-    return CurveSettings{E, L}(
+    )::PathFollowingSettings{E, L} where {E <: Real, L}
+    return PathFollowingSettings{E, L}(
         E(first_step), E(max_step), Int(max_steps), E(logit_tolerance), Int(settle_ulps), E(reach), Int(newton_iterations),
         E(contraction_limit), optional_limit(E, nominal_contraction), optional_limit(E, nominal_distance),
         optional_limit(E, nominal_turn), E(growth_limit), orientation, Int(max_refusals),
@@ -90,7 +91,7 @@ end
 """
     GeometryWeights(geometry)
 
-CurveTracing's `PointWeights` for `geometry` over points `[w; λ]`, at precision `λ` in place of the relative one
+PathFollowing's `PointWeights` for `geometry` over points `[w; λ]`, at precision `λ` in place of the relative one
 (`StepDistance`). Each gap weighs `coordinate_weight`, or for a Fisher distance `state_weight σ(z)σ(-z)` at its logit
 `z = λ w`. The precision weighs `level_weight`, or `1 / (1 + λ)²` for `FisherLogPrecisionDistance`.
 """
@@ -113,7 +114,7 @@ end
 """
     QRESystem(game, workspace)
 
-`game`'s branch as CurveTracing's `system!` over points `[w; λ]`: `branch_system!` at target precision one, without
+`game`'s branch as PathFollowing's `system!` over points `[w; λ]`: `branch_system!` at target precision one, without
 its pin row, written into `workspace` first.
 """
 struct QRESystem{G <: LogitGame, W <: BranchWorkspace}
@@ -132,7 +133,7 @@ end
 """
     LogitSettled(tolerance, rounding)
 
-CurveTracing's `converged` over points `[w; λ]`: the last correction moved no logit more than `tolerance` past
+PathFollowing's `converged` over points `[w; λ]`: the last correction moved no logit more than `tolerance` past
 `rounding` times that logit's own size (`logit_corrections`).
 """
 struct LogitSettled{E <: Real}
@@ -147,7 +148,7 @@ end
 """
     WithinReach(reach)
 
-CurveTracing's `accept` over points `[w; λ]`: the corrected point's logits moved no further from the predictor's than
+PathFollowing's `accept` over points `[w; λ]`: the corrected point's logits moved no further from the predictor's than
 `reach` times the predictor's own largest logit move (`logit_change`). A predictor that moved no logit passes.
 """
 struct WithinReach{E <: Real}
@@ -159,20 +160,20 @@ function (within::WithinReach{E})(start::AbstractVector{E}, predicted::AbstractV
     return !(move > 0) || logit_change(predicted, corrected) <= within.reach * move
 end
 
-"""CurveTracing's `PseudoArclength` for `settings`."""
-function curve_algorithm(settings::CurveSettings{E})::CurveTracing.PseudoArclength where {E <: Real}
-    return CurveTracing.PseudoArclength(;
-        corrector = CurveTracing.Newton(;
+"""PathFollowing's `PseudoArclength` for `settings`."""
+function path_algorithm(settings::PathFollowingSettings{E})::PathFollowing.PseudoArclength where {E <: Real}
+    return PathFollowing.PseudoArclength(;
+        corrector = PathFollowing.Newton(;
             max_iterations = settings.newton_iterations,
             converged = LogitSettled(settings.logit_tolerance, settings.settle_ulps * eps(E)),
             settings.contraction_limit,
             distance = logit_change,
         ),
-        step_control = CurveTracing.StepControl(;
+        step_control = PathFollowing.StepControl(;
             settings.nominal_contraction, settings.nominal_distance, settings.nominal_turn, settings.growth_limit,
             settings.max_step,
         ),
-        metric = CurveTracing.PointWeights(GeometryWeights(settings.geometry)),
+        metric = PathFollowing.PointWeights(GeometryWeights(settings.geometry)),
         settings.orientation,
         settings.linear_solver,
         accept = WithinReach(settings.reach),
@@ -182,26 +183,26 @@ function curve_algorithm(settings::CurveSettings{E})::CurveTracing.PseudoArcleng
 end
 
 """
-CurveTracing's `init` of the principal branch of `gains` in `[w; λ]`: a `Tracer` from the flat start toward rising
+PathFollowing's `init` of the principal branch of `gains` in `[w; λ]`: a `Tracer` from the flat start toward rising
 `λ`, or the `StepFailure` there (`start_context`).
 """
-function curve_init(
+function path_init(
         gains::NormalFormGains,
-        settings::CurveSettings{E},
-    )::Result{<:CurveTracing.Tracer{E}, CurveTracing.StepFailure{E}} where {E <: Real}
+        settings::PathFollowingSettings{E},
+    )::Result{<:PathFollowing.Tracer{E}, PathFollowing.StepFailure{E}} where {E <: Real}
     game = LogitGame(gains, one(E))
     width = logit_count(gains)
     start = trace_start(game, zeros(E, width))
     direction = setindex!(zeros(E, width + 1), one(E), width + 1)
     return CommonSolve.init(
-        CurveTracing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
-        curve_algorithm(settings);
+        PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
+        path_algorithm(settings);
         settings.first_step,
     )
 end
 
-"""The context of CurveTracing's start `failure` over `width` logits: `context` and the flat start."""
-function start_context(failure::CurveTracing.StepFailure{E}, width::Integer, context::NamedTuple)::NamedTuple where {E <: Real}
+"""The context of PathFollowing's start `failure` over `width` logits: `context` and the flat start."""
+function start_context(failure::PathFollowing.StepFailure{E}, width::Integer, context::NamedTuple)::NamedTuple where {E <: Real}
     return (; context..., reason = Symbol(failure.cause), precision = zero(E), logits = zeros(E, width), steps = 0)
 end
 
@@ -221,22 +222,22 @@ function stopped_context(
 end
 
 """
-One accepted step of `tracer` (CurveTracing's `AcceptedStep`), or the `TraceFailure` that ends the trace:
-`NoConvergence` once it has taken `max_steps`, else `TraceStuck` for CurveTracing's `Unresolved` or
+One accepted step of `tracer` (PathFollowing's `AcceptedStep`), or the `TraceFailure` that ends the trace:
+`NoConvergence` once it has taken `max_steps`, else `TraceStuck` for PathFollowing's `Unresolved` or
 `TooManyRefusals`. `context` rides on the failure.
 """
-function curve_step!(
-        tracer::CurveTracing.Tracer{E},
+function path_step!(
+        tracer::PathFollowing.Tracer{E},
         max_steps::Integer,
         context::NamedTuple,
-    )::Result{CurveTracing.AcceptedStep{E}, TraceFailure} where {E <: Real}
+    )::Result{PathFollowing.AcceptedStep{E}, TraceFailure} where {E <: Real}
     if tracer.steps >= max_steps
         return Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
     end
     stepped = CommonSolve.step!(tracer)
     if is_error(stepped)
         failure = unwrap_error(stepped)
-        reason = ifelse(failure.cause == CurveTracing.Unresolved, :unresolved_step, :refusals)
+        reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
         details = (; failure.last_refusal, failure.step_length, failure.refusals)
         return Err(TraceFailure(TraceStuck, stopped_context(reason, tracer.point, tracer.steps, context, details)))
     end
@@ -248,8 +249,8 @@ end
 The point of `tracer`'s branch at precision `precision`, which its last step reached or passed (`land!`), or the
 `TraceStuck` failure of that corrector with `context`.
 """
-function landed_point(tracer::CurveTracing.Tracer{E}, precision::E, context::NamedTuple)::Result{Vector{E}, TraceFailure} where {E <: Real}
-    landed = CurveTracing.land!(tracer, length(tracer.point), precision)
+function landed_point(tracer::PathFollowing.Tracer{E}, precision::E, context::NamedTuple)::Result{Vector{E}, TraceFailure} where {E <: Real}
+    landed = PathFollowing.land!(tracer, length(tracer.point), precision)
     if is_error(landed)
         details = (; target = precision, refusal = unwrap_error(landed))
         return Err(TraceFailure(TraceStuck, stopped_context(:landing, tracer.point, tracer.steps, context, details)))
@@ -258,21 +259,21 @@ function landed_point(tracer::CurveTracing.Tracer{E}, precision::E, context::Nam
 end
 
 """
-`settled_points` on CurveTracing: the accepted points of `gains`' principal branch, to the first whose largest regret is
+`settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
 at most `tolerance`. A step past `maximum_precision` lands there (`landed_point`), which settles or fails
 `NoConvergence` with reason `:maximum_precision`.
 """
 function engine_points(
         gains::NormalFormGains,
-        settings::CurveSettings{E},
+        settings::PathFollowingSettings{E},
         maximum_precision::E,
         tolerance::E,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    started = curve_init(gains, settings)
+    started = path_init(gains, settings)
     if is_error(started)
         failure = unwrap_error(started)
-        cause = ifelse(failure.cause == CurveTracing.NotFiniteStart, NotFinite, Singular)
+        cause = ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
         return Err(TraceFailure(cause, start_context(failure, logit_count(gains), context)))
     end
     return recorded_points(unwrap(started), BranchRecorder(gains, one(E), tolerance), maximum_precision, settings.max_steps, context)
@@ -280,7 +281,7 @@ end
 
 """`engine_points` on a started `tracer`, each accepted point into `recorder`."""
 function recorded_points(
-        tracer::CurveTracing.Tracer{E},
+        tracer::PathFollowing.Tracer{E},
         recorder::BranchRecorder,
         maximum_precision::E,
         max_steps::Integer,
@@ -301,16 +302,16 @@ function recorded_points(
 end
 
 """
-The point of `tracer`'s next accepted step (`curve_step!`), or of its landing at `maximum_precision` once the step
+The point of `tracer`'s next accepted step (`path_step!`), or of its landing at `maximum_precision` once the step
 passes it (`landed_point`), or the failure of either.
 """
 function capped_step!(
-        tracer::CurveTracing.Tracer{E},
+        tracer::PathFollowing.Tracer{E},
         maximum_precision::E,
         max_steps::Integer,
         context::NamedTuple,
     )::Result{Vector{E}, TraceFailure} where {E <: Real}
-    stepped = curve_step!(tracer, max_steps, context)
+    stepped = path_step!(tracer, max_steps, context)
     if is_error(stepped)
         return Err(unwrap_error(stepped))
     end
@@ -321,21 +322,21 @@ function capped_step!(
 end
 
 """
-`logit_solve_lambda` on CurveTracing: the logits of `gains`' principal branch at each precision of `precisions`, from
+`logit_solve_lambda` on PathFollowing: the logits of `gains`' principal branch at each precision of `precisions`, from
 one trace that lands on each in rising order at its first crossing (`landed_point`), or the first failure.
 """
 function engine_lambdas(
         gains::NormalFormGains,
         precisions::AbstractVector{E},
-        settings::CurveSettings{E},
+        settings::PathFollowingSettings{E},
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
     if any(<(0), precisions)
         throw(ArgumentError("precisions must be non-negative; got $(minimum(precisions))"))
     end
-    started = curve_init(gains, settings)
+    started = path_init(gains, settings)
     if is_error(started)
         failure = unwrap_error(started)
-        cause = ifelse(failure.cause == CurveTracing.NotFiniteStart, NotFinite, Singular)
+        cause = ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
         return Err(TraceFailure(cause, start_context(failure, logit_count(gains), (;))))
     end
     return landed_lambdas(unwrap(started), precisions, settings.max_steps)
@@ -343,7 +344,7 @@ end
 
 """`engine_lambdas` on a started `tracer`."""
 function landed_lambdas(
-        tracer::CurveTracing.Tracer{E},
+        tracer::PathFollowing.Tracer{E},
         precisions::AbstractVector{E},
         max_steps::Integer,
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
@@ -359,10 +360,10 @@ function landed_lambdas(
 end
 
 """The point of `tracer`'s branch at `precision`: steps until one reaches it, then lands there (`landed_point`)."""
-function stepped_landing!(tracer::CurveTracing.Tracer{E}, precision::E, max_steps::Integer)::Result{Vector{E}, TraceFailure} where {E <: Real}
+function stepped_landing!(tracer::PathFollowing.Tracer{E}, precision::E, max_steps::Integer)::Result{Vector{E}, TraceFailure} where {E <: Real}
     context = (; lam = precision)
     while last(tracer.point) < precision
-        stepped = curve_step!(tracer, max_steps, context)
+        stepped = path_step!(tracer, max_steps, context)
         if is_error(stepped)
             return Err(unwrap_error(stepped))
         end

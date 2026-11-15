@@ -5,17 +5,17 @@ version = "0.1.0"
 [deps]
 BifurcationKit = "0f109fa4-8a5d-4b75-95aa-f515264e7665"
 CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
-CurveTracing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 ErrorTypes = "7f495686-c6d2-4c77-9e8e-e4c865675f9d"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 
 [sources]
 Corset = {url = "https://github.com/ParadaCarleton/Corset.jl", rev = "e6ab42c93325fadefc401c1e9f79a39a85bdd901"}
 BifurcationKit = {url = "https://github.com/ParadaCarleton/BifurcationKit.jl", rev = "irv"}
-CurveTracing = {path = "lib/CurveTracing"}
+PathFollowing = {path = "lib/PathFollowing"}
 
 [extras]
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
@@ -36,7 +36,6 @@ test = ["CondaPkg", "Corset", "ErrorTypes", "LogitNash", "Mooncake", "Printf", "
 BifurcationKit = "0.8.8"
 CommonSolve = "0.2.4"
 CondaPkg = "0.2.38"
-CurveTracing = "0.1"
 Corset = "0.1"
 ErrorTypes = "0.5.2"
 LinearAlgebra = "1"
@@ -45,6 +44,7 @@ LogExpFunctions = "0.3.29, 1.0.3"
 Logging = "1"
 LogitNash = "0.3"
 Mooncake = "0.5.67"
+PathFollowing = "0.1"
 Printf = "1"
 PythonCall = "0.9.37"
 Random = "1"

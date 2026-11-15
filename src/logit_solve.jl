@@ -123,7 +123,7 @@ end
 pygambit's `logit_solve_lambda`: the `LogitQREProfile` on the principal branch of the normal-form game `gains`
 (`NormalFormGains`) at each precision in `lam`, a number or a vector, in `lam`'s order, or the first trace's failure.
 `first_step` and `max_accel` set the trace's steps (`gambit_settings`); `settings`, an `EngineSettings`, replaces
-them whole. `CurveSettings` trace once and land on each precision at its first crossing; they refuse a negative one.
+them whole. `PathFollowingSettings` trace once and land on each precision at its first crossing; they refuse a negative one.
 Profiles take `float` of the payoffs' element type (Float64 for integer payoffs), and `settings` must share it
 (`ArgumentError` otherwise).
 """
@@ -151,7 +151,7 @@ function engine_lambdas(
         precisions::AbstractVector{E},
         settings::TraceSettings{E},
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
-    # ponytail: one trace per precision; `CurveSettings` land on each precision in one trace instead.
+    # ponytail: one trace per precision; `PathFollowingSettings` land on each precision in one trace instead.
     results = lambda_logits.((gains,), precisions, (settings,))
     for result in results
         if is_error(result)

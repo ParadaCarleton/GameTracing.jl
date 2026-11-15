@@ -102,6 +102,16 @@ end
     @test pass_bytes(gains, randn(rng, Float32, logit_count(gains)), 2.0f0) == 0
 end
 
+@testset "a NormalFormGains walk refuses work arrays of another game" begin
+    rng = fresh_rng()
+    gains = NormalFormGains(ntuple(_ -> randn(rng, 3, 2), 2))
+    logits = randn(rng, logit_count(gains))
+    for other in (NormalFormGains(ntuple(_ -> randn(rng, 2, 3), 2)), NormalFormGains(ntuple(_ -> randn(rng, 3, 2, 2), 3)))
+        work = pass_workspace(other, logits)
+        @test_throws DimensionMismatch GameTracing.walk_player!(work, first(gains.payoffs), 1; slopes = true)
+    end
+end
+
 @testset "NormalFormGains: the gain slope is the derivative of the gains, at any strategy counts" begin
     rng = fresh_rng()
     for counts in ((3, 3), (2, 3, 4), (4, 2), (1, 3), (3, 2, 2))

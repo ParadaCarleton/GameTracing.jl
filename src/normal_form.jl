@@ -1,5 +1,3 @@
-using LinearAlgebra: mul!
-
 """
     NormalFormGains(payoffs)
 
@@ -44,17 +42,12 @@ end
 
 """
 The work arrays of a `gains` pass at logits of element type `E`: each player's mixed strategy, and room for one player's
-expected payoffs, its payoff sensitivities to one rival's strategies, and their means.
+expected payoffs and its payoff sensitivities to each rival's strategies.
 """
 function pass_workspace(gains::NormalFormGains, ::AbstractVector{E})::NamedTuple where {E <: Real}
     counts = size(first(gains.payoffs))
     widest = maximum(counts)
-    return (;
-        strategies = zeros.(E, counts),
-        expected = zeros(E, widest),
-        sensitivity = zeros(E, widest, widest),
-        means = zeros(E, widest),
-    )
+    return (; strategies = zeros.(E, counts), expected = zeros(E, widest), sensitivities = zeros.(E, widest, counts))
 end
 
 """Write into `strategy` the mixed strategy `softmax([0; logits])` of a player whose logits are against its first strategy."""
@@ -71,20 +64,94 @@ function mixed_strategies(gains::NormalFormGains, logits::AbstractVector{E})::Tu
     return reference_softmax!.(zeros.(E, size(first(gains.payoffs))), view.((logits,), logit_ranges(gains)))
 end
 
-"""The probability that every player but `player` and `skipped` plays its strategy in `profile`."""
-function rival_weight(
-        strategies::NTuple{N, AbstractVector{E}},
-        profile::CartesianIndex{N},
-        player::Integer,
-        skipped::Integer,
-    )::E where {N, E <: Real}
-    weight = one(E)
+"""
+The weight of player `other` in a column of a payoff array: its probability `strategy[index]` of its strategy there,
+or one for the first player, whose strategy runs down the column, and for `player`, whose payoffs the column holds.
+"""
+function column_weight(strategy::AbstractVector{E}, index::Integer, other::Integer, player::Integer)::E where {E <: Real}
+    return other == 1 || other == player ? one(E) : strategy[index]
+end
+
+"""The product of `weights` but the one of player `skipped`."""
+function weight_without(weights::NTuple{N, E}, skipped::Integer)::E where {N, E <: Real}
+    return prod(ifelse.(ntuple(identity, Val(N)) .== skipped, one(E), weights))
+end
+
+"""
+Throw a `DimensionMismatch` unless the work arrays `work` (`pass_workspace`) fit `payoff`: each player's strategy on
+its axis, and room for `player`'s expected payoffs and sensitivities. `walk_player!` indexes them unchecked after it.
+"""
+function require_fitting_workspace(work::NamedTuple, payoff::AbstractArray, player::Integer)::Nothing
+    (; strategies, sensitivities, expected) = work
+    fitting = length(strategies) == length(sensitivities) == ndims(payoff) && length(expected) >= size(payoff, player)
     for (other, strategy) in pairs(strategies)
-        if other != player && other != skipped
-            weight *= strategy[profile[other]]
+        fitting &= axes(strategy, 1) == axes(payoff, other) == axes(sensitivities[other], 2)
+        fitting &= axes(sensitivities[other], 1) == axes(expected, 1)
+    end
+    if !fitting
+        throw(DimensionMismatch("work arrays of sizes $(size.(strategies)) do not fit payoffs of size $(size(payoff))"))
+    end
+    return nothing
+end
+
+"""
+    walk_player!(work, payoff, player; slopes)
+
+`player`'s expected payoffs `U_p(k, π)` into `work.expected`, at the strategies `π` in `work.strategies`, and with
+`slopes` its payoff sensitivities `∂U_p(k) / ∂π_qj` to each rival `q` into `work.sensitivities[q]`. One walk over
+`payoff`, a column at a time: the first player's strategy runs down a column, the other players' weights
+(`column_weight`) stay fixed along it.
+"""
+function walk_player!(work::NamedTuple, payoff::AbstractArray{<:Real, N}, player::Integer; slopes::Bool)::AbstractVector where {N}
+    require_fitting_workspace(work, payoff, player)
+    (; strategies, sensitivities) = work
+    expected = view(work.expected, axes(payoff, player))
+    zeroed = zero(eltype(expected))
+    fill!(expected, zeroed)
+    if slopes
+        for rival in eachindex(sensitivities)
+            fill!(@view(sensitivities[rival][axes(payoff, player), axes(payoff, rival)]), zeroed)
         end
     end
-    return weight
+    first_strategy = first(strategies)
+    players = ntuple(identity, Val(N))
+    @inbounds for column in CartesianIndices(Base.tail(axes(payoff)))
+        values = @view payoff[:, column]
+        indices = (firstindex(first_strategy), Tuple(column)...)
+        weights = column_weight.(strategies, indices, players, player)
+        everything = prod(weights)
+        if player == 1
+            for strategy in axes(payoff, 1)
+                expected[strategy] += everything * values[strategy]
+            end
+            if slopes
+                for rival in 2:N
+                    sensitivity, others = sensitivities[rival], weight_without(weights, rival)
+                    for strategy in axes(payoff, 1)
+                        sensitivity[strategy, indices[rival]] += others * values[strategy]
+                    end
+                end
+            end
+        else
+            own, mixed = indices[player], zero(promote_type(eltype(expected), eltype(payoff)))
+            for strategy in axes(payoff, 1)
+                mixed += first_strategy[strategy] * values[strategy]
+            end
+            expected[own] += everything * mixed
+            if slopes
+                sensitivity = first(sensitivities)
+                for strategy in axes(payoff, 1)
+                    sensitivity[own, strategy] += everything * values[strategy]
+                end
+                for rival in 2:N
+                    if rival != player
+                        sensitivities[rival][own, indices[rival]] += weight_without(weights, rival) * mixed
+                    end
+                end
+            end
+        end
+    end
+    return expected
 end
 
 """
@@ -102,13 +169,14 @@ function write_gains!(
     ranges = logit_ranges(gains)
     reference_softmax!.(work.strategies, view.((logits,), ranges))
     for (player, payoff) in pairs(gains.payoffs)
-        expected = view(work.expected, axes(payoff, player))
-        fill!(expected, zero(E))
-        for profile in CartesianIndices(payoff)
-            expected[profile[player]] += payoff[profile] * rival_weight(work.strategies, profile, player, 0)
-        end
-        view(gain, ranges[player]) .= view(expected, (firstindex(expected) + 1):lastindex(expected)) .- first(expected)
+        write_player_gain!(view(gain, ranges[player]), walk_player!(work, payoff, player; slopes = false))
     end
+    return nothing
+end
+
+"""Write into `gain` a player's gains: its `expected` payoffs after the first strategy's, less the first's."""
+function write_player_gain!(gain::AbstractVector, expected::AbstractVector)::Nothing
+    gain .= view(expected, (firstindex(expected) + 1):lastindex(expected)) .- first(expected)
     return nothing
 end
 
@@ -120,13 +188,17 @@ function (gains::NormalFormGains)(
         logits::AbstractVector{E},
         ::Real,
     )::Nothing where {E <: Real}
-    write_gains!(work, gain, gains, logits)
+    ranges = logit_ranges(gains)
+    reference_softmax!.(work.strategies, view.((logits,), ranges))
     fill!(gain_slope, zero(E))
     fill!(gain_precision_slope, zero(E))
-    ranges = logit_ranges(gains)
-    for (player, payoff) in pairs(gains.payoffs), (rival, rival_range) in pairs(ranges)
-        if rival != player
-            write_gain_slope!(@view(gain_slope[ranges[player], rival_range]), payoff, work, player, rival)
+    for (player, payoff) in pairs(gains.payoffs)
+        expected = walk_player!(work, payoff, player; slopes = true)
+        write_player_gain!(view(gain, ranges[player]), expected)
+        for (rival, rival_range) in pairs(ranges)
+            if rival != player
+                write_gain_slope!(@view(gain_slope[ranges[player], rival_range]), payoff, work, player, rival)
+            end
         end
     end
     return nothing
@@ -145,9 +217,9 @@ end
 """
     write_gain_slope!(block, payoff, work, player, rival)
 
-`∂G_pk / ∂z_qj` of `player` `p` in the logits of `rival` `q`, into `block`, at the strategies in `work`. With
-`D_ki = ∂U_p(k) / ∂π_qi` and `∂π_qi / ∂z_qj = π_qi (δ_ij - π_qj)`, `∂U_p(k) / ∂z_qj = π_qj (D_kj - Σ_i D_ki π_qi)`;
-a gain takes its strategy's row less the first strategy's.
+`∂G_pk / ∂z_qj` of `player` `p` in the logits of `rival` `q`, into `block`, from the sensitivities `D_ki = ∂U_p(k) /
+∂π_qi` and expected payoffs in `work` (`walk_player!`). With `∂π_qi / ∂z_qj = π_qi (δ_ij - π_qj)` and
+`Σ_i D_ki π_qi = U_p(k)`, `∂U_p(k) / ∂z_qj = π_qj (D_kj - U_p(k))`; a gain takes its strategy's row less the first's.
 """
 function write_gain_slope!(
         block::AbstractMatrix{E},
@@ -157,15 +229,11 @@ function write_gain_slope!(
         rival::Integer,
     )::Nothing where {E <: Real}
     rival_strategy = work.strategies[rival]
-    sensitivity = @view work.sensitivity[axes(payoff, player), axes(payoff, rival)]
-    fill!(sensitivity, zero(E))
-    for profile in CartesianIndices(payoff)
-        sensitivity[profile[player], profile[rival]] += payoff[profile] * rival_weight(work.strategies, profile, player, rival)
-    end
-    means = mul!(view(work.means, axes(payoff, player)), sensitivity, rival_strategy)
+    sensitivity = @view work.sensitivities[rival][axes(payoff, player), axes(payoff, rival)]
+    expected = view(work.expected, axes(payoff, player))
     own, other = axes(sensitivity)
     own_later, later = (first(own) + 1):last(own), (first(other) + 1):last(other)
     first_row = @view sensitivity[first(own):first(own), later]
-    block .= transpose(view(rival_strategy, later)) .* (@view(sensitivity[own_later, later]) .- view(means, own_later) .- first_row .+ first(means))
+    block .= transpose(view(rival_strategy, later)) .* (@view(sensitivity[own_later, later]) .- view(expected, own_later) .- first_row .+ first(expected))
     return nothing
 end

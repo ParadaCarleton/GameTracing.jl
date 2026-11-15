@@ -143,6 +143,9 @@ lands where the oriented tangent runs back along the curve, or when the step cro
 changed sign refuses the step (`OrientationFlip`). After `persistence` such refusals in a run of steps that each met
 one, the next changed sign is accepted as a bifurcation crossing (`AcceptedStep`'s `flipped`). The run spans steps
 because the step that follows a refusal grows again and can stop short of the bifurcation point.
+
+With `LUFactorization`, the check reads the sign from the tangent solve's own LU in O(n). Other linear solvers pay a
+second LU factorization, of `[J; tᵀ]`, at each corrected point.
 """
 struct DeterminantSign
     persistence::Int

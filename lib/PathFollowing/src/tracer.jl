@@ -111,11 +111,12 @@ function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tr
     if !(all(isfinite, tracer.residual) && all(isfinite, tracer.jacobian))
         return Err(StepFailure(NotFiniteStart, NoRefusal, tracer.step_length, 0))
     end
-    if !tangent_solve!(tracer, problem.direction)
+    oriented = tangent_solve!(tracer, problem.direction)
+    if is_error(oriented)
         return Err(StepFailure(SingularStart, NoRefusal, tracer.step_length, 0))
     end
     tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
-    tracer.orientation = orientation_sign!(tracer, algorithm.orientation, tracer.tangent)
+    tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
 
@@ -195,7 +196,8 @@ function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <
     if !(all(isfinite, tracer.residual) && all(isfinite, tracer.jacobian))
         return refused(E, NotFiniteResidual)
     end
-    if !tangent_solve!(tracer, tracer.tangent)
+    oriented = tangent_solve!(tracer, tracer.tangent)
+    if is_error(oriented)
         return refused(E, SingularSystem)
     end
     turn = weighted_angle(tracer.turn_weights, tracer.tangent, tracer.candidate)
@@ -203,20 +205,31 @@ function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <
     if factor > algorithm.step_control.refusal_factor
         return refused(E, TooFast)
     end
-    orientation = orientation_sign!(tracer, algorithm.orientation, tracer.candidate)
+    orientation = unwrap(oriented)
     if flip_refused(algorithm.orientation, tracer.orientation, orientation, flips)
         return refused(E, OrientationFlip)
     end
     return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
 end
 
-"""The sign of `det([J; tᵀ])` for `J = tracer.jacobian` and `t = tangent` under `check`; zero without a check."""
-orientation_sign!(::Tracer, ::Nothing, ::AbstractVector)::Int8 = Int8(0)
+"""
+The sign of `det([J; tᵀ])` under `check` for `J = tracer.jacobian` and the tangent `t` that the bordered solve just
+put in `tracer.candidate`; zero without a check. Call it only from `tangent_solve!`, which holds that solve.
+"""
+orientation_sign!(::Tracer, ::Nothing)::Int8 = Int8(0)
+orientation_sign!(tracer::Tracer, ::DeterminantSign)::Int8 = solved_sign!(tracer, tracer.linear.cacheval)
 
-function orientation_sign!(tracer::Tracer{E}, ::DeterminantSign, tangent::AbstractVector{E})::Int8 where {E <: Real}
+"""
+The sign from the bordered solve's own LU of `[J; rᵀ]`. With `rᵀt = 1`, the matrix determinant lemma gives
+`det([J; tᵀ]) = det([J; rᵀ]) · tᵀt`, so both signs agree.
+"""
+solved_sign!(::Tracer, solved::LinearAlgebra.LU)::Int8 = factored_sign(solved.factors, solved.ipiv)
+
+"""The sign from a second factorization, of `[J; tᵀ]` itself, for a linear solver that keeps no LU."""
+function solved_sign!(tracer::Tracer, ::Any)::Int8
     width = length(tracer.residual)
     @views tracer.oriented[1:width, :] .= tracer.jacobian
-    @views tracer.oriented[end, :] .= tangent
+    @views tracer.oriented[end, :] .= tracer.candidate
     (factors, pivots) = factor!(tracer.oriented, tracer.pivots)
     return factored_sign(factors, pivots)
 end
@@ -305,15 +318,18 @@ end
 
 """
 The tangent at the point whose Jacobian `tracer.jacobian` holds, into `tracer.candidate`: the solution of
-`[J; (w ∘ previous)ᵀ] t = [0; 1]` with `w` the turn metric's weights, so `⟨t, previous⟩` is one, positive. Whether
-the solve succeeded.
+`[J; (w ∘ previous)ᵀ] t = [0; 1]` with `w` the turn metric's weights, so `⟨t, previous⟩` is one, positive. The
+orientation sign at that tangent (`orientation_sign!`), or `none` when the solve fails.
 """
-function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Bool where {E <: Real}
+function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Option{Int8} where {E <: Real}
     tracer.row .= tracer.turn_weights .* previous
     border!(tracer)
     fill!(tracer.rhs, zero(E))
     tracer.rhs[end] = one(E)
-    return bordered_solve!(tracer, tracer.candidate)
+    if !bordered_solve!(tracer, tracer.candidate)
+        return none(Int8)
+    end
+    return some(orientation_sign!(tracer, tracer.algorithm.orientation))
 end
 
 """Fill `tracer.bordered` with the Jacobian over `tracer.row`."""

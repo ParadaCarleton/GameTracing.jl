@@ -48,7 +48,7 @@ expected payoffs and its payoff sensitivities to each rival's strategies, and th
 function pass_workspace(gains::NormalFormGains, ::AbstractVector{E})::NamedTuple where {E <: Real}
     counts = size(first(gains.payoffs))
     widest, entries = maximum(counts), prod(counts)
-    tensors = [zeros(E, entries) for _ in 1:tensor_count(length(counts) - 1)]
+    tensors = zeros.(E, fill(entries, tensor_count(length(counts) - 1)))
     sensitivities = zeros.(E, widest, counts)
     spare, joint = zeros(E, entries), zeros(E, entries)
     return (; strategies = zeros.(E, counts), expected = zeros(E, widest), sensitivities, tensors, spare, joint)
@@ -75,7 +75,7 @@ end
 
 """
 The tensors `contract_payoff!` holds at once for `rivals` rivals: one per halving of the rivals down to one
-(`write_first_marginal!`), and at least one.
+(`write_marginals!`), and at least one.
 """
 function tensor_count(rivals::Integer)::Integer
     return rivals <= 2 ? 1 : 1 + tensor_count(cld(rivals, 2))
@@ -118,9 +118,10 @@ is at least as long as the slices are many, else across the blocks; each entry a
         group::AbstractUnitRange{<:Integer},
         weights::AbstractVector{E},
     )::NTuple{N, Integer} where {N, E <: Real}
-    stride = prod(ntuple(axis -> axis < first(group) ? dims[axis] : 1, Val(N)))
-    width = prod(ntuple(axis -> axis in group ? dims[axis] : 1, Val(N)))
-    blocks = prod(ntuple(axis -> axis > last(group) ? dims[axis] : 1, Val(N)))
+    numbers = ntuple(identity, Val(N))
+    inside = first(group) .<= numbers .<= last(group)
+    stride, width = prod(ifelse.(numbers .< first(group), dims, 1)), prod(ifelse.(inside, dims, 1))
+    blocks = prod(ifelse.(numbers .> last(group), dims, 1))
     fitting = length(source) >= stride * width * blocks && length(target) >= stride * blocks && length(weights) == width
     if Base.has_offset_axes(target, source, weights) || !fitting
         throw(DimensionMismatch("cannot contract axes $group of size $dims from $(length(source)) into $(length(target))"))
@@ -153,7 +154,7 @@ is at least as long as the slices are many, else across the blocks; each entry a
             end
         end
     end
-    return ntuple(axis -> axis in group ? 1 : dims[axis], Val(N))
+    return ifelse.(inside, 1, dims)
 end
 
 """
@@ -246,12 +247,13 @@ function write_pair_marginals!(
 end
 
 """
-    write_marginals!(work, tensor, dims, positions, player, depth)
+    write_marginals!(work, tensor, dims, positions, player, depth, every_rival)
 
 For each rival `q` at `positions` (`rival_axis`), the tensor `tensor` of size `dims` with every axis but `player`'s and
 `q`'s contracted, into `work.sensitivities[q]`. The other rivals' axes are already contracted. Contract each half of
 the rivals in turn and recurse into the other half, in `work.tensors[depth]`, down to two rivals
-(`write_pair_marginals!`): a few passes over `tensor` in all.
+(`write_pair_marginals!`): a few passes over `tensor` in all. Without `every_rival`, write only the first rival's
+marginal, by the first branch alone: it rounds as with `every_rival`.
 """
 function write_marginals!(
         work::NamedTuple,
@@ -260,21 +262,24 @@ function write_marginals!(
         positions::AbstractUnitRange{<:Integer},
         player::Integer,
         depth::Integer,
+        every_rival::Bool,
     )::Nothing where {N}
-    if length(positions) <= 2
-        first_axis, last_axis = rival_axis(first(positions), player), rival_axis(last(positions), player)
-        if first_axis == last_axis
-            write_marginal!(work.sensitivities[first_axis], tensor, dims, player, first_axis)
-        else
-            write_pair_marginals!(work, tensor, dims, player, first_axis, last_axis)
-        end
+    first_axis, last_axis = rival_axis(first(positions), player), rival_axis(last(positions), player)
+    if first_axis == last_axis
+        write_marginal!(work.sensitivities[first_axis], tensor, dims, player, first_axis)
+        return nothing
+    end
+    if every_rival && length(positions) == 2
+        write_pair_marginals!(work, tensor, dims, player, first_axis, last_axis)
         return nothing
     end
     lower, upper = halves(positions)
     target = work.tensors[depth]
-    for (kept, contracted) in ((lower, upper), (upper, lower))
-        reduced = contract_rivals!(target, work.spare, work.joint, tensor, dims, contracted, player, work.strategies)
-        write_marginals!(work, target, reduced, kept, player, depth + 1)
+    reduced = contract_rivals!(target, work.spare, work.joint, tensor, dims, upper, player, work.strategies)
+    write_marginals!(work, target, reduced, lower, player, depth + 1, every_rival)
+    if every_rival
+        reduced = contract_rivals!(target, work.spare, work.joint, tensor, dims, lower, player, work.strategies)
+        write_marginals!(work, target, reduced, upper, player, depth + 1, every_rival)
     end
     return nothing
 end
@@ -283,31 +288,6 @@ end
 function halves(positions::AbstractUnitRange{<:Integer})::NTuple{2, AbstractUnitRange{<:Integer}}
     middle = first(positions) + length(positions) ÷ 2 - 1
     return first(positions):middle, (middle + 1):last(positions)
-end
-
-"""
-The first rival's marginal of the tensor `tensor` of size `dims` (`write_marginals!`), into
-`work.sensitivities[rival_axis(first(positions), player)]`, by the steps `write_marginals!` takes to it: contract the
-upper half of `positions`, then recurse into the lower half. Its rounding is that of `write_marginals!`.
-"""
-function write_first_marginal!(
-        work::NamedTuple,
-        tensor::AbstractArray{<:Real},
-        dims::NTuple{N, Integer},
-        positions::AbstractUnitRange{<:Integer},
-        player::Integer,
-        depth::Integer,
-    )::Nothing where {N}
-    rival = rival_axis(first(positions), player)
-    if length(positions) == 1
-        write_marginal!(work.sensitivities[rival], tensor, dims, player, rival)
-        return nothing
-    end
-    lower, upper = halves(positions)
-    target = work.tensors[depth]
-    reduced = contract_rivals!(target, work.spare, work.joint, tensor, dims, upper, player, work.strategies)
-    write_first_marginal!(work, target, reduced, lower, player, depth + 1)
-    return nothing
 end
 
 """
@@ -342,12 +322,8 @@ function contract_payoff!(work::NamedTuple, payoff::AbstractArray{<:Real, N}, pl
     if N == 1
         expected .= payoff
     else
-        if slopes
-            write_marginals!(work, payoff, size(payoff), rivals, player, 1)
-        else
-            # The same steps to the first rival's marginal: the gains round alike with slopes and without.
-            write_first_marginal!(work, payoff, size(payoff), rivals, player, 1)
-        end
+        # Without slopes, only the first rival's marginal, by the same steps: the gains round alike either way.
+        write_marginals!(work, payoff, size(payoff), rivals, player, 1, slopes)
         rival = rival_axis(first(rivals), player)
         weights, marginal = work.strategies[rival], work.sensitivities[rival]
         checkbounds(marginal, eachindex(expected), eachindex(weights))

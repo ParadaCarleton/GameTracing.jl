@@ -15,7 +15,9 @@ PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 [sources]
 Corset = {url = "https://github.com/ParadaCarleton/Corset.jl", rev = "e6ab42c93325fadefc401c1e9f79a39a85bdd901"}
 BifurcationKit = {url = "https://github.com/ParadaCarleton/BifurcationKit.jl", rev = "irv"}
-PathFollowing = {path = "lib/PathFollowing"}
+# A path source lands in dependents' Manifests as a depot-relative path, which breaks on other machines.
+# In-repo test environments develop lib/PathFollowing over this source (CI.yml, benchmark/Project.toml).
+PathFollowing = {url = "https://github.com/ParadaCarleton/GameTracing.jl", subdir = "lib/PathFollowing", rev = "main"}
 
 [extras]
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"

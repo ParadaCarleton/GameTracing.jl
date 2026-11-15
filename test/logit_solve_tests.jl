@@ -186,6 +186,7 @@ end
     # The error estimate's safety converts to the element type.
     halved = PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.ContractionEstimate(; safety = 1 // 2))
     @test halved.error_estimate.safety === element(1 // 2)
+    @test PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.LastCorrection()).error_estimate === GameTracing.PathFollowing.LastCorrection()
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)

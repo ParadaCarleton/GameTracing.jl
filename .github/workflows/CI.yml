@@ -42,8 +42,8 @@ jobs:
         if: matrix.version == '1.13'
         with:
           coverage: false
-  curve-tracing:
-    name: CurveTracing - Julia 1.13
+  path-following:
+    name: PathFollowing - Julia 1.13
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -54,13 +54,13 @@ jobs:
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
         with:
-          project: lib/CurveTracing
+          project: lib/PathFollowing
       - uses: julia-actions/julia-runtest@v1
         with:
-          project: lib/CurveTracing
+          project: lib/PathFollowing
       - uses: julia-actions/julia-processcoverage@v1
         with:
-          directories: lib/CurveTracing/src
+          directories: lib/PathFollowing/src
       - name: Require 100% line coverage
         run: |
           sudo apt-get install -y lcov

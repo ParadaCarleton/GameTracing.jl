@@ -1,4 +1,4 @@
-# CurveTracing.jl
+# PathFollowing.jl
 
 Trace one solution curve of `H(x) = 0`, `H: ℝⁿ⁺¹ → ℝⁿ`, by pseudo-arclength continuation.
 
@@ -8,7 +8,7 @@ The caller owns the loop and its stopping rule. Failures are values (ErrorTypes.
 nothing.
 
 ```julia
-using CurveTracing
+using PathFollowing
 using CommonSolve: init, step!
 using ErrorTypes: is_error, unwrap
 using LinearSolve: LUFactorization

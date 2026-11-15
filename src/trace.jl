@@ -4,8 +4,8 @@ using LinearAlgebra: LU
 """
     EngineSettings{E}
 
-The settings of a trace engine in element type `E`: `TraceSettings` (BifurcationKit) or `CurveSettings`
-(CurveTracing). `logit_solve` and its kin take either as `settings`.
+The settings of a trace engine in element type `E`: `TraceSettings` (BifurcationKit) or `PathFollowingSettings`
+(PathFollowing). `logit_solve` and its kin take either as `settings`.
 """
 abstract type EngineSettings{E <: Real} end
 

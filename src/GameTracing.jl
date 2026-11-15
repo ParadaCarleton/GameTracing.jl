@@ -4,7 +4,7 @@
 Homotopy continuation for logit quantal response equilibria. `trace_endpoint` follows the
 branch of a logit game from zero precision (infinite temperature), where the only equilibrium is the flat one,
 up to a target precision with BifurcationKit's pseudo-arclength continuation (PALC), across folds. `logit_solve` and
-its kin run on BifurcationKit (`TraceSettings`) or on CurveTracing (`CurveSettings`).
+its kin run on BifurcationKit (`TraceSettings`) or on PathFollowing (`PathFollowingSettings`).
 Failures are values (`TraceFailure`), never exceptions.
 """
 module GameTracing
@@ -20,7 +20,7 @@ export LogitGame,
     logit_solve_lambda,
     EngineSettings,
     TraceSettings,
-    CurveSettings,
+    PathFollowingSettings,
     TraceCause,
     TraceFailure,
     Traced,
@@ -49,6 +49,6 @@ include("trace.jl")
 include("redraw.jl")
 include("projection.jl")
 include("logit_solve.jl")
-include("curve_engine.jl")
+include("path_following.jl")
 
 end

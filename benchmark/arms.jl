@@ -72,7 +72,7 @@ case_reference(case::Case)::NamedTuple = branch_reference(case.reference_pass, c
 The relative precision at which `swap`'s trace under `settings` redraws: its first accepted point at or past the swap
 level, from the same trace stopped there. A trace that fails before the swap level gives its last accepted point.
 """
-function swap_precision(swap::SwapCase{C, A, R, E}, settings::S)::E where {C, A, R, E, S <: TraceSettings}
+function swap_precision(swap::SwapCase{C, A, R, E}, settings::S)::E where {C, A, R, E, S <: BifurcationKitSettings}
     (; case) = swap
     stopped = trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; keep_going = StopAt(swap.swap_level))
     return E(unwrap_error(stopped).context.relative_precision)
@@ -83,7 +83,7 @@ A swap's reference under `settings`: the map before's branch to the precision wh
 (`swap_precision`), then the map after's branch on from that point. A redraw happens at an accepted point, so each
 variant's reference swaps where its own trace does.
 """
-function case_reference(swap::W, settings::S)::NamedTuple where {W <: SwapCase, S <: TraceSettings}
+function case_reference(swap::W, settings::S)::NamedTuple where {W <: SwapCase, S <: BifurcationKitSettings}
     (; case) = swap
     level = case.precision * swap_precision(swap, settings)
     before = branch_reference(case.reference_pass, case.width, level)
@@ -95,8 +95,8 @@ shared_reference(case::Case)::NamedTuple = case_reference(case)
 shared_reference(::SwapCase)::Nothing = nothing
 
 """The reference of `case`'s trace under `settings`: the `shared` one, or for a swap its own (`case_reference`)."""
-variant_reference(::Case, ::TraceSettings, shared::NamedTuple)::NamedTuple = shared
-variant_reference(swap::SwapCase, settings::TraceSettings, ::Nothing)::NamedTuple = case_reference(swap, settings)
+variant_reference(::Case, ::BifurcationKitSettings, shared::NamedTuple)::NamedTuple = shared
+variant_reference(swap::SwapCase, settings::BifurcationKitSettings, ::Nothing)::NamedTuple = case_reference(swap, settings)
 
 """The gap kind of `reference`: a branch that folds back past the target has no natural-continuation reference."""
 reference_kind(reference::NamedTuple)::AbstractString = ifelse(reference.reached, "reference", "folded")
@@ -148,7 +148,7 @@ const REFUSAL_CHECKS = (:reach, :kl, :angle, :nonfinite)
 const REFUSAL_MESSAGES = ("corrector refused", "corrector stopped")
 
 """`case` traced under `settings`; a `SwapCase` redraws its map through `SwapAt`. A `Function`, as `with_logger` requires."""
-struct TraceRun{C, S <: TraceSettings} <: Function
+struct TraceRun{C, S <: BifurcationKitSettings} <: Function
     case::C
     settings::S
 end
@@ -194,7 +194,7 @@ struct Outcome
 end
 
 """`case` traced under `settings` (`TraceRun`), with its bytes and logged records."""
-function Outcome(case::C, settings::S)::Outcome where {C <: BenchmarkCase, S <: TraceSettings}
+function Outcome(case::C, settings::S)::Outcome where {C <: BenchmarkCase, S <: BifurcationKitSettings}
     trace_run = TraceRun(case, settings)
     trace_run()
     bytes = @allocated trace_run()
@@ -247,7 +247,7 @@ function Row(case::C, label::AbstractString, outcome::Outcome, reference::NamedT
 end
 
 """The row of variant `label => settings` on `case`, whose shared reference is `shared` (`shared_reference`)."""
-function Row(case::C, shared::H, (label, settings)::Pair{String, S})::Row where {C <: BenchmarkCase, H, S <: TraceSettings}
+function Row(case::C, shared::H, (label, settings)::Pair{String, S})::Row where {C <: BenchmarkCase, H, S <: BifurcationKitSettings}
     outcome = Outcome(case, settings)
     reference = variant_reference(case, settings, shared)
     # A folded branch has no reference: its gap is NaN.
@@ -408,7 +408,7 @@ struct UnfoldedRow
 end
 
 """The row of variant `label => settings` on draw `draw` at noise `scale`: game `case` with reference `reference`."""
-function UnfoldedRow(scale::Real, draw::Integer, case::C, reference::NamedTuple, (label, settings)::Pair{String, S})::UnfoldedRow where {C <: Case, S <: TraceSettings}
+function UnfoldedRow(scale::Real, draw::Integer, case::C, reference::NamedTuple, (label, settings)::Pair{String, S})::UnfoldedRow where {C <: Case, S <: BifurcationKitSettings}
     outcome = Outcome(case, settings)
     principal = reference.reached && profile_gap(outcome.choices, reference.first_choices) < 1.0f-3
     return UnfoldedRow(scale, draw, label, outcome.status, outcome.steps, reference.crossings, principal)
@@ -448,7 +448,7 @@ pitchfork_variant(variant::Pair)::Bool = first(variant) == "shipped" || startswi
 The shipped settings `shipped` and every arm (`arm_variants`) as `label => settings` pairs of one settings type,
 which an arm of another type fails to convert to; `"quick"` keeps the shipped settings and the first arm.
 """
-function benchmark_variants(scope::AbstractString, shipped::S)::AbstractVector{Pair{String, S}} where {S <: TraceSettings}
+function benchmark_variants(scope::AbstractString, shipped::S)::AbstractVector{Pair{String, S}} where {S <: BifurcationKitSettings}
     variants = Pair{String, S}["shipped" => shipped; arm_variants()]
     if scope == "quick"
         return variants[1:2]
@@ -462,7 +462,7 @@ rows to `output`, and a PITCHFORK line per scale and variant to `io`.
 """
 function pitchfork_benchmark(output::AbstractString, io::IO, draws::Integer, seed::Integer)::AbstractVector{UnfoldedRow}
     println(io, "SEED | ", seed)
-    variants = filter(pitchfork_variant, benchmark_variants("full", TraceSettings{Float32}()))
+    variants = filter(pitchfork_variant, benchmark_variants("full", BifurcationKitSettings{Float32}()))
     # Scales run along the second axis, so the draws come scale by scale, in the order the rows list them.
     rows::Vector{UnfoldedRow} = reduce(vcat, vec(unfolded_rows.((Xoshiro(seed),), permutedims(collect(UNFOLDING_SCALES)), 1:draws, (variants,))))
     write(output, string("scale,draw,variant,status,steps,crossings,principal\n", join(map(csv_line, rows))))
@@ -511,7 +511,7 @@ function main(output::AbstractString, scope::AbstractString, io::IO)::AbstractVe
     if scope == "pitchfork"
         return pitchfork_benchmark(output, io, UNFOLDING_DRAWS, UNFOLDING_SEED)
     end
-    return benchmark_rows(output, scope_cases(scope), benchmark_variants(scope, TraceSettings{Float32}()), io)
+    return benchmark_rows(output, scope_cases(scope), benchmark_variants(scope, BifurcationKitSettings{Float32}()), io)
 end
 
 # Run as a script; the code rules load this file as a module and run `main` themselves.

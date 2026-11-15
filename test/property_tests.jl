@@ -24,9 +24,9 @@ end
         pass = contracting_game(rng, width, precision)
         reference = picard_equilibrium(pass, width, precision, 400)
         for settings in (
-                TraceSettings{Float32}(),
-                TraceSettings{Float32}(tangent = BifurcationKit.Secant()),
-                TraceSettings{Float32}(bordered_solver = BorderingSolve),
+                BifurcationKitSettings{Float32}(),
+                BifurcationKitSettings{Float32}(tangent = BifurcationKit.Secant()),
+                BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve),
             )
             traced = trace_endpoint(LogitGame(pass, precision), width, settings)
             @test !is_error(traced)

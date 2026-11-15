@@ -288,7 +288,7 @@ function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::
 end
 
 """Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `settle_bound`."""
-function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::TraceSettings)::Bool
+function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool
     return newton_correction(pass, logits, precision) <= settle_bound(settings.corrector, logits)
 end
 

@@ -7,7 +7,7 @@ end
 
 @testset "a trace is deterministic: two traces of one game in one process take the same steps to the same end" begin
     games = [values(LOGITNASH_GAMES)...; OVERSHOT_GAME; UNFOLDED_PITCHFORK_GAME]
-    for payoffs in games, (_, settings) in ["default" => TraceSettings{Float32}(); arm_variants()]
+    for payoffs in games, (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants()]
         game = LogitGame(NormalFormPass(single_precision_payoffs(payoffs)), 3.0f0)
         first_run = trace_endpoint(game, length(payoffs), settings)
         second_run = trace_endpoint(game, length(payoffs), settings)

@@ -121,7 +121,7 @@ end
             continue
         end
         for profile in branch
-            @test settled_logits(gains, profile.logits, profile.lam, TraceSettings{eltype(profile.logits)}())
+            @test settled_logits(gains, profile.logits, profile.lam, BifurcationKitSettings{eltype(profile.logits)}())
         end
         # The last point is on Gambit's branch, and logit_solve_lambda finds it at its precision.
         @test largest_gap(last(branch).profile, gambit_strategies(payoffs, last(branch).lam).strategies) <
@@ -313,7 +313,7 @@ end
 
 @testset "the solvers return the trace's failure when it runs out of steps" begin
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    settings = TraceSettings{Float32}(; max_steps = 1)
+    settings = BifurcationKitSettings{Float32}(; max_steps = 1)
     # A one-step budget ends a stalled step as a stall (TraceStuck), a moving one as NoConvergence, as on main.
     spent = (GameTracing.NoConvergence, GameTracing.TraceStuck)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings)).cause in spent
@@ -339,7 +339,7 @@ end
         @test eltype(unwrap(logit_solve(gains)).logits) == element
         @test eltype(only(unwrap(logit_solve_lambda(gains, 2))).logits) == element
         other = element == Float32 ? float(Int) : Float32
-        for settings in (TraceSettings{other}(), PathFollowingSettings{other}())
+        for settings in (BifurcationKitSettings{other}(), PathFollowingSettings{other}())
             @test_throws ArgumentError logit_solve_lambda(gains, 2; settings)
             @test_throws ArgumentError logit_solve_branch(gains; settings)
             @test_throws ArgumentError logit_solve(gains; settings)
@@ -351,7 +351,7 @@ end
     @test eltype(integer) == Int
     @test eltype(unwrap(logit_solve(integer)).logits) == float(Int)
     @test eltype(only(unwrap(logit_solve_lambda(integer, 2))).logits) == float(Int)
-    @test_throws ArgumentError logit_solve(integer; settings = TraceSettings{Float32}())
+    @test_throws ArgumentError logit_solve(integer; settings = BifurcationKitSettings{Float32}())
 end
 
 @testset "LogitQREProfile computes its profile from its logits and takes no profile" begin

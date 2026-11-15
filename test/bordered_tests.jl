@@ -156,7 +156,7 @@ end
 
 @testset "the in-place tangent and determinant sign match MatrixBLS's; a singular matrix gives sign zero where MatrixBLS throws" begin
     kit = GameTracing.BifurcationKit
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     start = zeros(Float32, WIDTH + 1)
     problem = GameTracing.branch_problem(
         LogitGame(GAME, TARGET_PRECISION),

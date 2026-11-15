@@ -7,7 +7,7 @@ using Random: Random
     result = trace_endpoint(
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}(),
+        BifurcationKitSettings{Float32}(),
     )
     @test !is_error(result)
     @test residual_norm(GAME, unwrap(result).logits, TARGET_PRECISION) < 1.0f-4
@@ -15,12 +15,12 @@ end
 
 @testset "tangent and bordered solver choices reach the same unique equilibrium" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    reference = unwrap(trace_endpoint(game, WIDTH, TraceSettings{Float32}())).logits
+    reference = unwrap(trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}())).logits
     for settings in (
-            TraceSettings{Float32}(tangent = BifurcationKit.Secant()),
-            TraceSettings{Float32}(bordered_solver = BorderingSolve),
-            TraceSettings{Float32}(step_control = nothing),
-            TraceSettings{Float32}(
+            BifurcationKitSettings{Float32}(tangent = BifurcationKit.Secant()),
+            BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve),
+            BifurcationKitSettings{Float32}(step_control = nothing),
+            BifurcationKitSettings{Float32}(
                 step_control = StepControl{Float32}(distance_limit = nothing),
                 corrector = CorrectorSettings{Float32}(contraction_limit = nothing),
             ),
@@ -35,7 +35,7 @@ end
     result = trace_endpoint(
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}(max_steps = 1, first_step = 0.005f0, max_step = 0.01f0),
+        BifurcationKitSettings{Float32}(max_steps = 1, first_step = 0.005f0, max_step = 0.01f0),
     )
     @test is_error(result)
     @test unwrap_error(result).cause in (GameTracing.NoConvergence, GameTracing.TraceStuck)
@@ -49,7 +49,7 @@ end
     result = trace_endpoint(
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}();
+        BifurcationKitSettings{Float32}();
         keep_going = refuse_all,
     )
     @test unwrap_error(result).cause == GameTracing.TraceStuck
@@ -85,7 +85,7 @@ end
     result = trace_endpoint(
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}();
+        BifurcationKitSettings{Float32}();
         keep_going = StopPast(0.75f0),
     )
     @test unwrap_error(result).cause == GameTracing.TraceStuck
@@ -106,7 +106,7 @@ end
     result = trace_endpoint(
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}();
+        BifurcationKitSettings{Float32}();
         keep_going = OnTheBranch(GAME, TARGET_PRECISION),
     )
     @test !is_error(result)
@@ -117,7 +117,7 @@ end
     result = trace_endpoint(
         LogitGame(broken, TARGET_PRECISION),
         WIDTH,
-        TraceSettings{Float32}();
+        BifurcationKitSettings{Float32}();
         context = (; label = :broken),
     )
     @test unwrap_error(result).cause == GameTracing.NotFinite
@@ -143,7 +143,7 @@ end
             2.0f0,
         )
     end
-    result = trace_endpoint(LogitGame(FOLD_GAME, 2.0f0), 1, TraceSettings{Float32}())
+    result = trace_endpoint(LogitGame(FOLD_GAME, 2.0f0), 1, BifurcationKitSettings{Float32}())
     @test !is_error(result)
     @test residual_norm(FOLD_GAME, unwrap(result).logits, 2.0f0) < 1.0f-3
 end
@@ -151,7 +151,7 @@ end
 
 @testset "BifurcationKit's smallest step is zero, so its halving ends only at a zero step" begin
     for element in (Float16, Float32, float(Int))
-        settings = TraceSettings{element}()
+        settings = BifurcationKitSettings{element}()
         @test GameTracing.continuation_options(settings, settings.first_step, 1).dsmin ==
             zero(element)
     end
@@ -159,7 +159,7 @@ end
 
 @testset "PALC orients by determinant only where the solver has one" begin
     for check in (true, false), solver in instances(BorderedSolver)
-        settings = TraceSettings{Float32}(
+        settings = BifurcationKitSettings{Float32}(
             orientation_check = check,
             bordered_solver = solver,
         )
@@ -173,10 +173,10 @@ end
 end
 
 @testset "pass-through keywords and the corrector reach BifurcationKit $element" for element in (Float32, float(Int))
-    default = GameTracing.palc_algorithm(TraceSettings{element}(), WIDTH, TARGET_PRECISION)
+    default = GameTracing.palc_algorithm(BifurcationKitSettings{element}(), WIDTH, TARGET_PRECISION)
     @test isnothing(default.corrector)
     free = BifurcationKit.FreeParameterNewton()
-    settings = TraceSettings{element}(
+    settings = BifurcationKitSettings{element}(
         palc_corrector = free,
         palc_options = (; orientation_check = false, θ = one(element) / 4),
         continuation_options = (; max_steps = 3, p_max = one(element) / 2),
@@ -193,7 +193,7 @@ end
 @testset "continuation options carry the settings and the trace's endpoint-only needs" begin
     rng = Random.Xoshiro(7)
     for _ in 1:20
-        settings = TraceSettings{Float32}(
+        settings = BifurcationKitSettings{Float32}(
             first_step = rand(rng, Float32),
             max_step = 1 + rand(rng, Float32),
             aggressiveness = rand(rng, Float32),
@@ -297,7 +297,7 @@ end
                 1.0f-3 * (1 + maximum(abs, jacobian))
         end
     end
-    traced = unwrap(trace_endpoint(game, 2, TraceSettings{Float32}()))
+    traced = unwrap(trace_endpoint(game, 2, BifurcationKitSettings{Float32}()))
     @test residual_norm(pass, traced.logits, 3.0f0) < 1.0f-4
 end
 
@@ -317,7 +317,7 @@ end
 end
 
 @testset "a restart that cannot be solved ends its segment at the opening; an unexpected exception propagates" begin
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     game = LogitGame(GAME, TARGET_PRECISION)
     problem = GameTracing.branch_problem(
         game,
@@ -371,7 +371,7 @@ end
 end
 
 @testset "ended_segment keeps the opening when a segment throws before accepting a point" begin
-    settings = TraceSettings{Float32}()
+    settings = BifurcationKitSettings{Float32}()
     problem = GameTracing.branch_problem(
         LogitGame(GAME, TARGET_PRECISION),
         zeros(Float32, WIDTH + 1),

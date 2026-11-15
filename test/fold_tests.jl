@@ -1,6 +1,6 @@
 using BifurcationKit: BifurcationKit
 using ErrorTypes: is_error, unwrap
-const FOLD_SETTINGS = TraceSettings{Float32}()
+const FOLD_SETTINGS = BifurcationKitSettings{Float32}()
 
 @testset "a trace crosses a fold of the branch" begin
     # At target 2 the game has one equilibrium, past a fold at precision about 1.4: only continuation through the fold reaches it.
@@ -11,13 +11,13 @@ const FOLD_SETTINGS = TraceSettings{Float32}()
     @test only(unwrap(result).logits) > 3
     @testset "every tangent and solver choice crosses it" begin
         for settings in (
-                TraceSettings{Float32}(tangent = BifurcationKit.Secant()),
-                TraceSettings{Float32}(
+                BifurcationKitSettings{Float32}(tangent = BifurcationKit.Secant()),
+                BifurcationKitSettings{Float32}(
                     bordered_solver = BorderingSolve,
                 ),
-                TraceSettings{Float32}(step_control = nothing),
+                BifurcationKitSettings{Float32}(step_control = nothing),
                 # Past the second fold this arm's Fisher-weighted tangent once turned back (`PlainOrientation`).
-                TraceSettings{Float32}(
+                BifurcationKitSettings{Float32}(
                     bordered_solver = BorderingSolve,
                     corrector = CorrectorSettings{Float32}(; logit_tolerance = 1.0f-5),
                 ),

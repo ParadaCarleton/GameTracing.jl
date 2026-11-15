@@ -2,7 +2,7 @@ using ErrorTypes: is_error, unwrap_error
 using Logging: Logging
 using LinearAlgebra: LAPACKException, SingularException
 
-const FAILURE_SETTINGS = TraceSettings{Float32}(first_step = 0.01f0, max_step = 0.05f0)
+const FAILURE_SETTINGS = BifurcationKitSettings{Float32}(first_step = 0.01f0, max_step = 0.05f0)
 
 @testset "a non-finite response past a precision stops the trace short of it" begin
     result = trace_endpoint(
@@ -93,7 +93,7 @@ end
 
 @testset "a corrector reach too short to hold any step ends the trace" begin
     result = trace_endpoint(
-        LogitGame(FOLD_GAME, 2.0f0), 1, TraceSettings{Float32}(
+        LogitGame(FOLD_GAME, 2.0f0), 1, BifurcationKitSettings{Float32}(
             corrector = CorrectorSettings{Float32}(reach = 1.0f-6),
             first_step = 0.05f0,
             max_step = 0.1f0,
@@ -209,7 +209,7 @@ end
         progress,
         (; step_length = 0.0f0, accepted_step = 0.0f0, exhausted = nothing, logit_accuracy = 0.0f0, unresolved = false, exception = "Stopping continuation."),
         LogitGame(GAME, TARGET_PRECISION),
-        TraceSettings{Float32}(; max_steps = 10),
+        BifurcationKitSettings{Float32}(; max_steps = 10),
         (;),
     )
     @test is_error(result)
@@ -239,7 +239,7 @@ function finalised(
         point.step,
         (; branch);
         state = (; ds = one(point.param) / 10),
-        iter = (; alg = GameTracing.palc_algorithm(TraceSettings{typeof(point.param)}(), length(point.gaps), TARGET_PRECISION)),
+        iter = (; alg = GameTracing.palc_algorithm(BifurcationKitSettings{typeof(point.param)}(), length(point.gaps), TARGET_PRECISION)),
     )
 end
 
@@ -280,7 +280,7 @@ end
     @test (progress.steps, progress.precision_max) == (1, moved.param)
     @test progress.gaps == moved.gaps && progress.relative_precision == moved.param
     outcome = (; step_length = 0.0f0, accepted_step = 0.0f0, exhausted = nothing, logit_accuracy = 0.0f0, unresolved = false, exception = nothing)
-    settings = TraceSettings{Float32}(; max_steps = 2)
+    settings = BifurcationKitSettings{Float32}(; max_steps = 2)
     @test unwrap_error(
         GameTracing.reached_state(
             progress,
@@ -386,7 +386,7 @@ end
             progress,
             (; step_length = zero(element), accepted_step = zero(element), exhausted = nothing, logit_accuracy = zero(element), unresolved = false, exception = nothing),
             game,
-            TraceSettings{element}(; max_steps = 1000),
+            BifurcationKitSettings{element}(; max_steps = 1000),
             (;),
         )
     )

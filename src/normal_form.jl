@@ -240,11 +240,13 @@ function write_gain_slope!(
     checkbounds(expected, own)
     # Block row and column `i` hold strategies `i + shift` of `player` and `rival`: the first strategy has none.
     row_shift, column_shift = first(own) + 1 - firstindex(block, 1), first(other) + 1 - firstindex(block, 2)
+    first_expected = expected[first(own)]
     @inbounds for column in axes(block, 2)
         later = column + column_shift
-        weight, offset = rival_strategy[later], expected[first(own)] - sensitivity[first(own), later]
+        weight, first_sensitivity = rival_strategy[later], sensitivity[first(own), later]
+        # The broadcast this loop replaced summed in this order. The Float32 noise bound in `opening_tests.jl` is tight.
         @simd for row in axes(block, 1)
-            block[row, column] = weight * (sensitivity[row + row_shift, later] - expected[row + row_shift] + offset)
+            block[row, column] = weight * (((sensitivity[row + row_shift, later] - expected[row + row_shift]) - first_sensitivity) + first_expected)
         end
     end
     return nothing

@@ -73,7 +73,7 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
   strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's nominal distance.
 - `reach`: refuse a corrected point that moved further from the predictor's than `reach` times the predictor's own
-  move, both under `distance` (`WithinReach`). `Inf32` switches the test off.
+  move plus `distance`'s settle tolerance, all under `distance` (`WithinReach`). `Inf32` switches the test off.
 - `newton_iterations`, `contraction_limit`: PathFollowing's `Newton`, its corrections under `distance`.
 - `nominal_contraction`, `nominal_turn`, `growth_limit`: PathFollowing's `StepControl`; `nothing` drops a term.
 - `orientation`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
@@ -295,19 +295,22 @@ function settle_test(distance::StrategyDistance{E}, measure::FisherRaoChange{N})
 end
 
 """
-    WithinReach(reach, measure)
+    WithinReach(reach, tolerance, measure)
 
 PathFollowing's `accept` over points `[w; λ]`: the corrected point moved no further from the predictor's than `reach`
-times the predictor's own move, both under `measure`. A predictor that did not move passes.
+times the predictor's own move plus `tolerance`, all under `measure`. A predictor that did not move passes.
+`tolerance` is the corrector's settle tolerance. The start settled only to it, so a short step's correction also clears
+the start's own error.
 """
 struct WithinReach{E <: Real, M}
     reach::E
+    tolerance::E
     measure::M
 end
 
 function (within::WithinReach{E})(start::AbstractVector{E}, predicted::AbstractVector{E}, corrected::AbstractVector{E})::Bool where {E <: Real}
     move = within.measure(start, predicted)
-    return !(move > 0) || within.measure(predicted, corrected) <= within.reach * move
+    return !(move > 0) || within.measure(predicted, corrected) <= within.reach * move + within.tolerance
 end
 
 """PathFollowing's `PseudoArclength` for `settings` on `gains`."""
@@ -327,7 +330,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
         metric = PathFollowing.PointWeights(GeometryWeights(settings.geometry)),
         settings.orientation,
         settings.linear_solver,
-        accept = WithinReach(settings.reach, measure),
+        accept = WithinReach(settings.reach, settings.distance.tolerance, measure),
         settings.resolution_ulps,
         settings.max_refusals,
     )

@@ -238,6 +238,31 @@ end
     @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[])
 end
 
+@testset "WithinReach passes a correction within the settle tolerance, however short the step ($element)" for element in (Float32, widen(Float32))
+    within = GameTracing.WithinReach(element(2), element(1.0f-3), GameTracing.logit_change)
+    start, predicted = element[0, 1], element[1.0f-6, 1]
+    @test within(start, predicted, element[5.0f-4, 1])
+    @test !within(start, predicted, element[2.0f-3, 1])
+    # Past the tolerance, the predictor's own move sets the reach.
+    @test within(start, element[1, 1], element[2.5f0, 1])
+    @test !within(start, element[1, 1], element[4, 1])
+    @test within(start, start, element[4, 1])
+end
+
+@testset "StrategyDistance turns a fold whose start settled only to its tolerance" begin
+    # The benchmark's 20x20 game from seed 6 folds back at λ ≈ 315.68. There the start's leftover error, about 1.5e-5
+    # in Fisher–Rao, outweighed reach times every short predictor move, and the trace stopped TraceStuck.
+    rng = Xoshiro(6)
+    payoffs = ntuple(_ -> randn(rng, (20, 20)), 2)
+    wide = widen(Float32)
+    @test !is_error(logit_solve(NormalFormGains(payoffs); maxregret = 1.0f-4, settings = PathFollowingSettings{wide}()))
+    # The turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there, and the trace stops loudly at the fold.
+    narrow = NormalFormGains(map(table -> Float32.(table), payoffs))
+    failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
+    @test failure.cause == GameTracing.TraceStuck
+    @test abs(failure.context.precision - 315.68f0) < 1
+end
+
 @testset "StrategyDistance takes long steps where a strategy leaves the support ($element)" for element in (Float32, widen(Float32))
     # The five-player game of `randn(Xoshiro(1), (2, 2, 2, 2, 2))` per player: its branch ends mixed, and a strategy
     # outside the support has a logit that grows like λ. Measured in logits, its corrections hold the steps short.

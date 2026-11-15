@@ -205,8 +205,8 @@ end
     FisherRaoSettled(ranges, tolerance, rounding)
 
 PathFollowing's `converged` under `StrategyDistance`, each player's logits in its range of `ranges`. The last correction,
-times Newton's `scale`, moved no player's strategy further than `tolerance` plus `rounding` times its
-`logit_root_mean_square`. That product bounds the Fisher–Rao distance a relative rounding of `rounding` in each logit
+times Newton's `scale`, moved no player's strategy further than `tolerance` plus `rounding` times its logits' spread
+(`fisher_rao_spread`). That product bounds the Fisher–Rao distance a relative rounding of `rounding` in each logit
 moves the strategy.
 """
 struct FisherRaoSettled{N, E <: Real}
@@ -217,9 +217,9 @@ end
 
 function (settled::FisherRaoSettled{N, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {N, E <: Real}
     for range in settled.ranges
-        allowance = settled.tolerance + settled.rounding * logit_root_mean_square(iterate, range)
+        (distance, spread) = fisher_rao_spread(previous, iterate, range)
         # A NaN distance fails the comparison, so it never settles.
-        scale * player_fisher_rao(previous, iterate, range) <= allowance || return false
+        scale * distance <= settled.tolerance + settled.rounding * spread || return false
     end
     return true
 end
@@ -228,7 +228,7 @@ end
     FisherRaoChange(ranges)
 
 The largest Fisher–Rao distance any player's mixed strategy moves between two points `[w; λ]`, each player's logits
-`z = λ w` in its range of `ranges`, against its first strategy (`player_fisher_rao`).
+`z = λ w` in its range of `ranges`, against its first strategy (`fisher_rao_spread`).
 """
 struct FisherRaoChange{N}
     ranges::NTuple{N, UnitRange{Int}}
@@ -237,7 +237,7 @@ end
 function (change::FisherRaoChange)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     largest = zero(E)
     for range in change.ranges
-        largest = max(largest, player_fisher_rao(from, to, range))
+        largest = max(largest, first(fisher_rao_spread(from, to, range)))
     end
     return largest
 end
@@ -263,31 +263,25 @@ function root_probability(logit::E, normalizer::NTuple{2, E})::E where {E <: Rea
     return exp(((logit - first(normalizer)) - last(normalizer)) / 2)
 end
 
-"""The root mean square `√(Σ π z²)` of a player's logits `z = λ w[range]` under its own mixed strategy `π`."""
-function logit_root_mean_square(point::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
-    normalizer = log_normalizer(point, range)
-    # The first strategy's logit is zero. `√π z` stays finite where `π` underflows and `z²` overflows.
-    total = zero(E)
-    for index in range
-        logit = last(point) * point[index]
-        total += (root_probability(logit, normalizer) * logit)^2
-    end
-    return sqrt(total)
-end
-
 """
-The Fisher–Rao distance a player's mixed strategy moves from `from` to `to`, its logits in `range`: `4 asin(h / 2)`,
-`h` the Euclidean distance between the square roots of the two strategies. It is a geodesic on the probability simplex,
-at most `π`; a small move of logits `Δz` has length `√Var_π(Δz)`.
+A player's move from `from` to `to`, its logits in `range`, and its logits' spread at `to`. The move is the Fisher–Rao
+distance `4 asin(h / 2)`, `h` the Euclidean distance between the square roots of the two strategies: a geodesic on the
+probability simplex, at most `π`. A small move of logits `Δz` has length `√Var_π(Δz)`. The spread is the root mean
+square `√(Σ π z²)` of the logits `z = λ w[range]` at `to` under their own mixed strategy `π`.
 """
-function player_fisher_rao(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
+function fisher_rao_spread(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::NTuple{2, E} where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)
-    # The first strategy's logit is zero.
+    # The first strategy's logit is zero, so it adds nothing to the spread.
     squared = (root_probability(zero(E), to_normalizer) - root_probability(zero(E), from_normalizer))^2
+    spread = zero(E)
     for index in range
-        squared += (root_probability(last(to) * to[index], to_normalizer) - root_probability(last(from) * from[index], from_normalizer))^2
+        logit = last(to) * to[index]
+        root = root_probability(logit, to_normalizer)
+        squared += (root - root_probability(last(from) * from[index], from_normalizer))^2
+        # `√π z` stays finite where `π` underflows and `z²` overflows.
+        spread += (root * logit)^2
     end
-    return 4 * asin(sqrt(squared) / 2)
+    return (4 * asin(sqrt(squared) / 2), sqrt(spread))
 end
 
 """The callable that measures a corrector's moves under `distance` on `gains`: `logit_change` or `FisherRaoChange`."""

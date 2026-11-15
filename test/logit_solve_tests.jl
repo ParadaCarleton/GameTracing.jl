@@ -222,6 +222,8 @@ end
     @test GameTracing.logit_change(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) == 500
     # A player whose first strategy left the support: its logits move together, and its strategy does not.
     @test two_players(element[1000, 1000, 0, 1], element[1500, 1500, 0, 1]) <= eps(element)
+    # At odds 1:3:1 only the middle logit, log 3, is nonzero, so the spread is √(3/5) log 3.
+    @test last(GameTracing.fisher_rao_spread(element[0, 0, 1], element[log(element(3)), 0, 1], 1:2)) ≈ sqrt(element(3) / 5) * log(element(3))
 end
 
 @testset "a strategy move within its logits' settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))

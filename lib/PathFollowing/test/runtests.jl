@@ -75,7 +75,7 @@ function (flaky::Flaky)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}
 end
 
 """A `converged` that never holds."""
-never(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = false
+never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
 
 """The bytes a warm `step!` of `tracer` allocates."""
 function warm_bytes(tracer::Tracer)::Int
@@ -83,23 +83,23 @@ function warm_bytes(tracer::Tracer)::Int
     return @allocated step!(tracer)
 end
 
-"""Converged when the correction moved no coordinate more than `tolerance`."""
+"""Converged when the correction, times `scale`, moved no coordinate more than `tolerance`."""
 struct Settled{E <: Real}
     tolerance::E
 end
 
-function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {E <: Real}
+function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
     largest = zero(E)
     for index in eachindex(previous, iterate)
         largest = max(largest, abs(iterate[index] - previous[index]))
     end
-    return largest <= settled.tolerance
+    return scale * largest <= settled.tolerance
 end
 
 """A `PseudoArclength` in `E` with Euclidean metrics and the given overrides."""
 function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::PseudoArclength where {E <: Real}
     defaults = (;
-        corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2),
+        corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2, error_estimate = LastCorrection()),
         step_control = StepControl(;
             nominal_contraction = one(E) / 4, nominal_distance = one(E) / 10, nominal_turn = one(E) / 10,
             growth_limit = E(2), max_step = one(E) / 2,
@@ -244,13 +244,13 @@ end
     end
 
     @testset "one Newton iteration is not enough on a curved branch" begin
-        settings = algorithm(E; corrector = Newton(; max_iterations = 1, converged = never, contraction_limit = one(E)), max_refusals = 0)
+        settings = algorithm(E; corrector = Newton(; max_iterations = 1, converged = never, contraction_limit = one(E), error_estimate = LastCorrection()), max_refusals = 0)
         failure = unwrap_error(traced(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings, 1; first_step = E(1) / 10))
         @test failure.last_refusal == NotConverged
     end
 
     @testset "a tiny contraction limit refuses as diverging" begin
-        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = never, contraction_limit = eps(E)), max_refusals = 0)
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = never, contraction_limit = eps(E), error_estimate = LastCorrection()), max_refusals = 0)
         failure = unwrap_error(traced(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings, 1; first_step = E(1) / 10))
         @test failure.last_refusal == Diverging
     end
@@ -266,9 +266,33 @@ end
         @test step.turn <= 2 * control.nominal_turn
     end
 
+    @testset "ContractionEstimate settles on the error left in the iterate, in fewer iterations" begin
+        halved = ContractionEstimate(; safety = one(E) / 2)
+        @test PathFollowing.error_scale(LastCorrection(), E(1) / 4, one(E)) == 1
+        @test PathFollowing.error_scale(halved, E(1) / 4, E(NaN32)) == 1
+        @test PathFollowing.error_scale(halved, E(1) / 4, one(E)) ≈ E(2) / 3
+        @test PathFollowing.error_scale(halved, one(E), one(E)) == Inf
+        @test_throws ArgumentError ContractionEstimate(; safety = zero(E))
+        @test_throws ArgumentError ContractionEstimate(; safety = E(2))
+        @test_throws TypeError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = ContractionEstimate(; safety = big(1)))
+        # A half step up the unit circle corrects by 0.125, 8.9e-3 and 4.6e-5. At tolerance 2e-3, θ/(1-θ) times the
+        # second correction, 6.9e-4, settles; over safety 1/10 it does not, nor does the second correction itself.
+        settle = E(1) / 500
+        control = StepControl(; nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = nothing, growth_limit = E(2), max_step = E(1))
+        estimates = (LastCorrection(), ContractionEstimate(; safety = one(E) / 10), ContractionEstimate(; safety = one(E)))
+        iterations = map(estimates) do error_estimate
+            corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2, error_estimate)
+            tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control = control); first_step = E(1) / 2))
+            step = unwrap(step!(tracer))
+            @test abs(hypot(tracer.point...) - 1) <= settle
+            step.iterations
+        end
+        @test iterations == (3, 3, 2)
+    end
+
     @testset "a custom distance measures corrections" begin
         largest = (from, to) -> maximum(abs.(to .- from))
-        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, distance = largest))
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = largest))
         step = unwrap(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10)) |> step!)
         @test step.first_correction > 0
     end
@@ -288,7 +312,7 @@ end
     @testset "land! refuses a hyperplane along the tangent, and a corrector that does not converge" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
         @test unwrap_error(land!(tracer, 1, one(E) / 2)) == SingularSystem
-        stubborn = algorithm(E; corrector = Newton(; max_iterations = 2, converged = never, contraction_limit = one(E)))
+        stubborn = algorithm(E; corrector = Newton(; max_iterations = 2, converged = never, contraction_limit = one(E), error_estimate = LastCorrection()))
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), stubborn; first_step = E(1) / 10))
         @test unwrap_error(land!(tracer, 2, one(E) / 4)) == NotConverged
     end
@@ -304,8 +328,8 @@ end
     end
 
     @testset "argument checks" begin
-        @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E))
-        @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = zero(E))
+        @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = LastCorrection())
+        @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = zero(E), error_estimate = LastCorrection())
         nominal = (; nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = nothing)
         @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E) / 2, max_step = one(E))
         @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = zero(E))

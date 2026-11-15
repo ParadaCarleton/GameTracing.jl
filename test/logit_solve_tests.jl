@@ -183,6 +183,10 @@ end
     end
     # A distance in another element type is refused.
     @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
+    # The error estimate's safety converts to the element type.
+    halved = PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.ContractionEstimate(; safety = 1 // 2))
+    @test halved.error_estimate.safety === element(1 // 2)
+    @test PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.LastCorrection()).error_estimate === GameTracing.PathFollowing.LastCorrection()
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
@@ -219,6 +223,8 @@ end
     @test GameTracing.logit_change(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) == 500
     # A player whose first strategy left the support: its logits move together, and its strategy does not.
     @test two_players(element[1000, 1000, 0, 1], element[1500, 1500, 0, 1]) <= eps(element)
+    # At odds 1:3:1 only the middle logit, log 3, is nonzero, so the spread is √(3/5) log 3.
+    @test last(GameTracing.fisher_rao_spread(element[0, 0, 1], element[log(element(3)), 0, 1], 1:2)) ≈ sqrt(element(3) / 5) * log(element(3))
 end
 
 @testset "a strategy move within its logits' settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
@@ -229,13 +235,15 @@ end
     large = 64 * tolerance / eps(element)
     rounded = large + 4 * eps(large)
     @test GameTracing.FisherRaoChange((1:2,))(element[large, large, 1], element[rounded, large, 1]) > tolerance
-    @test settled(element[large, large, 1], element[rounded, large, 1], element[])
+    @test settled(element[large, large, 1], element[rounded, large, 1], element[], one(element))
     # A logit gap of four allowances moves the strategy two, one allowance past the test.
     beyond = large + 4 * ulps * eps(element) * large
-    @test !settled(element[large, large, 1], element[beyond, large, 1], element[])
+    @test !settled(element[large, large, 1], element[beyond, large, 1], element[], one(element))
+    # Newton's error estimate scales the move: a tenth of it settles.
+    @test settled(element[large, large, 1], element[beyond, large, 1], element[], element(1 // 10))
     # Small logits have no allowance to speak of: a move of four tolerances stays past it.
-    @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[])
-    @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[])
+    @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[], one(element))
+    @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[], one(element))
 end
 
 @testset "WithinReach passes a correction within the settle tolerance, however short the step ($element)" for element in (Float32, widen(Float32))

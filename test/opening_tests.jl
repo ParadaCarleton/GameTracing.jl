@@ -143,13 +143,13 @@ end
     large = 64 * tolerance / eps(element)
     rounded = large + 4 * eps(large)
     @test GameTracing.logit_change(element[large, 1], element[rounded, 1]) > tolerance
-    @test last(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element))) <= 0
-    @test first(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element))) == rounded - large
+    @test last(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element), one(element))) <= 0
+    @test first(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element), one(element))) == rounded - large
     # Twice the logit's allowance leaves an excess of about one allowance, 1024 tolerances.
     beyond = large + 2 * ulps * eps(element) * large
-    @test last(GameTracing.logit_corrections(element[large, 1], element[beyond, 1], ulps * eps(element))) > tolerance
+    @test last(GameTracing.logit_corrections(element[large, 1], element[beyond, 1], ulps * eps(element), one(element))) > tolerance
     # A small logit has no allowance to speak of: twice the tolerance stays past it.
-    @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element))) > tolerance
+    @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element), one(element))) > tolerance
     # The corrector settles the large logit's rounding at its first correction.
     check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), element[large, 0, 1], element[large, 0, 1], one(element))
     GameTracing.restate!(check; predictor_move = one(element))

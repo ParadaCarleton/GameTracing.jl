@@ -19,31 +19,71 @@ A correction's length in the trace's step metric (`PseudoArclength`'s `metric`).
 struct MetricDistance end
 
 """
-    Newton(; max_iterations, converged, contraction_limit, distance = MetricDistance())
+    LastCorrection()
+
+`Newton`'s `error_estimate` that settles on the last correction itself: `converged` sees `scale = 1`. That correction
+bounds the error of the iterate before it, so the corrector runs one iteration past need.
+"""
+struct LastCorrection end
+
+"""
+    ContractionEstimate(; safety)
+
+`Newton`'s `error_estimate` that settles on the error left in the iterate: the last correction times `θ / (1 - θ)`, `θ`
+its ratio to the one before, over `safety` in `(0, 1]` (Hairer and Wanner, Solving Ordinary Differential Equations II,
+1996, §IV.8, take 0.01 to 0.1). The first correction has no ratio and gets `scale = 1`; a ratio of one or more gets
+`Inf`, which never settles. A slow contraction estimates its error poorly, and `safety = 1` let one such corrector
+settle off the curve near a fold, which stopped the trace.
+"""
+struct ContractionEstimate{E <: Real}
+    safety::E
+    function ContractionEstimate(; safety::E)::ContractionEstimate{E} where {E <: Real}
+        0 < safety <= 1 || throw(ArgumentError("safety must be in (0, 1]; got $safety"))
+        return new{E}(safety)
+    end
+end
+
+"""
+    Newton(; max_iterations, converged, contraction_limit, error_estimate, distance = MetricDistance())
 
 The corrector: Newton's method on `[H(x); ⟨t, x - x̂⟩] = 0`, with `x̂` the predictor, `t` the tangent and `⟨⋅,⋅⟩` the
 step metric.
 
 - `max_iterations`: corrections before the corrector gives up and the step is refused.
-- `converged(previous, iterate, residual)`: whether `iterate`, one correction from `previous`, has converged;
-  `residual` is `H(previous)`.
+- `converged(previous, iterate, residual, scale)`: whether `iterate`, one correction from `previous`, has converged,
+  the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`.
 - `contraction_limit`: a correction longer than this times the one before it is refused as diverging.
-- `distance(from, to)`: a correction's length, for the contraction test and step control. `MetricDistance()` is the
-  step metric's norm.
+- `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)`.
+- `distance(from, to)`: a correction's length, for the contraction test, the error estimate and step control.
+  `MetricDistance()` is the step metric's norm.
 """
-struct Newton{C, E <: Real, D}
+struct Newton{C, E <: Real, R <: Union{LastCorrection, ContractionEstimate{E}}, D}
     max_iterations::Int
     converged::C
     contraction_limit::E
+    error_estimate::R
     distance::D
 end
 
 function Newton(;
-        max_iterations::Integer, converged::C, contraction_limit::E, distance::D = MetricDistance(),
-    )::Newton{C, E, D} where {C, E <: Real, D}
+        max_iterations::Integer, converged::C, contraction_limit::E, error_estimate::R, distance::D = MetricDistance(),
+    )::Newton{C, E, R, D} where {C, E <: Real, R <: Union{LastCorrection, ContractionEstimate}, D}
+    # The bound ties `R`'s float type to `E` only on the struct: a keyword method's bound cannot name `E`.
     max_iterations >= 1 || throw(ArgumentError("max_iterations must be at least 1; got $max_iterations"))
     contraction_limit > 0 || throw(ArgumentError("contraction_limit must be positive; got $contraction_limit"))
-    return Newton{C, E, D}(Int(max_iterations), converged, contraction_limit, distance)
+    return Newton{C, E, R, D}(Int(max_iterations), converged, contraction_limit, error_estimate, distance)
+end
+
+"""The `scale` `converged` sees after a correction of length `correction` that followed one of length `before`."""
+function error_scale(::LastCorrection, ::E, ::E)::E where {E <: Real}
+    return one(E)
+end
+
+function error_scale(estimate::ContractionEstimate{E}, correction::E, before::E)::E where {E <: Real}
+    # The first correction follows a NaN `before`.
+    isnan(before) && return one(E)
+    ratio = correction / before
+    return ratio < 1 ? ratio / ((1 - ratio) * estimate.safety) : E(Inf32)
 end
 
 """

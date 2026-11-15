@@ -60,8 +60,8 @@ end
 
 """
     PathFollowingSettings{E}(; first_step, max_step, max_steps, distance, reach, newton_iterations,
-                             contraction_limit, nominal_contraction, nominal_turn, growth_limit, orientation,
-                             max_refusals, resolution_ulps, geometry, linear_solver)
+                             contraction_limit, error_estimate, nominal_contraction, nominal_turn, growth_limit,
+                             orientation, max_refusals, resolution_ulps, geometry, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
@@ -74,7 +74,9 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's nominal distance.
 - `reach`: refuse a corrected point that moved further from the predictor's than `reach` times the predictor's own
   move plus `distance`'s settle tolerance, all under `distance` (`WithinReach`). `Inf32` switches the test off.
-- `newton_iterations`, `contraction_limit`: PathFollowing's `Newton`, its corrections under `distance`.
+- `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
+  `distance`. `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the
+  settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
 - `nominal_contraction`, `nominal_turn`, `growth_limit`: PathFollowing's `StepControl`; `nothing` drops a term.
 - `orientation`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
   changes, as a step that runs back along the branch; a change that persists is a bifurcation crossing. `nothing`
@@ -91,6 +93,7 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     reach::E
     newton_iterations::Int
     contraction_limit::E
+    error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate{E}}
     nominal_contraction::Union{Nothing, E}
     nominal_turn::Union{Nothing, E}
     growth_limit::E
@@ -102,7 +105,8 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
 end
 
 # Without the orientation check, five of ten benchmark games ran back along the branch. `benchmark/logitnash_speed.jl`
-# compares engines.
+# compares engines. On 100 benchmark games, ContractionEstimate at safety 0.2 ran 8.6% faster than LastCorrection.
+# Safety 1 lost the 20x20 seed-6 fold, and safety 0.5 left ten times the branch error of 0.2.
 function PathFollowingSettings{E}(;
         first_step::Real = 0.03f0,
         max_step::Real = 1.0f7,
@@ -111,6 +115,7 @@ function PathFollowingSettings{E}(;
         reach::Real = 2.0f0,
         newton_iterations::Integer = 8,
         contraction_limit::Real = 0.5f0,
+        error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate} = PathFollowing.ContractionEstimate(; safety = 0.2f0),
         nominal_contraction::Union{Nothing, Real} = 0.25f0,
         nominal_turn::Union{Nothing, Real} = 0.3f0,
         growth_limit::Real = 4.0f0,
@@ -122,9 +127,15 @@ function PathFollowingSettings{E}(;
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
         E(first_step), E(max_step), Int(max_steps), distance, E(reach), Int(newton_iterations),
-        E(contraction_limit), optional_limit(E, nominal_contraction), optional_limit(E, nominal_turn), E(growth_limit),
+        E(contraction_limit), estimate_in(E, error_estimate), optional_limit(E, nominal_contraction), optional_limit(E, nominal_turn), E(growth_limit),
         orientation, Int(max_refusals), Int(resolution_ulps), geometry, linear_solver,
     )
+end
+
+"""`estimate` with its numbers in `E`."""
+estimate_in(::Type{<:Real}, estimate::PathFollowing.LastCorrection)::PathFollowing.LastCorrection = estimate
+function estimate_in(::Type{E}, estimate::PathFollowing.ContractionEstimate)::PathFollowing.ContractionEstimate{E} where {E <: Real}
+    return PathFollowing.ContractionEstimate(; safety = E(estimate.safety))
 end
 
 """`limit` in `E`, or `nothing` where it is off."""
@@ -178,24 +189,25 @@ end
 """
     LogitSettled(tolerance, rounding)
 
-PathFollowing's `converged` over points `[w; λ]`: the last correction moved no logit more than `tolerance` past
-`rounding` times that logit's own size (`logit_corrections`).
+PathFollowing's `converged` over points `[w; λ]`: the last correction, times Newton's `scale`, moved no logit more
+than `tolerance` past `rounding` times that logit's own size (`logit_corrections`).
 """
 struct LogitSettled{E <: Real}
     tolerance::E
     rounding::E
 end
 
-function (settled::LogitSettled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {E <: Real}
-    return last(logit_corrections(previous, iterate, settled.rounding)) <= settled.tolerance
+function (settled::LogitSettled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
+    return last(logit_corrections(previous, iterate, settled.rounding, scale)) <= settled.tolerance
 end
 
 """
     FisherRaoSettled(ranges, tolerance, rounding)
 
-PathFollowing's `converged` under `StrategyDistance`, each player's logits in its range of `ranges`. The last correction
-moved no player's strategy further than `tolerance` plus `rounding` times its `logit_root_mean_square`. That product
-bounds the Fisher–Rao distance a relative rounding of `rounding` in each logit moves the strategy.
+PathFollowing's `converged` under `StrategyDistance`, each player's logits in its range of `ranges`. The last correction,
+times Newton's `scale`, moved no player's strategy further than `tolerance` plus `rounding` times its logits' spread
+(`fisher_rao_spread`). That product bounds the Fisher–Rao distance a relative rounding of `rounding` in each logit
+moves the strategy.
 """
 struct FisherRaoSettled{N, E <: Real}
     ranges::NTuple{N, UnitRange{Int}}
@@ -203,11 +215,11 @@ struct FisherRaoSettled{N, E <: Real}
     rounding::E
 end
 
-function (settled::FisherRaoSettled{N, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {N, E <: Real}
+function (settled::FisherRaoSettled{N, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {N, E <: Real}
     for range in settled.ranges
-        allowance = settled.tolerance + settled.rounding * logit_root_mean_square(iterate, range)
+        (distance, spread) = fisher_rao_spread(previous, iterate, range)
         # A NaN distance fails the comparison, so it never settles.
-        player_fisher_rao(previous, iterate, range) <= allowance || return false
+        scale * distance <= settled.tolerance + settled.rounding * spread || return false
     end
     return true
 end
@@ -216,7 +228,7 @@ end
     FisherRaoChange(ranges)
 
 The largest Fisher–Rao distance any player's mixed strategy moves between two points `[w; λ]`, each player's logits
-`z = λ w` in its range of `ranges`, against its first strategy (`player_fisher_rao`).
+`z = λ w` in its range of `ranges`, against its first strategy (`fisher_rao_spread`).
 """
 struct FisherRaoChange{N}
     ranges::NTuple{N, UnitRange{Int}}
@@ -225,7 +237,7 @@ end
 function (change::FisherRaoChange)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     largest = zero(E)
     for range in change.ranges
-        largest = max(largest, player_fisher_rao(from, to, range))
+        largest = max(largest, first(fisher_rao_spread(from, to, range)))
     end
     return largest
 end
@@ -251,31 +263,25 @@ function root_probability(logit::E, normalizer::NTuple{2, E})::E where {E <: Rea
     return exp(((logit - first(normalizer)) - last(normalizer)) / 2)
 end
 
-"""The root mean square `√(Σ π z²)` of a player's logits `z = λ w[range]` under its own mixed strategy `π`."""
-function logit_root_mean_square(point::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
-    normalizer = log_normalizer(point, range)
-    # The first strategy's logit is zero. `√π z` stays finite where `π` underflows and `z²` overflows.
-    total = zero(E)
-    for index in range
-        logit = last(point) * point[index]
-        total += (root_probability(logit, normalizer) * logit)^2
-    end
-    return sqrt(total)
-end
-
 """
-The Fisher–Rao distance a player's mixed strategy moves from `from` to `to`, its logits in `range`: `4 asin(h / 2)`,
-`h` the Euclidean distance between the square roots of the two strategies. It is a geodesic on the probability simplex,
-at most `π`; a small move of logits `Δz` has length `√Var_π(Δz)`.
+A player's move from `from` to `to`, its logits in `range`, and its logits' spread at `to`. The move is the Fisher–Rao
+distance `4 asin(h / 2)`, `h` the Euclidean distance between the square roots of the two strategies: a geodesic on the
+probability simplex, at most `π`. A small move of logits `Δz` has length `√Var_π(Δz)`. The spread is the root mean
+square `√(Σ π z²)` of the logits `z = λ w[range]` at `to` under their own mixed strategy `π`.
 """
-function player_fisher_rao(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
+function fisher_rao_spread(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::NTuple{2, E} where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)
-    # The first strategy's logit is zero.
+    # The first strategy's logit is zero, so it adds nothing to the spread.
     squared = (root_probability(zero(E), to_normalizer) - root_probability(zero(E), from_normalizer))^2
+    spread = zero(E)
     for index in range
-        squared += (root_probability(last(to) * to[index], to_normalizer) - root_probability(last(from) * from[index], from_normalizer))^2
+        logit = last(to) * to[index]
+        root = root_probability(logit, to_normalizer)
+        squared += (root - root_probability(last(from) * from[index], from_normalizer))^2
+        # `√π z` stays finite where `π` underflows and `z²` overflows.
+        spread += (root * logit)^2
     end
-    return 4 * asin(sqrt(squared) / 2)
+    return (4 * asin(sqrt(squared) / 2), sqrt(spread))
 end
 
 """The callable that measures a corrector's moves under `distance` on `gains`: `logit_change` or `FisherRaoChange`."""
@@ -321,6 +327,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
             max_iterations = settings.newton_iterations,
             converged = settle_test(settings.distance, measure),
             settings.contraction_limit,
+            settings.error_estimate,
             distance = measure,
         ),
         step_control = PathFollowing.StepControl(;

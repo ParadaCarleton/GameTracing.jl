@@ -112,6 +112,22 @@ end
     end
 end
 
+@testset "write_gain_slope! refuses a block that does not fit the two players' strategies" begin
+    rng = fresh_rng()
+    gains = NormalFormGains(ntuple(_ -> randn(rng, 3, 2), 2))
+    logits = randn(rng, logit_count(gains))
+    work = pass_workspace(gains, logits)
+    width = logit_count(gains)
+    # The pass leaves the strategies at `logits`; the walk then refills player 1's sensitivities.
+    gains(work, zeros(width), zeros(width, width), zeros(width), logits, 1)
+    payoff = first(gains.payoffs)
+    GameTracing.walk_player!(work, payoff, 1; slopes = true)
+    @test_throws DimensionMismatch GameTracing.write_gain_slope!(zeros(2, 2), payoff, work, 1, 2)
+    fitting = zeros(2, 1)
+    GameTracing.write_gain_slope!(fitting, payoff, work, 1, 2)
+    @test fitting ≈ evaluated(gains, logits, 1).logit_slope[1:2, 3:3]
+end
+
 @testset "NormalFormGains: the gain slope is the derivative of the gains, at any strategy counts" begin
     rng = fresh_rng()
     for counts in ((3, 3), (2, 3, 4), (4, 2), (1, 3), (3, 2, 2))

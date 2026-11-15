@@ -15,7 +15,8 @@ using LinearAlgebra: LinearAlgebra
 using LinearSolve: LinearSolve
 using SciMLBase: SciMLBase
 
-export CurveProblem, PseudoArclength, Newton, StepControl, DeterminantSign, FixedWeights, PointWeights, MetricDistance
+export CurveProblem, PseudoArclength, Newton, LastCorrection, ContractionEstimate, StepControl, DeterminantSign, FixedWeights
+export PointWeights, MetricDistance
 export Tracer, AcceptedStep, StepFailure, FailureCause, Refusal, land!
 export Unresolved, TooManyRefusals, NotFiniteStart, SingularStart
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip

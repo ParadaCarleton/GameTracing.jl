@@ -84,7 +84,7 @@ end
 
 @testset "NormalFormGains: each player's gains, stacked in player order, are its expected payoffs less its first strategy's" begin
     rng = fresh_rng()
-    for counts in ((3, 3, 3), (2, 3, 4), (4, 2, 3), (3, 2))
+    for counts in ((3, 3, 3), (2, 3, 4), (4, 2, 3), (3, 2), (2, 3, 2, 2), (2, 2, 2, 2, 2, 2))
         # 32-bit payoffs under 64-bit logits: the work arrays take the logits' element type.
         payoffs = ntuple(_ -> 3 .* randn(rng, Float32, counts), length(counts))
         gains = NormalFormGains(payoffs)
@@ -98,17 +98,63 @@ end
 
 @testset "a NormalFormGains pass on its workspace allocates nothing" begin
     rng = fresh_rng()
-    gains = NormalFormGains(ntuple(_ -> randn(rng, Float32, 3, 2, 4), 3))
-    @test pass_bytes(gains, randn(rng, Float32, logit_count(gains)), 2.0f0) == 0
+    for counts in ((3, 2, 4), (2, 2, 3, 2, 2))
+        gains = NormalFormGains(ntuple(_ -> randn(rng, Float32, counts), length(counts)))
+        @test pass_bytes(gains, randn(rng, Float32, logit_count(gains)), 2.0f0) == 0
+    end
 end
 
-@testset "a NormalFormGains walk refuses work arrays of another game" begin
+@testset "a one-player game's gains are its payoffs less the first, with no slope" begin
+    rng = fresh_rng()
+    payoff = randn(rng, 4)
+    gains = NormalFormGains((payoff,))
+    pass = evaluated(gains, randn(rng, logit_count(gains)), 1)
+    @test pass.response == payoff[2:end] .- first(payoff)
+    @test iszero(pass.logit_slope)
+end
+
+@testset "group_weights! takes adjacent axes as one, the first axis fastest ($element)" for element in (Float32, widen(Float32))
+    strategies = (element.([1, 2]), element.([3, 5, 7]), element.([11, 13]))
+    buffer = zeros(element, 12)
+    @test GameTracing.group_weights!(buffer, strategies, 1:2) == element.([3, 6, 5, 10, 7, 14])
+    @test GameTracing.group_weights!(buffer, strategies, 2:3) == element.([33, 55, 77, 39, 65, 91])
+    @test GameTracing.group_weights!(buffer, strategies, 2:2) == element.([3, 5, 7])
+end
+
+"""Each axis of `source` in `group` weighted by its entry of `strategies`, multiplied out: an array of `source`'s rank."""
+function joint_weights(source::AbstractArray, strategies::Tuple, group::AbstractUnitRange)::AbstractArray
+    shaped = [reshape(strategies[axis], ntuple(other -> other == axis ? size(source, axis) : 1, ndims(source))) for axis in group]
+    return reduce((left, right) -> left .* right, shaped)
+end
+
+@testset "contract_axes! sums the slices along adjacent axes, each times its joint weight ($element)" for element in (Float32, widen(Float32))
+    # Runs of 1 to 54 entries against 2 to 54 slices take both loop orders. Every sum is an exact integer.
+    for source in (element.(reshape(1:24, 2, 3, 4)), element.(reshape(1:216, 18, 3, 4))), group in (1:1, 1:2, 2:3, 3:3)
+        strategies = ntuple(axis -> element.(collect(axes(source, axis))), ndims(source))
+        reference = sum(source .* joint_weights(source, strategies, group); dims = Tuple(group))
+        weights = GameTracing.group_weights!(zeros(element, length(source)), strategies, group)
+        target = zeros(element, length(reference))
+        @test GameTracing.contract_axes!(target, source, size(source), group, weights) == size(reference)
+        @test target == vec(reference)
+    end
+    source = element.(reshape(1:24, 2, 3, 4))
+    @test_throws DimensionMismatch GameTracing.contract_axes!(zeros(element, 6), source, size(source), 3:3, element.(1:3))
+end
+
+@testset "write_marginal! and write_pair_marginals! refuse a tensor with an axis besides their players'" begin
+    @test_throws DimensionMismatch GameTracing.write_marginal!(zeros(2, 2), zeros(8), (2, 2, 2), 1, 2)
+    gains = NormalFormGains(ntuple(_ -> zeros(2, 2, 2, 2), 4))
+    work = pass_workspace(gains, zeros(logit_count(gains)))
+    @test_throws DimensionMismatch GameTracing.write_pair_marginals!(work, zeros(16), (2, 2, 2, 2), 1, 2, 3)
+end
+
+@testset "a NormalFormGains contraction refuses work arrays of another game" begin
     rng = fresh_rng()
     gains = NormalFormGains(ntuple(_ -> randn(rng, 3, 2), 2))
     logits = randn(rng, logit_count(gains))
     for other in (NormalFormGains(ntuple(_ -> randn(rng, 2, 3), 2)), NormalFormGains(ntuple(_ -> randn(rng, 3, 2, 2), 3)))
         work = pass_workspace(other, logits)
-        @test_throws DimensionMismatch GameTracing.walk_player!(work, first(gains.payoffs), 1; slopes = true)
+        @test_throws DimensionMismatch GameTracing.contract_payoff!(work, first(gains.payoffs), 1; slopes = true)
     end
 end
 
@@ -118,10 +164,10 @@ end
     logits = randn(rng, logit_count(gains))
     work = pass_workspace(gains, logits)
     width = logit_count(gains)
-    # The pass leaves the strategies at `logits`; the walk then refills player 1's sensitivities.
+    # The pass leaves the strategies at `logits`; the contraction then refills player 1's sensitivities.
     gains(work, zeros(width), zeros(width, width), zeros(width), logits, 1)
     payoff = first(gains.payoffs)
-    GameTracing.walk_player!(work, payoff, 1; slopes = true)
+    GameTracing.contract_payoff!(work, payoff, 1; slopes = true)
     @test_throws DimensionMismatch GameTracing.write_gain_slope!(zeros(2, 2), payoff, work, 1, 2)
     fitting = zeros(2, 1)
     GameTracing.write_gain_slope!(fitting, payoff, work, 1, 2)
@@ -130,7 +176,8 @@ end
 
 @testset "NormalFormGains: the gain slope is the derivative of the gains, at any strategy counts" begin
     rng = fresh_rng()
-    for counts in ((3, 3), (2, 3, 4), (4, 2), (1, 3), (3, 2, 2))
+    # Four rivals and more take the contraction two halvings deep.
+    for counts in ((3, 3), (2, 3, 4), (4, 2), (1, 3), (3, 2, 2), (2, 2, 3, 2, 2), (2, 2, 2, 2, 2, 2))
         payoffs = ntuple(_ -> 3 .* randn(rng, counts), length(counts))
         gains = NormalFormGains(payoffs)
         logits = randn(rng, logit_count(gains))

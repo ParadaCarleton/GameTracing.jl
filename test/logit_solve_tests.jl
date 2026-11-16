@@ -71,7 +71,11 @@ const FOLDING_BRANCH_GAME = (
 
 # A fresh draw of a CI run: PathFollowing ends it at logits near ±300, where every strategy has settled but the logits
 # sit about 1000 ulps off the map. Its points settle in strategies, PathFollowing's measure, and fail in logits.
-const SATURATED_BRANCH_GAME = (Float32[1.9945446 -6.476125; -0.60958946 -0.019216493;;; 2.4169908 1.7390554; 2.7044353 -5.6631885], Float32[3.0360756 1.9217091; 0.7952187 -5.8968396;;; -2.338289 3.3105536; -2.648212 1.6191502], Float32[-1.675467 -0.60522515; 0.72147083 -0.13347721;;; -5.2404265 3.434299; 2.0519495 3.9997408])
+const SATURATED_BRANCH_GAME = (
+    Float32[1.9945446f0 -6.476125f0; -0.60958946f0 -0.019216493f0;;; 2.4169908f0 1.7390554f0; 2.7044353f0 -5.6631885f0],
+    Float32[3.0360756f0 1.9217091f0; 0.7952187f0 -5.8968396f0;;; -2.338289f0 3.3105536f0; -2.648212f0 1.6191502f0],
+    Float32[-1.675467f0 -0.60522515f0; 0.72147083f0 -0.13347721f0;;; -5.2404265f0 3.434299f0; 2.0519495f0 3.9997408f0],
+)
 
 """Whether a branch point settles as its engine's corrector settles points: in logits, or in strategies (`StrategyDistance`)."""
 settled_point(gains::NormalFormGains, profile::LogitQREProfile, ::BifurcationKitSettings)::Bool =

@@ -399,7 +399,8 @@ end
 """
 `settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
 at most `tolerance`. A step past `maximum_precision` lands there (`landed_point`), which settles or fails
-`NoConvergence` with reason `:maximum_precision`.
+`NoConvergence` with reason `:maximum_precision`. A point below precision zero fails `TraceStuck` with reason
+`:negative_precision`: the trace turned back along its branch.
 """
 function engine_points(
         gains::NormalFormGains,
@@ -428,6 +429,10 @@ function recorded_points(
     stepped = capped_step!(tracer, maximum_precision, max_steps, context)
     while !is_error(stepped)
         point = unwrap(stepped)
+        # The principal branch meets precision zero only at its start, so a point below zero ran back along it.
+        if last(point) < 0
+            return Err(TraceFailure(TraceStuck, stopped_context(:negative_precision, point, tracer.steps, context, (;))))
+        end
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
         end

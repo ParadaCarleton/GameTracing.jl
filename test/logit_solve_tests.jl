@@ -190,6 +190,13 @@ end
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; min_step_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
+    # A trace sent back from its start falls below precision zero, off the principal branch.
+    reversed = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; orientation_check = nothing)))
+    reversed.tangent .*= -1
+    recorder = GameTracing.BranchRecorder(gains, one(element), zero(element))
+    below = unwrap_error(GameTracing.recorded_points(reversed, recorder, element(100), 10, (;)))
+    @test (below.cause, below.context.reason, below.context.steps) == (GameTracing.TraceStuck, :negative_precision, 1)
+    @test below.context.precision < 0 && isempty(recorder.precisions)
     poisoned = NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0]))
     @test unwrap_error(logit_solve(poisoned; settings = PathFollowingSettings{element}())).cause == GameTracing.NotFinite
     @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = PathFollowingSettings{element}())).context.reason == :NotFiniteStart

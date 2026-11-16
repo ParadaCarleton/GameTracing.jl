@@ -59,16 +59,16 @@ function LogitDistance{E}(;
 end
 
 """
-    PathFollowingSettings{E}(; first_step, max_step, max_steps, distance, newton_iterations, contraction_limit,
-                             error_estimate, target_contraction, target_turn, max_step_growth, orientation_check,
-                             max_refusals, min_step_ulps, step_metric, linear_solver)
+    PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
+                             target_contraction, target_turn, max_step_growth, orientation_check, max_refusals,
+                             min_step_ulps, step_metric, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
 - `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
   accepted point.
-- `first_step`, `max_step`: the first and the largest step in that norm. `Inf` sets no largest step.
+- `max_step`: the largest step in that norm; `Inf` sets none. The first step comes from the game (`opening_step`).
 - `max_steps`: accepted steps before the trace fails as `NoConvergence`.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
   strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's target correction.
@@ -85,7 +85,6 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 """
 struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineSettings{E}
-    first_step::E
     max_step::E
     max_steps::Int
     distance::D
@@ -106,7 +105,6 @@ end
 # branch. Without the orientation check, five of ten games ran back. ContractionEstimate at safety 0.2 ran 8.6% faster
 # than LastCorrection; safety 1 lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error.
 function PathFollowingSettings{E}(;
-        first_step::Real = 0.03f0,
         max_step::Real = Inf32,
         max_steps::Integer = 2_000,
         distance::D = StrategyDistance{E}(),
@@ -114,8 +112,11 @@ function PathFollowingSettings{E}(;
         contraction_limit::Real = 0.5f0,
         error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate} = PathFollowing.ContractionEstimate(; safety = 0.2f0),
         target_contraction::Union{Nothing, Real} = 0.25f0,
+        # On hard_games.jl's 543 games, 0.3 left 1 endpoint off its branch to 1 rad's 5, at 15-62% more steps.
         target_turn::Union{Nothing, Real} = 1.0f0,
-        max_step_growth::Real = 4.0f0,
+        # Growth 4 left 11 endpoints off their branch, and 15 with the halved retries before 8cead08 (which reversed one
+        # trace too). Results: benchmark/results/hard-8cead08-summary.txt.
+        max_step_growth::Real = 2.0f0,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(; persistence = 4),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
@@ -123,9 +124,9 @@ function PathFollowingSettings{E}(;
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
-        E(first_step), E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit),
-        estimate_in(E, error_estimate), optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth),
-        orientation_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
+        E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
+        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), orientation_check,
+        Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
 end
 
@@ -335,8 +336,18 @@ function path_init(
     return CommonSolve.init(
         PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
         path_algorithm(settings, gains);
-        settings.first_step,
+        first_step = opening_step(gains, E),
     )
+end
+
+"""
+The first step of a trace of `gains`: `1 / payoff_range(gains)` in `λ`, where no logit `z = λ w` has moved by more
+than one. Step control then grows it by up to `max_step_growth` per step. Equal or non-finite payoffs step one; a
+non-finite start fails anyway (`NotFiniteStart`).
+"""
+function opening_step(gains::NormalFormGains, ::Type{E})::E where {E <: Real}
+    range = E(payoff_range(gains))
+    return range > 0 && isfinite(range) ? inv(range) : one(E)
 end
 
 """The context of PathFollowing's start `failure` over `width` logits: `context` and the flat start."""

@@ -1,0 +1,45 @@
+# benchmark/hard_games.jl at 8cead08 (measured on 77805ca, the same tree before a rebase onto ce57264), ssh-dev, Julia 1.13.1.
+# main at 8978864 on the same games and reference: 2912 / 4436 / 1382 / 164 steps by class, 15 endpoints off
+# the reference branch (normal 1, common 0.9 11, common 0.97 3) and common 0.9 20x20 s78 reversed to λ = -7e307.
+# A cautious BifurcationKit trace and a turn-0.03 trace match the reference to 1e-4 on 20 games that arms missed.
+maxregret 1e-06; off: endpoints over 0.05 from the reference branch
+class       arm        games solved   steps  off
+normal      default      110    110    2947    0
+normal      growth 4     110    110    2759    0
+normal      turn 0.3     110    110    3392    0
+normal      turn off     110    110    2918    0
+common 0.9  default      300    300    4024    5
+common 0.9  growth 4     300    300    3532    9
+common 0.9  turn 0.3     300    300    6378    1
+common 0.9  turn off     300    300    3957    5
+common 0.97 default      120    120    1307    0
+common 0.97 growth 4     120    120    1175    1
+common 0.97 turn 0.3     120    120    2118    0
+common 0.97 turn off     120    120    1291    0
+fixture     default       13     13     177    0
+fixture     growth 4      13     13     160    0
+fixture     turn 0.3      13     13     248    0
+fixture     turn off      13     13     179    0
+
+failures and endpoints off the reference branch:
+  common 0.9  5x5 s84      default   Ok                             off 1.125 λ 125 reference Ok
+  common 0.9  5x5 s84      turn off  Ok                             off 1.125 λ 125 reference Ok
+  common 0.9  10x10 s67    growth 4  Ok                             off 0.590 λ 1.272e+05 reference Ok
+  common 0.9  10x10 s78    growth 4  Ok                             off 0.631 λ 1.195e+05 reference Ok
+  common 0.9  20x20 s60    default   Ok                             off 1.323 λ 227.8 reference Ok
+  common 0.9  20x20 s62    growth 4  Ok                             off 0.715 λ 7.296e+04 reference Ok
+  common 0.9  20x20 s73    growth 4  Ok                             off 0.674 λ 3.487e+04 reference Ok
+  common 0.9  20x20 s77    default   Ok                             off 1.105 λ 251 reference Ok
+  common 0.9  20x20 s77    turn off  Ok                             off 1.105 λ 286 reference Ok
+  common 0.9  20x20 s80    growth 4  Ok                             off 0.703 λ 3.755e+04 reference Ok
+  common 0.9  4x4x4 s53    growth 4  Ok                             off 1.168 λ 51.19 reference Ok
+  common 0.9  4x4x4 s86    turn off  Ok                             off 1.208 λ 29.65 reference Ok
+  common 0.9  3x3x3x3 s49  growth 4  Ok                             off 1.087 λ 1.07e+05 reference Ok
+  common 0.9  3x3x3x3 s65  default   Ok                             off 1.283 λ 6.202e+04 reference Ok
+  common 0.9  3x3x3x3 s65  growth 4  Ok                             off 1.283 λ 5.539e+04 reference Ok
+  common 0.9  3x3x3x3 s65  turn off  Ok                             off 1.283 λ 6.202e+04 reference Ok
+  common 0.9  3x3x3x3 s84  default   Ok                             off 1.089 λ 4.569e+04 reference Ok
+  common 0.9  3x3x3x3 s84  growth 4  Ok                             off 1.089 λ 4.528e+04 reference Ok
+  common 0.9  3x3x3x3 s84  turn 0.3  Ok                             off 1.089 λ 4.504e+04 reference Ok
+  common 0.9  3x3x3x3 s84  turn off  Ok                             off 1.089 λ 4.569e+04 reference Ok
+  common 0.97 4x4x4 s57    growth 4  Ok                             off 0.800 λ 5.536e+04 reference Ok

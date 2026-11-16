@@ -94,9 +94,11 @@ Step-length adaptation after Allgower and Georg (Numerical Continuation Methods,
 gives `f = max(√(κ / target_contraction), √(δ / target_correction), α / target_turn)`: `κ` the ratio of its second
 correction to its first, `δ` its first correction's length (`Newton`'s `distance`) and `α` the turn between the
 tangents in radians. Each target is the value its measurement should take: at `f = 1` the step keeps its length.
-The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term. A step with `f > refusal_factor` is refused and retried at `shrink`
-times its length; any other step is accepted, and the next one is `1 / max(f, 1 / max_step_growth)` times as long, at
-most `max_step`. Every other refusal also shrinks the step by `shrink`.
+The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term.
+
+A step with `f > refusal_factor` is refused; any other step is accepted, and the next one is `1 / max(f, 1 /
+max_step_growth)` times as long, at most `max_step`. A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
+and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shrink`) when it failed earlier.
 """
 struct StepControl{E <: Real}
     target_contraction::Union{Nothing, E}

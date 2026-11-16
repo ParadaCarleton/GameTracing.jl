@@ -69,27 +69,6 @@ const FOLDING_BRANCH_GAME = (
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
 )
 
-# The (3, 3, 2) game of `3 .* randn(Xoshiro(152), Float32, (3, 3, 2))` per player. A long early PathFollowing step lands
-# where its oriented tangent runs back along the branch; without the orientation check the trace ends at another
-# equilibrium, 0.9995 away in probability from Gambit's pure one at λ ≈ 3.8.
-const REVERSAL_GAME = (
-    cat(
-        Float32[-0.5337934f0 -3.4574738f0 -0.31516188f0; 1.2419287f0 0.6020585f0 -0.45870376f0; 1.6466057f0 -1.8631278f0 -0.5691585f0],
-        Float32[-0.11642508f0 1.8486631f0 1.6131696f0; -4.5490217f0 -1.7635972f0 -4.980587f0; 1.3529017f0 -3.944703f0 -3.9721947f0];
-        dims = 3,
-    ),
-    cat(
-        Float32[5.1817837f0 4.2066636f0 -1.6429582f0; 0.27198213f0 3.56285f0 -2.5637565f0; 1.1680062f0 -2.4406242f0 -2.0018725f0],
-        Float32[-3.496707f0 0.9063864f0 -1.136579f0; 0.5411101f0 0.86526525f0 -0.27381507f0; 7.237438f0 -3.9687374f0 2.3237944f0];
-        dims = 3,
-    ),
-    cat(
-        Float32[-0.90711546f0 1.2572101f0 2.234933f0; 0.7166976f0 -3.4552052f0 -0.39850372f0; 1.7495403f0 -2.8394732f0 -3.8426185f0],
-        Float32[-0.48643172f0 5.1313787f0 0.56367534f0; 0.40493193f0 4.1448507f0 0.9289435f0; 4.757027f0 0.33046308f0 -0.8036462f0];
-        dims = 3,
-    ),
-)
-
 """The random games of the branch testset, one per strategy count in `((3, 3), (2, 2, 2))`, drawn from `rng`."""
 function branch_games(rng::AbstractRNG)::AbstractVector
     return [ntuple(_ -> 3 .* randn(rng, Float32, counts), length(counts)) for counts in ((3, 3), (2, 2, 2))]
@@ -176,9 +155,9 @@ end
     spent = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; max_steps = 1)))
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
-    # A first step a hundred times past its target correction is refused, and no refusal is allowed.
-    for distance in (StrategyDistance{element}(; target_correction = 1.0f-2), LogitDistance{element}(; target_correction = 1.0f-2))
-        refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; first_step = 100, distance, max_refusals = 0)))
+    # A first correction far past a 1e-6 target is refused, and no refusal is allowed.
+    for distance in (StrategyDistance{element}(; target_correction = 1.0f-6), LogitDistance{element}(; target_correction = 1.0f-6))
+        refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
     # A distance in another element type is refused.
@@ -207,6 +186,10 @@ end
     # No step cap by default; the growth bound then must stay finite.
     @test PathFollowingSettings{element}().max_step == Inf32
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; max_step_growth = Inf32))
+    # The first step comes from the game: the precision where a logit moves by one, or one for equal payoffs.
+    @test GameTracing.opening_step(gains, element) == inv(element(GameTracing.payoff_range(gains)))
+    @test GameTracing.opening_step(NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), element) == 1
+    @test GameTracing.opening_step(poisoned, element) == 1
 end
 
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))

@@ -51,5 +51,26 @@ const GAMBIT_LEAVES_GAME = (
 # 0.0024) past the middle arm of the unfolded pitchfork, and ends near the pure equilibrium (1, 1).
 const UNFOLDED_PITCHFORK_GAME = ([30000726 -37; 757 20000821] .// 10^7, [19999477 -283; 919 29999523] .// 10^7)
 
+# The (3, 3, 2) game of `3 .* randn(Xoshiro(152), Float32, (3, 3, 2))` per player. A long early PathFollowing step lands
+# where its oriented tangent runs back along the branch; without the orientation check the trace ends at another
+# equilibrium, 0.9995 away in probability from Gambit's pure one at λ ≈ 3.8.
+const REVERSAL_GAME = (
+    cat(
+        Float32[-0.5337934f0 -3.4574738f0 -0.31516188f0; 1.2419287f0 0.6020585f0 -0.45870376f0; 1.6466057f0 -1.8631278f0 -0.5691585f0],
+        Float32[-0.11642508f0 1.8486631f0 1.6131696f0; -4.5490217f0 -1.7635972f0 -4.980587f0; 1.3529017f0 -3.944703f0 -3.9721947f0];
+        dims = 3,
+    ),
+    cat(
+        Float32[5.1817837f0 4.2066636f0 -1.6429582f0; 0.27198213f0 3.56285f0 -2.5637565f0; 1.1680062f0 -2.4406242f0 -2.0018725f0],
+        Float32[-3.496707f0 0.9063864f0 -1.136579f0; 0.5411101f0 0.86526525f0 -0.27381507f0; 7.237438f0 -3.9687374f0 2.3237944f0];
+        dims = 3,
+    ),
+    cat(
+        Float32[-0.90711546f0 1.2572101f0 2.234933f0; 0.7166976f0 -3.4552052f0 -0.39850372f0; 1.7495403f0 -2.8394732f0 -3.8426185f0],
+        Float32[-0.48643172f0 5.1313787f0 0.56367534f0; 0.40493193f0 4.1448507f0 0.9289435f0; 4.757027f0 0.33046308f0 -0.8036462f0];
+        dims = 3,
+    ),
+)
+
 # One logit whose branch folds back at precision about 1.4; target 2 lies past the fold.
 const FOLD_GAME = ThresholdPass(6.0f0, 3.0f0)

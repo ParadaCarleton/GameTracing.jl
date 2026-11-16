@@ -9,6 +9,11 @@ The settings of a trace engine in element type `E`: `BifurcationKitSettings` or 
 """
 abstract type EngineSettings{E <: Real} end
 
+"""The element type `E` of `settings`, an `EngineSettings{E}`."""
+function element_type(::EngineSettings{E})::Type{E} where {E <: Real}
+    return E
+end
+
 """
     StepControl{E}(; distance_limit, max_step_growth, turn_limit)
 

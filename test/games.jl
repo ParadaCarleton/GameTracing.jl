@@ -270,13 +270,30 @@ function level_root(pass::Any, logits::AbstractVector, precision::Real)::Abstrac
 end
 
 """
-The largest logit move of one double-precision Newton correction of `pass`'s map `z = T(z, λ)` from `logits` at
-`precision`: to first order, how far `logits` lie from the root.
+One double-precision Newton correction of `pass`'s map `z = T(z, λ)` from `logits` at `precision`: to first order, the
+move from `logits` to the root.
 """
-function newton_correction(pass::Any, logits::AbstractVector, precision::P)::typeof(float(one(P)) * float(1)) where {P <: Real}
+function newton_step(pass::Any, logits::AbstractVector, precision::Real)::Vector
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
     gains = evaluated(pass, root, level)
-    return maximum(abs, (one(gains.logit_slope) .- gains.logit_slope) \ (root .- gains.response))
+    return (one(gains.logit_slope) .- gains.logit_slope) \ (root .- gains.response)
+end
+
+"""The largest logit move of `newton_step`: to first order, how far `logits` lie from the root."""
+function newton_correction(pass::Any, logits::AbstractVector, precision::P)::typeof(float(one(P)) * float(1)) where {P <: Real}
+    return maximum(abs, newton_step(pass, logits, precision))
+end
+
+"""
+Whether `logits` solve `gains` at `precision` as PathFollowing's `StrategyDistance` corrector settles them: `newton_step`
+moves no player's mixed strategy more than twice the tolerance (Fisher–Rao). Saturated logits can sit far off the map
+in logit space while every strategy has settled.
+"""
+function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance)::Bool
+    root, level = float.(collect(logits)) .* float(1), precision * float(1)
+    corrected = root .- newton_step(gains, logits, precision)
+    measure = GameTracing.corrector_measure(distance, gains)
+    return measure([root ./ level; level], [corrected ./ level; level]) <= 2 * distance.tolerance
 end
 
 """

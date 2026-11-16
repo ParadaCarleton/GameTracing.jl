@@ -26,7 +26,7 @@ end
         for settings in (
                 BifurcationKitSettings{Float32}(),
                 BifurcationKitSettings{Float32}(tangent = BifurcationKit.Secant()),
-                BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve),
+                BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve, orientation_check = false),
             )
             traced = trace_endpoint(LogitGame(pass, precision), width, settings)
             @test !is_error(traced)

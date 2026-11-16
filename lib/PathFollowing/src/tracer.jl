@@ -14,11 +14,11 @@ a changed sign (`OrientationFlip`). `NoRefusal` marks an accepted attempt.
 @enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip
 
 """
-    AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn, flipped)
+    AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
 
 One accepted step: its predictor's length in the step metric, the corrector's iterations, the refusals before it, the
 ratio of the corrector's second correction to its first (NaN after one correction), the first correction's length,
-the tangent's turn in radians, and whether it accepted a changed orientation sign (`DeterminantSign`).
+and the tangent's turn in radians.
 """
 struct AcceptedStep{E <: Real}
     step_length::E
@@ -27,7 +27,6 @@ struct AcceptedStep{E <: Real}
     contraction::E
     first_correction::E
     turn::E
-    flipped::Bool
 end
 
 """
@@ -47,8 +46,7 @@ end
     Tracer
 
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
-the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the `flip_streak` of
-orientation refusals in the current run of steps that each met one, the metrics' weights at `point`, and work arrays; `row` is the border row of the next bordered system. `init` builds one and `step!`
+the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the metrics' weights at `point`, and work arrays; `row` is the border row of the next bordered system. `init` builds one and `step!`
 advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
@@ -59,7 +57,6 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
     step_length::E
     steps::Int
     orientation::Int8
-    flip_streak::Int
     const weights::Vector{E}
     const turn_weights::Vector{E}
     const residual::Vector{E}
@@ -95,7 +92,7 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), E(first_step), 0, Int8(0), 0, zeros(E, size),
+        problem, algorithm, collect(problem.start), zeros(E, size), E(first_step), 0, Int8(0), zeros(E, size),
         zeros(E, size), zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size),
         zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
     )
@@ -129,27 +126,19 @@ refused attempt shrinks the step and tries again.
 function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailure{E}} where {E <: Real}
     (; algorithm) = tracer
     refusals = 0
-    flips = tracer.flip_streak
     last_refusal = NoRefusal
     while true
         tracer.predicted .= tracer.point .+ tracer.step_length .* tracer.tangent
         if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
             return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
         end
-        attempt = attempt_step!(tracer, flips)
+        attempt = attempt_step!(tracer)
         if attempt.refusal == NoRefusal
             taken = tracer.step_length
-            flipped = attempt.orientation != tracer.orientation
-            tracer.flip_streak = ifelse(flipped || flips == tracer.flip_streak, 0, flips)
             accept_point!(tracer, attempt)
-            return Ok(
-                AcceptedStep(
-                    taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn, flipped,
-                )
-            )
+            return Ok(AcceptedStep(taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn))
         end
         refusals += 1
-        flips += attempt.refusal == OrientationFlip
         last_refusal = attempt.refusal
         if refusals > algorithm.max_refusals
             break
@@ -182,9 +171,9 @@ end
 
 """
 Correct `tracer.predicted`, then test the corrected point: `accept`, a finite system there, its tangent, step
-control's factor and its orientation sign, after a streak of `flips` orientation refusals.
+control's factor and its orientation sign.
 """
-function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <: Real}
+function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
     tracer.row .= tracer.weights .* tracer.tangent
     corrected = correct!(tracer)
@@ -208,7 +197,7 @@ function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <
         return refused(E, TooFast, factor)
     end
     orientation = unwrap(oriented)
-    if flip_refused(algorithm.orientation_check, tracer.orientation, orientation, flips)
+    if flip_refused(algorithm.orientation_check, tracer.orientation, orientation)
         return refused(E, OrientationFlip)
     end
     return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
@@ -260,12 +249,9 @@ function factored_sign(factors::AbstractMatrix{E}, pivots::AbstractVector{<:Inte
     return signed
 end
 
-"""Whether `check` refuses a step whose orientation sign went from `before` to `after`, after `flips` such refusals."""
-flip_refused(::Nothing, ::Int8, ::Int8, ::Integer)::Bool = false
-
-function flip_refused(check::DeterminantSign, before::Int8, after::Int8, flips::Integer)::Bool
-    return after != before && flips < check.persistence
-end
+"""Whether `check` refuses a step whose orientation sign went from `before` to `after`."""
+flip_refused(::Nothing, ::Int8, ::Int8)::Bool = false
+flip_refused(::DeterminantSign, before::Int8, after::Int8)::Bool = after != before
 
 """
 Newton's method from `tracer.predicted` on `[H(x); r ⋅ (x - x̂)] = 0`, `r = tracer.row`, leaving its last iterate in

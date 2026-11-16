@@ -32,7 +32,7 @@ algorithm = PseudoArclength(;
         max_step = 0.5,
     ),
     metric = FixedWeights([1.0, 1.0]),
-    orientation_check = DeterminantSign(; persistence = 4),
+    orientation_check = DeterminantSign(),
     linear_solver = LUFactorization(),
     max_refusals = 60,
 )

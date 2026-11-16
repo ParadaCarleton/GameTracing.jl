@@ -140,26 +140,19 @@ function optional(::Type{E}, limit::Real)::E where {E <: Real}
 end
 
 """
-    DeterminantSign(; persistence)
+    DeterminantSign()
 
 `PseudoArclength`'s orientation check: the sign of `det([J; tᵀ])` at each corrected point, with `J` the Jacobian and
-`t` the tangent there. The sign is constant along a branch between bifurcation points. It changes when the corrector
-lands where the oriented tangent runs back along the curve, or when the step crosses a simple bifurcation point. A
-changed sign refuses the step (`OrientationFlip`). After `persistence` such refusals in a run of steps that each met
-one, the next changed sign is accepted as a bifurcation crossing (`AcceptedStep`'s `flipped`). The run spans steps
-because the step that follows a refusal grows again and can stop short of the bifurcation point.
+`t` the tangent there. The sign is constant along a branch between bifurcation points. A changed sign refuses the step
+(`OrientationFlip`). The corrector landed where the tangent, oriented along the one before, runs back along the
+curve, or the step crossed a bifurcation point. The check never accepts a changed sign. A jump onto a part of the curve
+that runs the other way changes it the same way as a crossing, so no rule tells the two apart. At an exact
+bifurcation the trace closes in on the point in shorter steps and fails `Unresolved` below the float resolution.
 
 With `LUFactorization`, the check reads the sign from the tangent solve's own LU in O(n). Other linear solvers pay a
 second LU factorization, of `[J; tᵀ]`, at each corrected point.
 """
-struct DeterminantSign
-    persistence::Int
-end
-
-function DeterminantSign(; persistence::Integer)::DeterminantSign
-    persistence >= 0 || throw(ArgumentError("persistence must be non-negative; got $persistence"))
-    return DeterminantSign(Int(persistence))
-end
+struct DeterminantSign end
 
 """
     PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation_check, linear_solver,

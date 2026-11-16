@@ -7,82 +7,81 @@ using PathFollowing: PathFollowing
 
 """
 How the corrector measures a move between two points `[w; λ]` (`corrector_measure`), with its settle tolerance and
-step control's nominal first correction in the same units: `StrategyDistance` or `LogitDistance`.
+step control's target first correction in the same units: `StrategyDistance` or `LogitDistance`.
 """
 abstract type CorrectorDistance{E <: Real} end
 
 """
-    StrategyDistance{E}(; tolerance, settle_ulps, nominal)
+    StrategyDistance{E}(; tolerance, settle_ulps, target_correction)
 
 Measure a move by the largest Fisher–Rao distance any player's mixed strategy travels (`FisherRaoChange`). A strategy
 counts by its probability, so one that has left the support stops counting. The corrector settles once a correction
 moves no strategy further than `tolerance` past the distance `settle_ulps` ulps of each logit move it
-(`FisherRaoSettled`). Step control's nominal first correction is `nominal`, or `nothing` to drop the term.
+(`FisherRaoSettled`). Step control's target first correction is `target_correction`, or `nothing` to drop the term.
 """
 struct StrategyDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
     settle_ulps::Int
-    nominal::Union{Nothing, E}
+    target_correction::Union{Nothing, E}
 end
 
 # Defaults: half the `LogitDistance` defaults, as a logit move at even odds is twice its Fisher–Rao distance.
 function StrategyDistance{E}(;
         tolerance::Real = 5.0f-5,
         settle_ulps::Integer = 16,
-        nominal::Union{Nothing, Real} = 0.25f0,
+        target_correction::Union{Nothing, Real} = 0.25f0,
     )::StrategyDistance{E} where {E <: Real}
-    return StrategyDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, nominal))
+    return StrategyDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, target_correction))
 end
 
 """
-    LogitDistance{E}(; tolerance, settle_ulps, nominal)
+    LogitDistance{E}(; tolerance, settle_ulps, target_correction)
 
 Measure a move by the largest change of any logit (`logit_change`). The corrector settles once a correction moves no
-logit more than `tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`). Step control's nominal first
-correction is `nominal`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
+logit more than `tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`). Step control's target first
+correction is `target_correction`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
 support: its logit grows like `λ`, and its corrections, `λ` times the square of the others', hold the steps short.
 """
 struct LogitDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
     settle_ulps::Int
-    nominal::Union{Nothing, E}
+    target_correction::Union{Nothing, E}
 end
 
-# Defaults: the cheapest step control that kept Gambit's branch on ten benchmark games where others left it. Nominal
-# distance 1 jumped branches on two 5x5x5 games; 0.5 did not, at about the same step count as 1.
+# Defaults: the cheapest step control that kept Gambit's branch on ten benchmark games where others left it. A target
+# correction of 1 jumped branches on two 5x5x5 games; 0.5 did not, at about the same step count as 1.
 function LogitDistance{E}(;
         tolerance::Real = 1.0f-4,
         settle_ulps::Integer = 16,
-        nominal::Union{Nothing, Real} = 0.5f0,
+        target_correction::Union{Nothing, Real} = 0.5f0,
     )::LogitDistance{E} where {E <: Real}
-    return LogitDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, nominal))
+    return LogitDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, target_correction))
 end
 
 """
-    PathFollowingSettings{E}(; first_step, max_step, max_steps, distance, reach, newton_iterations,
-                             contraction_limit, error_estimate, nominal_contraction, nominal_turn, growth_limit,
-                             orientation, max_refusals, resolution_ulps, geometry, linear_solver)
+    PathFollowingSettings{E}(; first_step, max_step, max_steps, distance, newton_iterations, contraction_limit,
+                             error_estimate, target_contraction, target_turn, max_step_growth, orientation_check,
+                             max_refusals, min_step_ulps, step_metric, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
-- `geometry`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
+- `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
   accepted point.
-- `first_step`, `max_step`: the first and the largest step in that norm.
+- `first_step`, `max_step`: the first and the largest step in that norm. `Inf` sets no largest step.
 - `max_steps`: accepted steps before the trace fails as `NoConvergence`.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
-  strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's nominal distance.
-- `reach`: refuse a corrected point that moved further from the predictor's than `reach` times the predictor's own
-  move plus `distance`'s settle tolerance, all under `distance` (`WithinReach`). `Inf32` switches the test off.
+  strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's target correction.
 - `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
   `distance`. `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the
   settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
-- `nominal_contraction`, `nominal_turn`, `growth_limit`: PathFollowing's `StepControl`; `nothing` drops a term.
-- `orientation`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
+- `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
+  The turn target is in radians under `step_metric`.
+- `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
   changes, as a step that runs back along the branch; a change that persists is a bifurcation crossing. `nothing`
   switches the check off.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
-- `resolution_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
+- `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 """
 struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineSettings{E}
@@ -90,45 +89,43 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     max_step::E
     max_steps::Int
     distance::D
-    reach::E
     newton_iterations::Int
     contraction_limit::E
     error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate{E}}
-    nominal_contraction::Union{Nothing, E}
-    nominal_turn::Union{Nothing, E}
-    growth_limit::E
-    orientation::Union{Nothing, PathFollowing.DeterminantSign}
+    target_contraction::Union{Nothing, E}
+    target_turn::Union{Nothing, E}
+    max_step_growth::E
+    orientation_check::Union{Nothing, PathFollowing.DeterminantSign}
     max_refusals::Int
-    resolution_ulps::Int
-    geometry::TraceGeometry{E}
+    min_step_ulps::Int
+    step_metric::TraceGeometry{E}
     linear_solver::L
 end
 
-# Without the orientation check, five of ten benchmark games ran back along the branch. `benchmark/logitnash_speed.jl`
-# compares engines. On 100 benchmark games, ContractionEstimate at safety 0.2 ran 8.6% faster than LastCorrection.
-# Safety 1 lost the 20x20 seed-6 fold, and safety 0.5 left ten times the branch error of 0.2.
+# On logitnash_speed.jl's games and 100 larger ones, a 1 rad turn target took 14-18% fewer steps than 0.3 and kept every
+# branch. Without the orientation check, five of ten games ran back. ContractionEstimate at safety 0.2 ran 8.6% faster
+# than LastCorrection; safety 1 lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error.
 function PathFollowingSettings{E}(;
         first_step::Real = 0.03f0,
-        max_step::Real = 1.0f7,
+        max_step::Real = Inf32,
         max_steps::Integer = 2_000,
         distance::D = StrategyDistance{E}(),
-        reach::Real = 2.0f0,
         newton_iterations::Integer = 8,
         contraction_limit::Real = 0.5f0,
         error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate} = PathFollowing.ContractionEstimate(; safety = 0.2f0),
-        nominal_contraction::Union{Nothing, Real} = 0.25f0,
-        nominal_turn::Union{Nothing, Real} = 0.3f0,
-        growth_limit::Real = 4.0f0,
-        orientation::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(; persistence = 4),
+        target_contraction::Union{Nothing, Real} = 0.25f0,
+        target_turn::Union{Nothing, Real} = 1.0f0,
+        max_step_growth::Real = 4.0f0,
+        orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(; persistence = 4),
         max_refusals::Integer = 80,
-        resolution_ulps::Integer = 4,
-        geometry::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
+        min_step_ulps::Integer = 4,
+        step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
-        E(first_step), E(max_step), Int(max_steps), distance, E(reach), Int(newton_iterations),
-        E(contraction_limit), estimate_in(E, error_estimate), optional_limit(E, nominal_contraction), optional_limit(E, nominal_turn), E(growth_limit),
-        orientation, Int(max_refusals), Int(resolution_ulps), geometry, linear_solver,
+        E(first_step), E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit),
+        estimate_in(E, error_estimate), optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth),
+        orientation_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
 end
 
@@ -300,25 +297,6 @@ function settle_test(distance::StrategyDistance{E}, measure::FisherRaoChange{N})
     return FisherRaoSettled(measure.ranges, distance.tolerance, distance.settle_ulps * eps(E))
 end
 
-"""
-    WithinReach(reach, tolerance, measure)
-
-PathFollowing's `accept` over points `[w; λ]`: the corrected point moved no further from the predictor's than `reach`
-times the predictor's own move plus `tolerance`, all under `measure`. A predictor that did not move passes.
-`tolerance` is the corrector's settle tolerance. The start settled only to it, so a short step's correction also clears
-the start's own error.
-"""
-struct WithinReach{E <: Real, M}
-    reach::E
-    tolerance::E
-    measure::M
-end
-
-function (within::WithinReach{E})(start::AbstractVector{E}, predicted::AbstractVector{E}, corrected::AbstractVector{E})::Bool where {E <: Real}
-    move = within.measure(start, predicted)
-    return !(move > 0) || within.measure(predicted, corrected) <= within.reach * move + within.tolerance
-end
-
 """PathFollowing's `PseudoArclength` for `settings` on `gains`."""
 function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGains)::PathFollowing.PseudoArclength where {E <: Real}
     measure = corrector_measure(settings.distance, gains)
@@ -331,14 +309,13 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
             distance = measure,
         ),
         step_control = PathFollowing.StepControl(;
-            settings.nominal_contraction, nominal_distance = settings.distance.nominal, settings.nominal_turn,
-            settings.growth_limit, settings.max_step,
+            settings.target_contraction, settings.distance.target_correction, settings.target_turn,
+            settings.max_step_growth, settings.max_step,
         ),
-        metric = PathFollowing.PointWeights(GeometryWeights(settings.geometry)),
-        settings.orientation,
+        metric = PathFollowing.PointWeights(GeometryWeights(settings.step_metric)),
+        settings.orientation_check,
         settings.linear_solver,
-        accept = WithinReach(settings.reach, settings.distance.tolerance, measure),
-        settings.resolution_ulps,
+        settings.min_step_ulps,
         settings.max_refusals,
     )
 end

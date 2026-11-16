@@ -66,9 +66,9 @@ end
 
 @testset "branch_projection applies one projection_step in the trace's norm" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    settings = BifurcationKitSettings{Float32}(geometry = TraceGeometry{Float32}(state_weight = 3 // 10))
+    settings = BifurcationKitSettings{Float32}(step_metric = TraceGeometry{Float32}(state_weight = 3 // 10))
     logits, relative_precision = Float32[1 // 10, -1 // 5], 3.0f0 / 4
-    step = projection_step(game, logits, relative_precision, settings.geometry)
+    step = projection_step(game, logits, relative_precision, settings.step_metric)
     projected = branch_projection(game, logits, relative_precision, settings)
     @test projected.logits == logits_at([logits ./ relative_precision; relative_precision] .+ step)
     @test projected.relative_precision == relative_precision + last(step)
@@ -124,7 +124,7 @@ end
     @test abs(only(at_fold.residual)) <= inv(float(10^10))
     @test abs(first(at_fold.jacobian)) <= inv(float(10^8)) * norm(at_fold.jacobian)
     # Newton at fixed precision meets a double root here and converges only linearly; the projection stays quadratic.
-    settings = BifurcationKitSettings{typeof(float(1))}(geometry = TraceGeometry{typeof(float(1))}(state_weight = 2 // 5))
+    settings = BifurcationKitSettings{typeof(float(1))}(step_metric = TraceGeometry{typeof(float(1))}(state_weight = 2 // 5))
     on_branch = (; logits = [fold], relative_precision = fold_precision)
     for direction in ([-one(fold)], [one(fold)])
         coarse = projected_residual(game, on_branch, inv(float(100)), direction, settings)

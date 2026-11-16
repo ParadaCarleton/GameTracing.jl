@@ -10,10 +10,10 @@ The settings of a trace engine in element type `E`: `BifurcationKitSettings` or 
 abstract type EngineSettings{E <: Real} end
 
 """
-    StepControl{E}(; distance_limit, growth_limit, turn_limit)
+    StepControl{E}(; distance_limit, max_step_growth, turn_limit)
 
 BifurcationKit's `CorrectorQuality` thresholds, which shrink a step whose corrector looks poor. `distance_limit` is the
-Euclidean length of a Newton step's logit part (Gambit's 0.4 in log probabilities); `growth_limit` bounds a step's
+Euclidean length of a Newton step's logit part (Gambit's 0.4 in log probabilities); `max_step_growth` bounds a step's
 growth (Gambit's `max_accel` 1.1), and the step then shrinks as the distance or contraction nears its limit.
 `turn_limit` refuses a step whose tangent turns this many radians from the last one, Allgower and Georg's
 test (6.1.10) for a step across a fold onto another branch; 1 is under Gambit's quarter turn (`t·newT < 0`, path.cc).
@@ -21,17 +21,17 @@ The corrector's contraction rate (`CorrectorSettings`) also slows growth. `nothi
 """
 Base.@kwdef struct StepControl{E <: Real}
     distance_limit::Union{Nothing, E} = 0.4f0
-    growth_limit::Union{Nothing, E} = 1.1f0
+    max_step_growth::Union{Nothing, E} = 1.1f0
     turn_limit::Union{Nothing, E} = 1.0f0
 end
 
 """
-    BifurcationKitSettings{E}(; first_step, max_step, aggressiveness, geometry,
+    BifurcationKitSettings{E}(; first_step, max_step, aggressiveness, step_metric,
                      corrector, max_steps, tangent, bordered_solver, step_control, orientation_check, palc_corrector,
                      palc_options, continuation_options)
 
 BifurcationKit PALC controls for `trace_endpoint`, in `(w, ρ)` with `w = logits / ρ` the payoff gaps and `ρ` the
-relative precision. Step sizes are arclength in `geometry`'s norm (`StepDistance`); the default is the Fisher
+relative precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`); the default is the Fisher
 distance (`TraceGeometry`).
 
 - `first_step`, `max_step`: first and largest arclength step. A step whose corrector fails halves; the trace ends as
@@ -41,7 +41,7 @@ distance (`TraceGeometry`).
 - `aggressiveness` (BifurcationKit's `a`): without a `step_control` growth limit, a step grows by
   `1 + a ((N - n) / N)²` after a corrector of `n` of its `N = corrector.newton_iterations` iterations.
 - `corrector`: a `CorrectorSettings`.
-- `geometry`: a `TraceGeometry`, the norm a trace steps in and its state weight. The first tangent is the exact
+- `step_metric`: a `TraceGeometry`, the norm a trace steps in and its state weight. The first tangent is the exact
   tangent at the flat start (`opening_tangent`).
 - `max_steps`: continuation steps before the trace fails as `NoConvergence`.
 - `tangent`: BifurcationKit's tangent algorithm, passed to PALC as is. `Bordered()` (the default) solves the bordered
@@ -73,7 +73,7 @@ struct BifurcationKitSettings{
     first_step::E
     max_step::E
     aggressiveness::E
-    geometry::TraceGeometry{E}
+    step_metric::TraceGeometry{E}
     corrector::CorrectorSettings{E}
     max_steps::Int
     tangent::T
@@ -90,7 +90,7 @@ function BifurcationKitSettings{E}(;
         first_step::Real = 0.05f0,
         max_step::Real = 1000.0f0,
         aggressiveness::Real = 0.5f0,
-        geometry::TraceGeometry{E} = TraceGeometry{E}(),
+        step_metric::TraceGeometry{E} = TraceGeometry{E}(),
         corrector::CorrectorSettings{E} = CorrectorSettings{E}(),
         max_steps::Integer = 2_000,
         tangent::T = BifurcationKit.Bordered(),
@@ -104,7 +104,7 @@ function BifurcationKitSettings{E}(;
         E <: Real, T <: BifurcationKit.AbstractTangentComputation, C, P <: NamedTuple, O <: NamedTuple,
     }
     return BifurcationKitSettings{E, T, C, P, O}(
-        E(first_step), E(max_step), E(aggressiveness), geometry, corrector,
+        E(first_step), E(max_step), E(aggressiveness), step_metric, corrector,
         Int(max_steps), tangent, bordered_solver, step_control, orientation_check, palc_corrector, palc_options,
         continuation_options,
     )
@@ -139,7 +139,7 @@ function corrector_quality(
     return BifurcationKit.CorrectorQuality{E}(
         scaled_limit(control.distance_limit, sqrt(coordinate_weight(geometry, width))),
         scaled_limit(corrector.contraction_limit, one(E)),
-        scaled_limit(control.growth_limit, one(E)),
+        scaled_limit(control.max_step_growth, one(E)),
         corrector.contraction_offset,
         scaled_limit(ifelse(oriented, control.turn_limit, nothing), one(E)),
         false,
@@ -180,9 +180,9 @@ function palc_algorithm(
     return palc_with_geometry(
         settings,
         width,
-        palc_geometry(settings.geometry, width, target_precision),
+        palc_geometry(settings.step_metric, width, target_precision),
         orientation_check,
-        PlainOrientation(settings.geometry),
+        PlainOrientation(settings.step_metric),
     )
 end
 
@@ -206,7 +206,7 @@ function palc_with_geometry(
         step_control = corrector_quality(
             settings.step_control,
             settings.corrector,
-            settings.geometry,
+            settings.step_metric,
             width,
             oriented,
         ),
@@ -522,7 +522,7 @@ function guarded_trace(
     corrector = CorrectorReach(
         accept_corrected,
         settings.corrector,
-        settings.geometry,
+        settings.step_metric,
         similar(start),
         similar(start),
         zero(E),

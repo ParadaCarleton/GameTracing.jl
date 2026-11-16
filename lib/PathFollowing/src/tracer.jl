@@ -133,7 +133,7 @@ function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailu
     last_refusal = NoRefusal
     while true
         tracer.predicted .= tracer.point .+ tracer.step_length .* tracer.tangent
-        if unresolved(tracer.point, tracer.predicted, algorithm.resolution_ulps)
+        if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
             return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
         end
         attempt = attempt_step!(tracer, flips)
@@ -206,7 +206,7 @@ function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <
         return refused(E, TooFast)
     end
     orientation = unwrap(oriented)
-    if flip_refused(algorithm.orientation, tracer.orientation, orientation, flips)
+    if flip_refused(algorithm.orientation_check, tracer.orientation, orientation, flips)
         return refused(E, OrientationFlip)
     end
     return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
@@ -329,7 +329,7 @@ function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Option{
     if !bordered_solve!(tracer, tracer.candidate)
         return none(Int8)
     end
-    return some(orientation_sign!(tracer, tracer.algorithm.orientation))
+    return some(orientation_sign!(tracer, tracer.algorithm.orientation_check))
 end
 
 """Fill `tracer.bordered` with the Jacobian over `tracer.row`."""
@@ -367,22 +367,22 @@ function unresolved(point::AbstractVector{E}, predicted::AbstractVector{E}, ulps
     return true
 end
 
-"""Allgower and Georg's step factor `f` (`StepControl`), at least `1 / growth_limit`."""
+"""Allgower and Georg's step factor `f` (`StepControl`), at least `1 / max_step_growth`."""
 function step_factor(control::StepControl{E}, contraction::E, first_correction::E, turn::E)::E where {E <: Real}
     corrector_term = max(
-        sqrt(factor_term(control.nominal_contraction, contraction)),
-        sqrt(factor_term(control.nominal_distance, first_correction)),
+        sqrt(factor_term(control.target_contraction, contraction)),
+        sqrt(factor_term(control.target_correction, first_correction)),
     )
-    return max(one(E) / control.growth_limit, max(corrector_term, factor_term(control.nominal_turn, turn)))
+    return max(one(E) / control.max_step_growth, max(corrector_term, factor_term(control.target_turn, turn)))
 end
 
-"""`measured / nominal`, or zero when the term is off (`nothing`) or `measured` is NaN."""
+"""`measured / target`, or zero when the term is off (`nothing`) or `measured` is NaN."""
 function factor_term(::Nothing, ::E)::E where {E <: Real}
     return zero(E)
 end
 
-function factor_term(nominal::E, measured::E)::E where {E <: Real}
-    return isnan(measured) ? zero(E) : measured / nominal
+function factor_term(target::E, measured::E)::E where {E <: Real}
+    return isnan(measured) ? zero(E) : measured / target
 end
 
 """

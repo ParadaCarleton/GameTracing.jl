@@ -102,11 +102,11 @@ function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::Pse
     defaults = (;
         corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2, error_estimate = LastCorrection()),
         step_control = StepControl(;
-            nominal_contraction = one(E) / 4, nominal_distance = one(E) / 10, nominal_turn = one(E) / 10,
-            growth_limit = E(2), max_step = one(E) / 2,
+            target_contraction = one(E) / 4, target_correction = one(E) / 10, target_turn = one(E) / 10,
+            max_step_growth = E(2), max_step = one(E) / 2,
         ),
         metric = FixedWeights(ones(E, 2)),
-        orientation = DeterminantSign(; persistence = 2),
+        orientation_check = DeterminantSign(; persistence = 2),
         linear_solver = LUFactorization(),
         max_refusals = 60,
     )
@@ -156,7 +156,7 @@ end
 
     @testset "a bifurcation crossing is refused persistence times, then accepted as flipped" begin
         for persistence in (0, 2)
-            settings = algorithm(E; orientation = DeterminantSign(; persistence))
+            settings = algorithm(E; orientation_check = DeterminantSign(; persistence))
             tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
             @test tracer.orientation == 1
             steps = [unwrap(step!(tracer)) for _ in 1:12]
@@ -172,7 +172,7 @@ end
 
     @testset "the orientation sign is the sign of det([J; tᵀ]), from the solve's LU or a second factorization" begin
         for linear_solver in (LUFactorization(), QRFactorization())
-            settings = algorithm(E; orientation = DeterminantSign(; persistence = 0), linear_solver)
+            settings = algorithm(E; orientation_check = DeterminantSign(; persistence = 0), linear_solver)
             tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
             signs = [tracer.orientation]
             @test tracer.orientation == sign(det([tracer.jacobian; tracer.tangent']))
@@ -188,7 +188,7 @@ end
     end
 
     @testset "without an orientation check, a bifurcation crossing goes unremarked" begin
-        settings = algorithm(E; orientation = nothing)
+        settings = algorithm(E; orientation_check = nothing)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
         steps = [unwrap(step!(tracer)) for _ in 1:6]
         @test !any(step -> step.flipped || step.refusals > 0, steps)
@@ -201,7 +201,7 @@ end
         @test all(<(0), diff(first.(points)))
     end
 
-    @testset "the step grows by at most growth_limit and stays under max_step" begin
+    @testset "the step grows by at most max_step_growth and stays under max_step" begin
         tracer = unwrap(init(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E); first_step = E(1) / 100))
         for _ in 1:30
             before = tracer.step_length
@@ -275,13 +275,13 @@ end
 
     @testset "a tight turn limit refuses a long step as too fast" begin
         control = StepControl(;
-            nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = one(E) / 1000, growth_limit = E(2),
+            target_contraction = nothing, target_correction = nothing, target_turn = one(E) / 1000, max_step_growth = E(2),
             max_step = E(1),
         )
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = one(E)))
         step = unwrap(step!(tracer))
         @test step.refusals > 0
-        @test step.turn <= 2 * control.nominal_turn
+        @test step.turn <= 2 * control.target_turn
     end
 
     @testset "ContractionEstimate settles on the error left in the iterate, in fewer iterations" begin
@@ -296,7 +296,7 @@ end
         # A half step up the unit circle corrects by 0.125, 8.9e-3 and 4.6e-5. At tolerance 2e-3, θ/(1-θ) times the
         # second correction, 6.9e-4, settles; over safety 1/10 it does not, nor does the second correction itself.
         settle = E(1) / 500
-        control = StepControl(; nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = nothing, growth_limit = E(2), max_step = E(1))
+        control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = E(1))
         estimates = (LastCorrection(), ContractionEstimate(; safety = one(E) / 10), ContractionEstimate(; safety = one(E)))
         iterations = map(estimates) do error_estimate
             corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2, error_estimate)
@@ -348,17 +348,19 @@ end
     @testset "argument checks" begin
         @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = LastCorrection())
         @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = zero(E), error_estimate = LastCorrection())
-        nominal = (; nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = nothing)
-        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E) / 2, max_step = one(E))
-        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = zero(E))
-        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = one(E), refusal_factor = 0)
-        @test_throws ArgumentError StepControl(; nominal..., growth_limit = one(E), max_step = one(E), shrink = 1)
+        targets = (; target_contraction = nothing, target_correction = nothing, target_turn = nothing)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E) / 2, max_step = one(E))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = zero(E))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), refusal_factor = 0)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = E(Inf), max_step = E(Inf))
+        @test StepControl(; targets..., max_step_growth = E(2), max_step = E(Inf)).max_step == E(Inf)
         @test_throws ArgumentError StepControl(;
-            nominal_contraction = nothing, nominal_distance = nothing, nominal_turn = -one(E), growth_limit = one(E),
+            target_contraction = nothing, target_correction = nothing, target_turn = -one(E), max_step_growth = one(E),
             max_step = one(E),
         )
         @test_throws ArgumentError DeterminantSign(; persistence = -1)
-        @test_throws ArgumentError algorithm(E; resolution_ulps = -1)
+        @test_throws ArgumentError algorithm(E; min_step_ulps = -1)
         @test_throws ArgumentError algorithm(E; max_refusals = -1)
         @test_throws ArgumentError init(CurveProblem(Fold(), E[0, 0], E[1, 0]), algorithm(E); first_step = zero(E))
         @test_throws DimensionMismatch init(CurveProblem(Fold(), E[0, 0], E[1, 0, 0]), algorithm(E); first_step = one(E))
@@ -389,7 +391,7 @@ end
 
 @testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin
     for linear_solver in (LUFactorization(), QRFactorization())
-        settings = algorithm(BigFloat; orientation = DeterminantSign(; persistence = 0), linear_solver)
+        settings = algorithm(BigFloat; orientation_check = DeterminantSign(; persistence = 0), linear_solver)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
         steps = [unwrap(step!(tracer)) for _ in 1:6]
         @test count(step -> step.flipped, steps) == 1

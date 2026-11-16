@@ -42,7 +42,7 @@ function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings
     return BifurcationKitSettings{E}(;
         first_step,
         aggressiveness = E(max_accel) - one(E),
-        geometry = TraceGeometry{E}(; distance = FisherLogPrecisionDistance),
+        step_metric = TraceGeometry{E}(; distance = FisherLogPrecisionDistance),
     )
 end
 

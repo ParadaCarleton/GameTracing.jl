@@ -106,7 +106,7 @@ end
 @testset "a projection in the summed norm lands on the branch" begin
     game = LogitGame(GAME, TARGET_PRECISION)
     traced = unwrap(trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}()))
-    settings = BifurcationKitSettings{Float32}(geometry = TraceGeometry{Float32}(distance = SummedDistance))
+    settings = BifurcationKitSettings{Float32}(step_metric = TraceGeometry{Float32}(distance = SummedDistance))
     projected = branch_projection(game, traced.logits .+ 1.0f-2, 1.0f0, settings)
     @test residual_norm(GAME, projected.logits, TARGET_PRECISION * projected.relative_precision) < 1.0f-3
 end

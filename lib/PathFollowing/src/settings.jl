@@ -87,41 +87,44 @@ function error_scale(estimate::ContractionEstimate{E}, correction::E, before::E)
 end
 
 """
-    StepControl(; nominal_contraction, nominal_distance, nominal_turn, growth_limit, max_step, refusal_factor = 2,
+    StepControl(; target_contraction, target_correction, target_turn, max_step_growth, max_step, refusal_factor = 2,
                 shrink = 1/2)
 
 Step-length adaptation after Allgower and Georg (Numerical Continuation Methods, 1990, §6.1). A converged corrector
-gives `f = max(√(κ / nominal_contraction), √(δ / nominal_distance), α / nominal_turn)`: `κ` the ratio of its second
+gives `f = max(√(κ / target_contraction), √(δ / target_correction), α / target_turn)`: `κ` the ratio of its second
 correction to its first, `δ` its first correction's length (`Newton`'s `distance`) and `α` the turn between the
-tangents in radians. `nothing` drops a term. A step with `f > refusal_factor` is refused and retried at `shrink`
-times its length; any other step is accepted, and the next one is `1 / max(f, 1 / growth_limit)` times as long, at
+tangents in radians. Each target is the value its measurement should take: at `f = 1` the step keeps its length.
+The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term. A step with `f > refusal_factor` is refused and retried at `shrink`
+times its length; any other step is accepted, and the next one is `1 / max(f, 1 / max_step_growth)` times as long, at
 most `max_step`. Every other refusal also shrinks the step by `shrink`.
 """
 struct StepControl{E <: Real}
-    nominal_contraction::Union{Nothing, E}
-    nominal_distance::Union{Nothing, E}
-    nominal_turn::Union{Nothing, E}
-    growth_limit::E
+    target_contraction::Union{Nothing, E}
+    target_correction::Union{Nothing, E}
+    target_turn::Union{Nothing, E}
+    max_step_growth::E
     max_step::E
     refusal_factor::E
     shrink::E
 end
 
 function StepControl(;
-        nominal_contraction::Union{Nothing, Real},
-        nominal_distance::Union{Nothing, Real},
-        nominal_turn::Union{Nothing, Real},
-        growth_limit::E,
+        target_contraction::Union{Nothing, Real},
+        target_correction::Union{Nothing, Real},
+        target_turn::Union{Nothing, Real},
+        max_step_growth::E,
         max_step::Real,
         refusal_factor::Real = 2,
         shrink::Real = 1 // 2,
     )::StepControl{E} where {E <: Real}
-    growth_limit >= 1 || throw(ArgumentError("growth_limit must be at least 1; got $growth_limit"))
+    max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
     refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
     0 < shrink < 1 || throw(ArgumentError("shrink must lie in (0, 1); got $shrink"))
     max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
+    # A straight stretch measures f = 0, so the growth bound or the cap must stop the step from going infinite.
+    isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
     return StepControl{E}(
-        optional(E, nominal_contraction), optional(E, nominal_distance), optional(E, nominal_turn), growth_limit,
+        optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn), max_step_growth,
         E(max_step), E(refusal_factor), E(shrink),
     )
 end
@@ -130,7 +133,7 @@ end
 optional(::Type{<:Real}, ::Nothing)::Nothing = nothing
 
 function optional(::Type{E}, limit::Real)::E where {E <: Real}
-    limit > 0 || throw(ArgumentError("a nominal value must be positive; got $limit"))
+    limit > 0 || throw(ArgumentError("a target must be positive; got $limit"))
     return E(limit)
 end
 
@@ -157,8 +160,8 @@ function DeterminantSign(; persistence::Integer)::DeterminantSign
 end
 
 """
-    PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation, linear_solver,
-                    accept = AcceptAll(), resolution_ulps = 4, max_refusals)
+    PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation_check, linear_solver,
+                    accept = AcceptAll(), min_step_ulps = 4, max_refusals)
 
 Pseudo-arclength continuation with an Euler predictor along the bordered tangent.
 
@@ -167,11 +170,11 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
 - `metric`: the step metric (`FixedWeights` or `PointWeights`). Step lengths, the corrector's hyperplane and the
   tangent's unit length are in it.
 - `turn_metric`: the metric that orients each tangent along the one before and measures their turn.
-- `orientation`: a `DeterminantSign`, or `nothing` to orient each tangent by the turn metric alone. Without it, a long
+- `orientation_check`: a `DeterminantSign`, or `nothing` to orient each tangent by the turn metric alone. Without it, a long
   step near a fold can land where the oriented tangent runs back along the curve.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
-- `resolution_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
+- `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
   as `Unresolved`; smaller steps cannot add a point.
 - `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
 """
@@ -180,10 +183,10 @@ struct PseudoArclength{C <: Newton, S <: StepControl, M, T, O <: Union{Nothing, 
     step_control::S
     metric::M
     turn_metric::T
-    orientation::O
+    orientation_check::O
     linear_solver::L
     accept::A
-    resolution_ulps::Int
+    min_step_ulps::Int
     max_refusals::Int
 end
 
@@ -193,13 +196,13 @@ struct AcceptAll end
 (::AcceptAll)(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = true
 
 function PseudoArclength(;
-        corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation::O, linear_solver::L,
-        accept::A = AcceptAll(), resolution_ulps::Integer = 4, max_refusals::Integer,
+        corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation_check::O, linear_solver::L,
+        accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
     )::PseudoArclength{C, S, M, T, O, L, A} where {C <: Newton, S <: StepControl, M, T, O <: Union{Nothing, DeterminantSign}, L, A}
-    resolution_ulps >= 0 || throw(ArgumentError("resolution_ulps must be non-negative; got $resolution_ulps"))
+    min_step_ulps >= 0 || throw(ArgumentError("min_step_ulps must be non-negative; got $min_step_ulps"))
     max_refusals >= 0 || throw(ArgumentError("max_refusals must be non-negative; got $max_refusals"))
     return PseudoArclength{C, S, M, T, O, L, A}(
-        corrector, step_control, metric, turn_metric, orientation, linear_solver, accept, Int(resolution_ulps),
+        corrector, step_control, metric, turn_metric, orientation_check, linear_solver, accept, Int(min_step_ulps),
         Int(max_refusals),
     )
 end

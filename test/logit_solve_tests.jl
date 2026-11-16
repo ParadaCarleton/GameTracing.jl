@@ -189,6 +189,7 @@ end
     # The first step comes from the game: the precision where a logit moves by one, or one for equal payoffs.
     @test GameTracing.opening_step(gains, element) == inv(element(GameTracing.payoff_range(gains)))
     @test GameTracing.opening_step(NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), element) == 1
+    @test GameTracing.opening_step(poisoned, element) == 1
 end
 
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))

@@ -339,11 +339,12 @@ end
 
 """
 The first step of a trace of `gains`: `1 / payoff_range(gains)` in `λ`, where no logit `z = λ w` has moved by more
-than one. Step control then grows it by up to `max_step_growth` per step. Equal payoffs step one.
+than one. Step control then grows it by up to `max_step_growth` per step. Equal or non-finite payoffs step one; a
+non-finite start fails anyway (`NotFiniteStart`).
 """
 function opening_step(gains::NormalFormGains, ::Type{E})::E where {E <: Real}
     range = E(payoff_range(gains))
-    return iszero(range) ? one(E) : inv(range)
+    return range > 0 && isfinite(range) ? inv(range) : one(E)
 end
 
 """The context of PathFollowing's start `failure` over `width` logits: `context` and the flat start."""

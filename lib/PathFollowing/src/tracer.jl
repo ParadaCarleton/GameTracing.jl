@@ -80,8 +80,7 @@ end
     init(problem, algorithm; first_step)
 
 A `Tracer` at `problem.start`, its tangent oriented along `problem.direction`, its first step `first_step` long in the
-step metric; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that stops it there. The first step only sets a
-scale: step control resizes the second by up to `max_first_growth` (`StepControl`).
+step metric; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that stops it there.
 """
 function CommonSolve.init(
         problem::CurveProblem{S, V},
@@ -399,9 +398,8 @@ function accept_point!(tracer::Tracer{E}, attempt::Attempt{E})::Tracer{E} where 
     reweight!(tracer.weights, algorithm.metric, tracer.point)
     reweight!(tracer.turn_weights, algorithm.turn_metric, tracer.point)
     tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
-    (; max_first_growth, max_step_growth, max_step) = algorithm.step_control
-    growth = ifelse(iszero(tracer.steps), max_first_growth, max_step_growth)
-    tracer.step_length = min(tracer.step_length / max(attempt.factor, inv(growth)), max_step)
+    (; max_step_growth, max_step) = algorithm.step_control
+    tracer.step_length = min(tracer.step_length / max(attempt.factor, inv(max_step_growth)), max_step)
     tracer.steps += 1
     return tracer
 end

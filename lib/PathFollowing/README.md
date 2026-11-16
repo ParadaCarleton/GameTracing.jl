@@ -29,7 +29,7 @@ algorithm = PseudoArclength(;
     ),
     step_control = StepControl(;
         target_contraction = 0.25, target_correction = 0.1, target_turn = 0.1, max_step_growth = 2.0,
-        max_first_growth = 100.0, max_step = 0.5,
+        max_step = 0.5,
     ),
     metric = FixedWeights([1.0, 1.0]),
     orientation_check = DeterminantSign(; persistence = 4),

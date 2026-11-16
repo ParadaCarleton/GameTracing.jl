@@ -69,27 +69,6 @@ const FOLDING_BRANCH_GAME = (
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
 )
 
-# The (3, 3, 2) game of `3 .* randn(Xoshiro(152), Float32, (3, 3, 2))` per player. A long early PathFollowing step lands
-# where its oriented tangent runs back along the branch; without the orientation check the trace ends at another
-# equilibrium, 0.9995 away in probability from Gambit's pure one at λ ≈ 3.8.
-const REVERSAL_GAME = (
-    cat(
-        Float32[-0.5337934f0 -3.4574738f0 -0.31516188f0; 1.2419287f0 0.6020585f0 -0.45870376f0; 1.6466057f0 -1.8631278f0 -0.5691585f0],
-        Float32[-0.11642508f0 1.8486631f0 1.6131696f0; -4.5490217f0 -1.7635972f0 -4.980587f0; 1.3529017f0 -3.944703f0 -3.9721947f0];
-        dims = 3,
-    ),
-    cat(
-        Float32[5.1817837f0 4.2066636f0 -1.6429582f0; 0.27198213f0 3.56285f0 -2.5637565f0; 1.1680062f0 -2.4406242f0 -2.0018725f0],
-        Float32[-3.496707f0 0.9063864f0 -1.136579f0; 0.5411101f0 0.86526525f0 -0.27381507f0; 7.237438f0 -3.9687374f0 2.3237944f0];
-        dims = 3,
-    ),
-    cat(
-        Float32[-0.90711546f0 1.2572101f0 2.234933f0; 0.7166976f0 -3.4552052f0 -0.39850372f0; 1.7495403f0 -2.8394732f0 -3.8426185f0],
-        Float32[-0.48643172f0 5.1313787f0 0.56367534f0; 0.40493193f0 4.1448507f0 0.9289435f0; 4.757027f0 0.33046308f0 -0.8036462f0];
-        dims = 3,
-    ),
-)
-
 """The random games of the branch testset, one per strategy count in `((3, 3), (2, 2, 2))`, drawn from `rng`."""
 function branch_games(rng::AbstractRNG)::AbstractVector
     return [ntuple(_ -> 3 .* randn(rng, Float32, counts), length(counts)) for counts in ((3, 3), (2, 2, 2))]

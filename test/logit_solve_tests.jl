@@ -106,15 +106,15 @@ end
         @test GameTracing.max_regret(gains, last(branch).logits) <= sqrt(eps(Float32)) * GameTracing.payoff_range(gains)
         solved = unwrap(logit_solve(gains; settings))
         @test solved.lam == last(branch).lam
+        for profile in branch
+            @test settled_point(gains, profile, settings)
+        end
         # A fold leaves the λ-fixed checks below without a unique answer (`FOLDING_BRANCH_GAME`), even past its peak.
         folded = !issorted([profile.lam for profile in branch])
         # A fresh draw may fold too; the fixed game must.
         @test folded || payoffs !== FOLDING_BRANCH_GAME
         if folded
             continue
-        end
-        for profile in branch
-            @test settled_point(gains, profile, settings)
         end
         # The last point is on Gambit's branch, and logit_solve_lambda finds it at its precision.
         @test largest_gap(last(branch).profile, gambit_strategies(payoffs, last(branch).lam).strategies) <

@@ -1,4 +1,4 @@
-using LinearAlgebra: det, dot, norm, opnorm
+using LinearAlgebra: det, dot, norm, opnorm, pinv
 using Random: AbstractRNG, RandomDevice, Xoshiro
 
 """A generator on a fresh seed, logged so a failing draw can be replayed with `Xoshiro(seed)`."""
@@ -285,13 +285,23 @@ function newton_correction(pass::Any, logits::AbstractVector, precision::P)::typ
 end
 
 """
-Whether `logits` solve `gains` at `precision` as PathFollowing's `StrategyDistance` corrector settles them: `newton_step`
-moves no player's mixed strategy more than twice the tolerance (Fisher–Rao). Saturated logits can sit far off the map
-in logit space while every strategy has settled.
+The logit part of one double-precision Newton correction of the branch equations of `pass` at `[logits; precision]`,
+with the precision free: the least-norm step (`pinv`) that a corrector bordered by the branch's tangent takes. At a fold
+`I - ∂T/∂z` is singular and `newton_step` is unbounded; this step is not.
+"""
+function branch_step(pass::Any, logits::AbstractVector, precision::Real)::Vector
+    (; residual, jacobian) = reference_system(pass, [float.(collect(logits)) .* float(1); precision * float(1)])
+    return (pinv(jacobian) * residual)[1:(end - 1)]
+end
+
+"""
+Whether branch point `logits` solve `gains` at `precision` as PathFollowing's `StrategyDistance` corrector settles them:
+`branch_step` moves no player's mixed strategy more than twice the tolerance (Fisher–Rao). Saturated logits can sit far
+off the map in logit space while every strategy has settled.
 """
 function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance)::Bool
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
-    corrected = root .- newton_step(gains, logits, precision)
+    corrected = root .- branch_step(gains, logits, precision)
     measure = GameTracing.corrector_measure(distance, gains)
     return measure([root ./ level; level], [corrected ./ level; level]) <= 2 * distance.tolerance
 end
@@ -307,6 +317,11 @@ end
 """Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `settle_bound`."""
 function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool
     return newton_correction(pass, logits, precision) <= settle_bound(settings.corrector, logits)
+end
+
+"""Whether branch point `logits` solve `pass` at `precision` as the trace's corrector settles them: `branch_step` within `settle_bound`."""
+function settled_branch_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool
+    return maximum(abs, branch_step(pass, logits, precision)) <= settle_bound(settings.corrector, logits)
 end
 
 """`(; residual, jacobian)` of the branch equations `z - T(z, λ) = 0` of `pass` at `point = [z; λ]`."""

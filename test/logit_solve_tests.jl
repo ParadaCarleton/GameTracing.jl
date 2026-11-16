@@ -169,8 +169,9 @@ end
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; min_step_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
-    # A trace sent back from its start would fall below precision zero, so every step it tries is refused.
-    reversed = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; orientation_check = nothing)))
+    # A trace sent back from its start would fall below precision zero, so every step it tries is refused. Without the
+    # orientation check, a step of a few ulps rounds above zero and the trace creeps there until `max_steps`.
+    reversed = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}()))
     reversed.tangent .*= -1
     recorder = GameTracing.BranchRecorder(gains, one(element), zero(element))
     below = unwrap_error(GameTracing.recorded_points(reversed, recorder, element(100), 10, (;)))

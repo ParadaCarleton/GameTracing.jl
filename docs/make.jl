@@ -4,9 +4,13 @@ makedocs(;
     sitename = "GameTracing.jl",
     authors = "Carlos Parada",
     modules = [GameTracing],
-    format = Documenter.HTML(canonical = "https://paradacarleton.github.io/GameTracing/stable"),
+    format = Documenter.HTML(canonical = "https://paradacarleton.github.io/GameTracing.jl/stable"),
     pages = ["Home" => "index.md", "API" => "api.md"],
     warnonly = false,
 )
 
-deploydocs(repo = "github.com/ParadaCarleton/GameTracing.git", push_preview = true)
+const REPOSITORY = "ParadaCarleton/GameTracing.jl"
+# deploydocs skips the push without an error when its repo is not the one CI runs in.
+repository = get(ENV, "GITHUB_REPOSITORY", REPOSITORY)
+repository == REPOSITORY || error("docs/make.jl deploys to $REPOSITORY, but CI runs in $repository")
+deploydocs(repo = "github.com/$REPOSITORY.git", push_preview = true)

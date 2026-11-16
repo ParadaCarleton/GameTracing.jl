@@ -112,10 +112,9 @@ function PathFollowingSettings{E}(;
         contraction_limit::Real = 0.5f0,
         error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate} = PathFollowing.ContractionEstimate(; safety = 0.2f0),
         target_contraction::Union{Nothing, Real} = 0.25f0,
-        # On hard_games.jl's 543 games, 0.3 left 1 endpoint off its branch to 1 rad's 5, at 15-62% more steps.
+        # On hard_games.jl's 543 games, 0.3 left no endpoint off its branch to 1 rad's 3, at 15-62% more steps.
         target_turn::Union{Nothing, Real} = 1.0f0,
-        # Growth 4 left 11 endpoints off their branch, and 15 with the halved retries before 8cead08 (which reversed one
-        # trace too). Results: benchmark/results/hard-8cead08-summary.txt.
+        # Growth 4 left 8 endpoints off their branch to growth 2's 3. Results: benchmark/results/hard-b5a6b4d-summary.txt.
         max_step_growth::Real = 2.0f0,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         max_refusals::Integer = 80,

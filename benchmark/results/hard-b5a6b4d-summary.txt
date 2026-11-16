@@ -1,0 +1,43 @@
+# benchmark/hard_games.jl at b5a6b4d, ssh-dev, Julia 1.13.1. Its reference trace now refuses every orientation flip too.
+# Against Gambit 16.7.0's endpoints at maxregret 1e-6, an independent check, default endpoints over 0.05 away: 3 here
+# (common 0.9 5x5 s84, 20x20 s60, 20x20 s77) and 6 on main 412d835 (also 3x3x3x3 s65, 3x3x3x3 s84, unfolded_pitchfork).
+# Gambit itself leaves its branch on common 0.9 20x20 s73, where BifurcationKit and a turn-0.03 trace side with this one.
+# battle_of_the_sexes has an exact pitchfork: arms take a side arm, as Gambit does, or fail TraceStuck as the reference does.
+maxregret 1e-06; off: endpoints over 0.05 from the reference branch
+class       arm        games solved   steps  off
+normal      default      110    110    2947    0
+normal      growth 4     110    110    2759    0
+normal      turn 0.3     110    110    3392    0
+normal      turn off     110    110    2918    0
+common 0.9  default      300    300    3989    3
+common 0.9  growth 4     300    300    3494    7
+common 0.9  turn 0.3     300    300    6373    0
+common 0.9  turn off     300    300    3923    3
+common 0.97 default      120    120    1307    0
+common 0.97 growth 4     120    120    1175    1
+common 0.97 turn 0.3     120    120    2118    0
+common 0.97 turn off     120    120    1291    0
+fixture     default       13     13     189    0
+fixture     growth 4      13     13     159    0
+fixture     turn 0.3      13     12     224    0
+fixture     turn off      13     13     185    0
+
+failures and endpoints off the reference branch:
+  common 0.9  5x5 s84      default   Ok                             off 1.125 λ 125 reference Ok
+  common 0.9  5x5 s84      turn off  Ok                             off 1.125 λ 125 reference Ok
+  common 0.9  10x10 s67    growth 4  Ok                             off 0.590 λ 1.272e+05 reference Ok
+  common 0.9  10x10 s78    growth 4  Ok                             off 0.631 λ 1.195e+05 reference Ok
+  common 0.9  20x20 s60    default   Ok                             off 1.323 λ 227.8 reference Ok
+  common 0.9  20x20 s62    growth 4  Ok                             off 0.715 λ 7.296e+04 reference Ok
+  common 0.9  20x20 s73    growth 4  Ok                             off 0.674 λ 3.487e+04 reference Ok
+  common 0.9  20x20 s77    default   Ok                             off 1.105 λ 251 reference Ok
+  common 0.9  20x20 s77    turn off  Ok                             off 1.105 λ 286 reference Ok
+  common 0.9  20x20 s80    growth 4  Ok                             off 0.703 λ 3.755e+04 reference Ok
+  common 0.9  4x4x4 s53    growth 4  Ok                             off 1.168 λ 51.19 reference Ok
+  common 0.9  4x4x4 s86    turn off  Ok                             off 1.208 λ 29.65 reference Ok
+  common 0.9  3x3x3x3 s49  growth 4  Ok                             off 1.087 λ 1.07e+05 reference Ok
+  common 0.97 4x4x4 s57    growth 4  Ok                             off 0.800 λ 5.536e+04 reference Ok
+  fixture     battle_of_the_sexes default   Ok                             off NaN λ 7.837 reference TraceStuck unresolved_step
+  fixture     battle_of_the_sexes growth 4  Ok                             off NaN λ 7.749 reference TraceStuck unresolved_step
+  fixture     battle_of_the_sexes turn 0.3  TraceStuck unresolved_step     off NaN λ NaN reference TraceStuck unresolved_step
+  fixture     battle_of_the_sexes turn off  Ok                             off NaN λ 9.352 reference TraceStuck unresolved_step

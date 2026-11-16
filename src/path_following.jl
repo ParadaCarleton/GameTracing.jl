@@ -77,9 +77,9 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
 - `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
   The turn target is in radians under `step_metric`.
-- `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
-  changes, as a step that runs back along the branch; a change that persists is a bifurcation crossing. `nothing`
-  switches the check off.
+- `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
+  `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. On a game with an
+  exact pitchfork the trace then takes a side arm, as Gambit does. `nothing` switches the check off.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -117,7 +117,7 @@ function PathFollowingSettings{E}(;
         # Growth 4 left 11 endpoints off their branch, and 15 with the halved retries before 8cead08 (which reversed one
         # trace too). Results: benchmark/results/hard-8cead08-summary.txt.
         max_step_growth::Real = 2.0f0,
-        orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(; persistence = 4),
+        orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
         step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
@@ -298,6 +298,14 @@ function settle_test(distance::StrategyDistance{E}, measure::FisherRaoChange{N})
     return FisherRaoSettled(measure.ranges, distance.tolerance, distance.settle_ulps * eps(E))
 end
 
+"""
+PathFollowing's `accept` that refuses a corrected point at precision zero or below. The principal branch meets
+precision zero only at its start, so such a point went back along it; the refusal retries a shorter step.
+"""
+struct PositivePrecision end
+
+(::PositivePrecision)(::AbstractVector, ::AbstractVector, corrected::AbstractVector)::Bool = last(corrected) > 0
+
 """PathFollowing's `PseudoArclength` for `settings` on `gains`."""
 function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGains)::PathFollowing.PseudoArclength where {E <: Real}
     measure = corrector_measure(settings.distance, gains)
@@ -315,6 +323,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
         ),
         metric = PathFollowing.PointWeights(GeometryWeights(settings.step_metric)),
         settings.orientation_check,
+        accept = PositivePrecision(),
         settings.linear_solver,
         settings.min_step_ulps,
         settings.max_refusals,
@@ -410,8 +419,7 @@ end
 """
 `settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
 at most `tolerance`. A step past `maximum_precision` lands there (`landed_point`), which settles or fails
-`NoConvergence` with reason `:maximum_precision`. A point below precision zero fails `TraceStuck` with reason
-`:negative_precision`: the trace turned back along its branch.
+`NoConvergence` with reason `:maximum_precision`.
 """
 function engine_points(
         gains::NormalFormGains,
@@ -440,10 +448,6 @@ function recorded_points(
     stepped = capped_step!(tracer, maximum_precision, max_steps, context)
     while !is_error(stepped)
         point = unwrap(stepped)
-        # The principal branch meets precision zero only at its start, so a point below zero ran back along it.
-        if last(point) < 0
-            return Err(TraceFailure(TraceStuck, stopped_context(:negative_precision, point, tracer.steps, context, (;))))
-        end
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
         end

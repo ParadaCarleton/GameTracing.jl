@@ -106,7 +106,7 @@ function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::Pse
             max_step_growth = E(2), max_step = one(E) / 2,
         ),
         metric = FixedWeights(ones(E, 2)),
-        orientation_check = DeterminantSign(; persistence = 2),
+        orientation_check = DeterminantSign(),
         linear_solver = LUFactorization(),
         max_refusals = 60,
     )
@@ -154,34 +154,33 @@ end
         @test last(points)[2] < -1
     end
 
-    @testset "a bifurcation crossing is refused persistence times, then accepted as flipped" begin
-        for persistence in (0, 2)
-            settings = algorithm(E; orientation_check = DeterminantSign(; persistence))
-            tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
-            @test tracer.orientation == 1
-            steps = [unwrap(step!(tracer)) for _ in 1:12]
-            crossing = only(findall(step -> step.flipped, steps))
-            @test sum(step -> step.refusals, steps[1:crossing]) >= persistence
-            @test persistence > 0 || steps[crossing].refusals == 0
-            @test tracer.orientation == -1
-            @test tracer.flip_streak == 0
-            @test tracer.point[1] == 0
-            @test tracer.point[2] > 0
+    @testset "a step across a bifurcation point is refused: the trace closes in on it and fails unresolved" begin
+        tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), algorithm(E); first_step = E(3) / 10))
+        lambdas = E[]
+        failure = nothing
+        for _ in 1:10_000
+            outcome = step!(tracer)
+            if is_error(outcome)
+                failure = unwrap_error(outcome)
+                break
+            end
+            push!(lambdas, tracer.point[2])
         end
+        @test failure.cause == Unresolved
+        @test all(<(0), lambdas) && issorted(lambdas)
+        @test tracer.orientation == 1 && tracer.point[1] == 0
     end
 
     @testset "the orientation sign is the sign of det([J; tᵀ]), from the solve's LU or a second factorization" begin
-        for linear_solver in (LUFactorization(), QRFactorization())
-            settings = algorithm(E; orientation_check = DeterminantSign(; persistence = 0), linear_solver)
-            tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
-            signs = [tracer.orientation]
-            @test tracer.orientation == sign(det([tracer.jacobian; tracer.tangent']))
+        for linear_solver in (LUFactorization(), QRFactorization()), (start, expected) in ((E[0, -1], 1), (E[0, 1], -1))
+            # The branch u = 0 changes sign at the bifurcation point λ = 0, so starts on either side differ.
+            settings = algorithm(E; linear_solver)
+            tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), start, E[0, 1]), settings; first_step = E(3) / 10))
+            @test tracer.orientation == expected == sign(det([tracer.jacobian; tracer.tangent']))
             for _ in 1:6
                 unwrap(step!(tracer))
-                push!(signs, tracer.orientation)
-                @test tracer.orientation == sign(det([tracer.jacobian; tracer.tangent']))
+                @test tracer.orientation == expected == sign(det([tracer.jacobian; tracer.tangent']))
             end
-            @test signs[1] == 1 && signs[end] == -1
             # Only the fallback fills the matrix of the second factorization.
             @test all(iszero, tracer.oriented) == (linear_solver isa LUFactorization)
         end
@@ -191,7 +190,7 @@ end
         settings = algorithm(E; orientation_check = nothing)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
         steps = [unwrap(step!(tracer)) for _ in 1:6]
-        @test !any(step -> step.flipped || step.refusals > 0, steps)
+        @test !any(step -> step.refusals > 0, steps)
         @test tracer.orientation == 0
         @test tracer.point[2] > 0
     end
@@ -386,7 +385,6 @@ end
             target_contraction = nothing, target_correction = nothing, target_turn = -one(E), max_step_growth = one(E),
             max_step = one(E),
         )
-        @test_throws ArgumentError DeterminantSign(; persistence = -1)
         @test_throws ArgumentError algorithm(E; min_step_ulps = -1)
         @test_throws ArgumentError algorithm(E; max_refusals = -1)
         @test_throws ArgumentError init(CurveProblem(Fold(), E[0, 0], E[1, 0]), algorithm(E); first_step = zero(E))
@@ -422,11 +420,12 @@ end
 
 @testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin
     for linear_solver in (LUFactorization(), QRFactorization())
-        settings = algorithm(BigFloat; orientation_check = DeterminantSign(; persistence = 0), linear_solver)
+        settings = algorithm(BigFloat; linear_solver)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
         steps = [unwrap(step!(tracer)) for _ in 1:6]
-        @test count(step -> step.flipped, steps) == 1
-        @test tracer.orientation == -1
+        # Steps across the bifurcation point flip the sign and are refused.
+        @test sum(step -> step.refusals, steps) > 0
+        @test tracer.orientation == 1 && tracer.point[2] < 0
         @test all(iszero, tracer.oriented) == (linear_solver isa LUFactorization)
     end
 end

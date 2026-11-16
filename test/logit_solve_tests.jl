@@ -176,8 +176,8 @@ end
     spent = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; max_steps = 1)))
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
-    # A first step a hundred times past its nominal distance is refused, and no refusal is allowed.
-    for distance in (StrategyDistance{element}(; nominal = 1.0f-2), LogitDistance{element}(; nominal = 1.0f-2))
+    # A first step a hundred times past its target correction is refused, and no refusal is allowed.
+    for distance in (StrategyDistance{element}(; target_correction = 1.0f-2), LogitDistance{element}(; target_correction = 1.0f-2))
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; first_step = 100, distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
@@ -188,15 +188,18 @@ end
     @test halved.error_estimate.safety === element(1 // 2)
     @test PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.LastCorrection()).error_estimate === GameTracing.PathFollowing.LastCorrection()
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
-    unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; resolution_ulps = round(Int, 2^10 / eps(element)))))
+    unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; min_step_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
     poisoned = NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0]))
     @test unwrap_error(logit_solve(poisoned; settings = PathFollowingSettings{element}())).cause == GameTracing.NotFinite
     @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = PathFollowingSettings{element}())).context.reason == :NotFiniteStart
     # Step control without its turn and contraction terms still solves.
-    plain = PathFollowingSettings{element}(; nominal_contraction = nothing, nominal_turn = nothing)
+    plain = PathFollowingSettings{element}(; target_contraction = nothing, target_turn = nothing)
     @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
     @test_throws ArgumentError logit_solve_lambda(gains, -1; settings = PathFollowingSettings{element}())
+    # No step cap by default; the growth bound then must stay finite.
+    @test PathFollowingSettings{element}().max_step == Inf32
+    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; max_step_growth = Inf32))
 end
 
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))
@@ -205,7 +208,7 @@ end
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
     # The control: the same trace without the check ends elsewhere.
-    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation = nothing)))
+    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing)))
     @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
 end
 
@@ -246,20 +249,9 @@ end
     @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[], one(element))
 end
 
-@testset "WithinReach passes a correction within the settle tolerance, however short the step ($element)" for element in (Float32, widen(Float32))
-    within = GameTracing.WithinReach(element(2), element(1.0f-3), GameTracing.logit_change)
-    start, predicted = element[0, 1], element[1.0f-6, 1]
-    @test within(start, predicted, element[5.0f-4, 1])
-    @test !within(start, predicted, element[2.0f-3, 1])
-    # Past the tolerance, the predictor's own move sets the reach.
-    @test within(start, element[1, 1], element[2.5f0, 1])
-    @test !within(start, element[1, 1], element[4, 1])
-    @test within(start, start, element[4, 1])
-end
-
 @testset "StrategyDistance turns a fold whose start settled only to its tolerance" begin
-    # The benchmark's 20x20 game from seed 6 folds back at λ ≈ 315.68. There the start's leftover error, about 1.5e-5
-    # in Fisher–Rao, outweighed reach times every short predictor move, and the trace stopped TraceStuck.
+    # The benchmark's 20x20 game from seed 6 folds back at λ ≈ 315.68, where each start settles only to its tolerance:
+    # a leftover error of about 1.5e-5 in Fisher–Rao, more than short predictor moves.
     rng = Xoshiro(6)
     payoffs = ntuple(_ -> randn(rng, (20, 20)), 2)
     wide = widen(Float32)
@@ -298,7 +290,7 @@ fisher_weight(logit::Real)::Real = exp(-abs(logit)) / (1 + exp(-abs(logit)))^2
     GameTracing.GeometryWeights(TraceGeometry{element}(; distance = SummedDistance, state_weight = 1 // 2))(weights, point)
     @test weights == element[1 // 2, 1 // 2, 1]
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
-    solved = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}(; geometry = log_precision)))
+    solved = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}(; step_metric = log_precision)))
     @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
 end
 

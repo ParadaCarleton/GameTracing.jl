@@ -37,7 +37,7 @@ end
 (stop::StopAtPrecision)(::AbstractVector, relative_precision::Real)::Bool = relative_precision * stop.target < stop.precision
 
 const FAR_TARGET = 1.0f6
-const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; geometry = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
+const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
 
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
     for payoffs in (far_opening_games(Xoshiro(FAR_OPENING_SEED))..., far_opening_games(fresh_rng())...)
@@ -72,7 +72,7 @@ end
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
-    settings_wide = BifurcationKitSettings{wide}(; geometry = TraceGeometry{wide}(; distance = FisherLogPrecisionDistance))
+    settings_wide = BifurcationKitSettings{wide}(; step_metric = TraceGeometry{wide}(; distance = FisherLogPrecisionDistance))
     reached = unwrap_error(
         trace_endpoint(
             LogitGame(gains_wide, wide(FAR_TARGET)),
@@ -229,7 +229,7 @@ end
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
     # stalled the opening at ρ ≈ 4e-19, whatever η: zero-slope gains whose every evaluation jumps leave no first step.
     pass, target = NoisyFlatPass(1.0f-4, 1.0f-7, 10.0f0), 1.0f5
-    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.geometry, max_steps = 20_000)
+    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000)
     tolerance = settings.corrector.logit_tolerance
     failure = unwrap_error(trace_endpoint(LogitGame(pass, target), 1, settings))
     @info "noisy trace" failure.cause failure.context.precision failure.context.steps failure.context.step_length
@@ -283,7 +283,7 @@ end
 """The factored bordered tangent of a restart (`restart_tangent`), up to positive scale: the opening tangent's reference."""
 function factored_opening_tangent(game, start, settings)
     width = length(start) - 1
-    palc = GameTracing.palc_geometry(settings.geometry, width, game.target_precision)
+    palc = GameTracing.palc_geometry(settings.step_metric, width, game.target_precision)
     direction = setindex!(zero(start), one(eltype(start)), lastindex(start))
     border = GameTracing.palc_border(palc.dot, eltype(start)(palc.palc_state_weight), direction)
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))

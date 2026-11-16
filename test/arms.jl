@@ -9,7 +9,7 @@ const ARM_WEIGHTS = (0.01f0, 0.03f0, 0.1f0)
 """The `BifurcationKitSettings` of `arm` (an `ARMS` entry) at state weight `state_weight`, with `keywords` passed on."""
 function arm_settings(arm::NamedTuple, state_weight::E; keywords...)::BifurcationKitSettings{E} where {E <: Real}
     geometry = TraceGeometry{E}(; arm.distance, state_weight)
-    return BifurcationKitSettings{E}(; geometry, keywords...)
+    return BifurcationKitSettings{E}(; step_metric = geometry, keywords...)
 end
 
 """Every arm at every weight, as `label => settings` pairs."""

@@ -33,7 +33,7 @@ end
     branch_projection(game, logits, relative_precision, settings)
 
 `(; logits, relative_precision)`: the point one `projection_step` from `(logits, ρ)` toward `game`'s branch, in the
-trace's norm (`settings.geometry`). The projection is first order: its residual is quadratic in the start's.
+trace's norm (`settings.step_metric`). The projection is first order: its residual is quadratic in the start's.
 A step to a relative precision that is not positive and finite, as one from far off the branch can take, throws a `DomainError`.
 """
 function branch_projection(
@@ -42,7 +42,7 @@ function branch_projection(
         relative_precision::Real,
         settings::BifurcationKitSettings,
     )::NamedTuple{(:logits, :relative_precision), Tuple{Vector{E}, E}} where {E <: Real}
-    step = projection_step(game, logits, relative_precision, settings.geometry)
+    step = projection_step(game, logits, relative_precision, settings.step_metric)
     moved = [logits ./ E(relative_precision); E(relative_precision)] .+ step
     if !(last(moved) > 0 && isfinite(last(moved)))
         throw(DomainError(last(moved), "the projection left the positive relative precisions"))

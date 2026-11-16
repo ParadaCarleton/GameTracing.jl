@@ -103,7 +103,7 @@ function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::Pse
         corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2, error_estimate = LastCorrection()),
         step_control = StepControl(;
             target_contraction = one(E) / 4, target_correction = one(E) / 10, target_turn = one(E) / 10,
-            max_step_growth = E(2), max_step = one(E) / 2,
+            max_step_growth = E(2), max_first_growth = E(2), max_step = one(E) / 2,
         ),
         metric = FixedWeights(ones(E, 2)),
         orientation_check = DeterminantSign(; persistence = 2),
@@ -276,12 +276,40 @@ end
     @testset "a tight turn limit refuses a long step as too fast" begin
         control = StepControl(;
             target_contraction = nothing, target_correction = nothing, target_turn = one(E) / 1000, max_step_growth = E(2),
-            max_step = E(1),
+            max_first_growth = E(2), max_step = E(1),
         )
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = one(E)))
         step = unwrap(step!(tracer))
         @test step.refusals > 0
         @test step.turn <= 2 * control.target_turn
+    end
+
+    @testset "a refused step retries at the length its measurements ask for" begin
+        # Up the unit circle, 0.8 turns the tangent by atan(4/3) ≈ 0.93 rad, f ≈ 9.3 at a 0.1 target. One retry at
+        # 0.8 / f meets the target, where halving would need three refusals.
+        control = StepControl(;
+            target_contraction = nothing, target_correction = nothing, target_turn = one(E) / 10, max_step_growth = E(2),
+            max_first_growth = E(2), max_step = E(1),
+        )
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = E(4) / 5))
+        step = unwrap(step!(tracer))
+        @test step.refusals == 1
+        @test step.step_length ≈ E(4) / 5 / (atan(E(4) / 3) * 10) rtol = 1 // 100
+    end
+
+    @testset "the first step only sets a scale: the second grows by up to max_first_growth" begin
+        # A 1e-3 step turns the tangent by 1e-3 rad, f = 1e-2 at a 0.1 target, so the second step is 0.1 long.
+        control = StepControl(;
+            target_contraction = nothing, target_correction = nothing, target_turn = one(E) / 10, max_step_growth = E(2),
+            max_first_growth = E(1000), max_step = E(1),
+        )
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = E(1) / 1000))
+        unwrap(step!(tracer))
+        @test tracer.step_length ≈ one(E) / 10 rtol = 1 // 100
+        # Later steps grow by at most max_step_growth.
+        before = tracer.step_length
+        unwrap(step!(tracer))
+        @test tracer.step_length <= 2 * before
     end
 
     @testset "ContractionEstimate settles on the error left in the iterate, in fewer iterations" begin
@@ -296,7 +324,10 @@ end
         # A half step up the unit circle corrects by 0.125, 8.9e-3 and 4.6e-5. At tolerance 2e-3, θ/(1-θ) times the
         # second correction, 6.9e-4, settles; over safety 1/10 it does not, nor does the second correction itself.
         settle = E(1) / 500
-        control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = E(1))
+        control = StepControl(;
+            target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2),
+            max_first_growth = E(2), max_step = E(1),
+        )
         estimates = (LastCorrection(), ContractionEstimate(; safety = one(E) / 10), ContractionEstimate(; safety = one(E)))
         iterations = map(estimates) do error_estimate
             corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2, error_estimate)
@@ -349,15 +380,17 @@ end
         @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = LastCorrection())
         @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = zero(E), error_estimate = LastCorrection())
         targets = (; target_contraction = nothing, target_correction = nothing, target_turn = nothing)
-        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E) / 2, max_step = one(E))
-        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = zero(E))
-        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), refusal_factor = 0)
-        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1)
-        @test_throws ArgumentError StepControl(; targets..., max_step_growth = E(Inf), max_step = E(Inf))
-        @test StepControl(; targets..., max_step_growth = E(2), max_step = E(Inf)).max_step == E(Inf)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E) / 2, max_first_growth = one(E), max_step = one(E))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_first_growth = one(E) / 2, max_step = one(E))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_first_growth = one(E), max_step = zero(E))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_first_growth = one(E), max_step = one(E), refusal_factor = 0)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_first_growth = one(E), max_step = one(E), shrink = 1)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = E(Inf), max_first_growth = one(E), max_step = E(Inf))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_first_growth = E(Inf), max_step = E(Inf))
+        @test StepControl(; targets..., max_step_growth = E(2), max_first_growth = E(100), max_step = E(Inf)).max_step == E(Inf)
         @test_throws ArgumentError StepControl(;
             target_contraction = nothing, target_correction = nothing, target_turn = -one(E), max_step_growth = one(E),
-            max_step = one(E),
+            max_first_growth = one(E), max_step = one(E),
         )
         @test_throws ArgumentError DeterminantSign(; persistence = -1)
         @test_throws ArgumentError algorithm(E; min_step_ulps = -1)
@@ -366,6 +399,10 @@ end
         @test_throws DimensionMismatch init(CurveProblem(Fold(), E[0, 0], E[1, 0, 0]), algorithm(E); first_step = one(E))
         @test AcceptAll()(E[0], E[0], E[0])
         @test weighted_angle(ones(E, 2), E[1, 0], E[0, 1]) ≈ E(π) / 2
+        @test weighted_angle(ones(E, 2), E[1, 0], E[-1, 0]) ≈ E(π)
+        # A small angle keeps its digits: acos of the cosine would lose half of them.
+        @test weighted_angle(ones(E, 2), E[1, 0], [cos(E(1) / 10^4), sin(E(1) / 10^4)]) ≈ E(1) / 10^4 rtol = 8 * eps(E)
+        @test weighted_angle(E[4, 1], E[1, 0], E[1, 2]) ≈ E(π) / 4
         @test factored_sign(E[1 0; 0 NaN32], [1, 2]) == 0
     end
 

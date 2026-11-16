@@ -59,8 +59,8 @@ function LogitDistance{E}(;
 end
 
 """
-    PathFollowingSettings{E}(; first_step, max_step, max_steps, distance, newton_iterations, contraction_limit,
-                             error_estimate, target_contraction, target_turn, max_step_growth, orientation_check,
+    PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
+                             target_contraction, target_turn, max_step_growth, max_first_growth, orientation_check,
                              max_refusals, min_step_ulps, step_metric, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
@@ -68,15 +68,17 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
 - `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
   accepted point.
-- `first_step`, `max_step`: the first and the largest step in that norm. `Inf` sets no largest step.
+- `max_step`: the largest step in that norm; `Inf` sets none. The first step comes from the game (`opening_step`).
 - `max_steps`: accepted steps before the trace fails as `NoConvergence`.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
   strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's target correction.
 - `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
   `distance`. `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the
   settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
-- `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
-  The turn target is in radians under `step_metric`.
+- `target_contraction`, `target_turn`, `max_step_growth`, `max_first_growth`: PathFollowing's `StepControl`;
+  `nothing` drops a target. The turn target is in radians under `step_metric`. `max_first_growth` bounds the resize
+  after the first step, as Hairer, Nørsett and Wanner bound their starting step to 100 times its probe (Solving
+  Ordinary Differential Equations I, §II.4).
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses a step where `sign det([J; tᵀ])`
   changes, as a step that runs back along the branch; a change that persists is a bifurcation crossing. `nothing`
   switches the check off.
@@ -85,7 +87,6 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 """
 struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineSettings{E}
-    first_step::E
     max_step::E
     max_steps::Int
     distance::D
@@ -95,6 +96,7 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     target_contraction::Union{Nothing, E}
     target_turn::Union{Nothing, E}
     max_step_growth::E
+    max_first_growth::E
     orientation_check::Union{Nothing, PathFollowing.DeterminantSign}
     max_refusals::Int
     min_step_ulps::Int
@@ -106,7 +108,6 @@ end
 # branch. Without the orientation check, five of ten games ran back. ContractionEstimate at safety 0.2 ran 8.6% faster
 # than LastCorrection; safety 1 lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error.
 function PathFollowingSettings{E}(;
-        first_step::Real = 0.03f0,
         max_step::Real = Inf32,
         max_steps::Integer = 2_000,
         distance::D = StrategyDistance{E}(),
@@ -116,6 +117,7 @@ function PathFollowingSettings{E}(;
         target_contraction::Union{Nothing, Real} = 0.25f0,
         target_turn::Union{Nothing, Real} = 1.0f0,
         max_step_growth::Real = 4.0f0,
+        max_first_growth::Real = 100.0f0,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(; persistence = 4),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
@@ -123,8 +125,8 @@ function PathFollowingSettings{E}(;
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
-        E(first_step), E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit),
-        estimate_in(E, error_estimate), optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth),
+        E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
+        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), E(max_first_growth),
         orientation_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
 end
@@ -310,7 +312,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
         ),
         step_control = PathFollowing.StepControl(;
             settings.target_contraction, settings.distance.target_correction, settings.target_turn,
-            settings.max_step_growth, settings.max_step,
+            settings.max_step_growth, settings.max_first_growth, settings.max_step,
         ),
         metric = PathFollowing.PointWeights(GeometryWeights(settings.step_metric)),
         settings.orientation_check,
@@ -335,8 +337,17 @@ function path_init(
     return CommonSolve.init(
         PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
         path_algorithm(settings, gains);
-        settings.first_step,
+        first_step = opening_step(gains, E),
     )
+end
+
+"""
+The first step of a trace of `gains`: `1 / payoff_range(gains)` in `λ`, where no logit `z = λ w` has moved by more
+than one. It only sets a scale; step control resizes the next step (`max_first_growth`). Equal payoffs step one.
+"""
+function opening_step(gains::NormalFormGains, ::Type{E})::E where {E <: Real}
+    range = E(payoff_range(gains))
+    return iszero(range) ? one(E) : inv(range)
 end
 
 """The context of PathFollowing's start `failure` over `width` logits: `context` and the flat start."""

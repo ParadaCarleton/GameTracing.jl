@@ -87,22 +87,27 @@ function error_scale(estimate::ContractionEstimate{E}, correction::E, before::E)
 end
 
 """
-    StepControl(; target_contraction, target_correction, target_turn, max_step_growth, max_step, refusal_factor = 2,
-                shrink = 1/2)
+    StepControl(; target_contraction, target_correction, target_turn, max_step_growth, max_first_growth, max_step,
+                refusal_factor = 2, shrink = 1/2)
 
 Step-length adaptation after Allgower and Georg (Numerical Continuation Methods, 1990, §6.1). A converged corrector
 gives `f = max(√(κ / target_contraction), √(δ / target_correction), α / target_turn)`: `κ` the ratio of its second
 correction to its first, `δ` its first correction's length (`Newton`'s `distance`) and `α` the turn between the
 tangents in radians. Each target is the value its measurement should take: at `f = 1` the step keeps its length.
-The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term. A step with `f > refusal_factor` is refused and retried at `shrink`
-times its length; any other step is accepted, and the next one is `1 / max(f, 1 / max_step_growth)` times as long, at
-most `max_step`. Every other refusal also shrinks the step by `shrink`.
+The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term.
+
+A step with `f > refusal_factor` is refused; any other step is accepted, and the next one is `1 / max(f, 1 /
+max_step_growth)` times as long, at most `max_step`. After the first step the bound is `max_first_growth`, so a short
+first step only sets a scale: `f` grows nearly in proportion to the step, and `h / f` is the step at the targets.
+A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
+and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shrink`) when it failed earlier.
 """
 struct StepControl{E <: Real}
     target_contraction::Union{Nothing, E}
     target_correction::Union{Nothing, E}
     target_turn::Union{Nothing, E}
     max_step_growth::E
+    max_first_growth::E
     max_step::E
     refusal_factor::E
     shrink::E
@@ -113,19 +118,22 @@ function StepControl(;
         target_correction::Union{Nothing, Real},
         target_turn::Union{Nothing, Real},
         max_step_growth::E,
+        max_first_growth::Real,
         max_step::Real,
         refusal_factor::Real = 2,
         shrink::Real = 1 // 2,
     )::StepControl{E} where {E <: Real}
     max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
+    max_first_growth >= 1 || throw(ArgumentError("max_first_growth must be at least 1; got $max_first_growth"))
     refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
     0 < shrink < 1 || throw(ArgumentError("shrink must lie in (0, 1); got $shrink"))
     max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
     # A straight stretch measures f = 0, so the growth bound or the cap must stop the step from going infinite.
     isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
+    isfinite(max_first_growth) || isfinite(max_step) || throw(ArgumentError("max_first_growth and max_step cannot both be infinite"))
     return StepControl{E}(
         optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn), max_step_growth,
-        E(max_step), E(refusal_factor), E(shrink),
+        E(max_first_growth), E(max_step), E(refusal_factor), E(shrink),
     )
 end
 

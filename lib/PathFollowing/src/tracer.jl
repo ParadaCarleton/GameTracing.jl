@@ -80,7 +80,8 @@ end
     init(problem, algorithm; first_step)
 
 A `Tracer` at `problem.start`, its tangent oriented along `problem.direction`, its first step `first_step` long in the
-step metric; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that stops it there.
+step metric; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that stops it there. The first step only sets a
+scale: step control resizes the second by up to `max_first_growth` (`StepControl`).
 """
 function CommonSolve.init(
         problem::CurveProblem{S, V},
@@ -154,7 +155,9 @@ function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailu
         if refusals > algorithm.max_refusals
             break
         end
-        tracer.step_length *= algorithm.step_control.shrink
+        # An infinite factor measured nothing usable, so that refusal shrinks like an unmeasured one.
+        shrink = inv(algorithm.step_control.shrink)
+        tracer.step_length /= ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
     end
     return Err(StepFailure(TooManyRefusals, last_refusal, tracer.step_length, refusals))
 end
@@ -173,9 +176,9 @@ struct Attempt{E <: Real}
     orientation::Int8
 end
 
-"""A refused `Attempt` for `refusal`."""
-function refused(::Type{E}, refusal::Refusal)::Attempt{E} where {E <: Real}
-    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), E(NaN32), Int8(0))
+"""A refused `Attempt` for `refusal`, with the step `factor` its measurements gave (zero for none)."""
+function refused(::Type{E}, refusal::Refusal, factor::E = zero(E))::Attempt{E} where {E <: Real}
+    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), factor, Int8(0))
 end
 
 """
@@ -203,7 +206,7 @@ function attempt_step!(tracer::Tracer{E}, flips::Integer)::Attempt{E} where {E <
     turn = weighted_angle(tracer.turn_weights, tracer.tangent, tracer.candidate)
     factor = step_factor(algorithm.step_control, corrected.contraction, corrected.first_correction, turn)
     if factor > algorithm.step_control.refusal_factor
-        return refused(E, TooFast)
+        return refused(E, TooFast, factor)
     end
     orientation = unwrap(oriented)
     if flip_refused(algorithm.orientation_check, tracer.orientation, orientation, flips)
@@ -296,7 +299,7 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         end
         # Negated so a NaN correction counts as diverging.
         if iteration > 1 && !(correction <= corrector.contraction_limit * before)
-            return refused(E, Diverging)
+            return refused(E, Diverging, step_factor(tracer.algorithm.step_control, contraction, first_correction, E(NaN32)))
         end
         scale = error_scale(corrector.error_estimate, correction, before)
         before = correction
@@ -304,7 +307,7 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
             return Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32), Int8(0))
         end
     end
-    return refused(E, NotConverged)
+    return refused(E, NotConverged, step_factor(tracer.algorithm.step_control, contraction, first_correction, E(NaN32)))
 end
 
 """A correction's length from `from` to `to`: the step metric's norm, or the corrector's own `distance`."""
@@ -367,13 +370,13 @@ function unresolved(point::AbstractVector{E}, predicted::AbstractVector{E}, ulps
     return true
 end
 
-"""Allgower and Georg's step factor `f` (`StepControl`), at least `1 / max_step_growth`."""
+"""Allgower and Georg's step factor `f` (`StepControl`); a NaN measurement drops its term."""
 function step_factor(control::StepControl{E}, contraction::E, first_correction::E, turn::E)::E where {E <: Real}
     corrector_term = max(
         sqrt(factor_term(control.target_contraction, contraction)),
         sqrt(factor_term(control.target_correction, first_correction)),
     )
-    return max(one(E) / control.max_step_growth, max(corrector_term, factor_term(control.target_turn, turn)))
+    return max(corrector_term, factor_term(control.target_turn, turn))
 end
 
 """`measured / target`, or zero when the term is off (`nothing`) or `measured` is NaN."""
@@ -396,7 +399,9 @@ function accept_point!(tracer::Tracer{E}, attempt::Attempt{E})::Tracer{E} where 
     reweight!(tracer.weights, algorithm.metric, tracer.point)
     reweight!(tracer.turn_weights, algorithm.turn_metric, tracer.point)
     tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
-    tracer.step_length = min(tracer.step_length / attempt.factor, algorithm.step_control.max_step)
+    (; max_first_growth, max_step_growth, max_step) = algorithm.step_control
+    growth = ifelse(iszero(tracer.steps), max_first_growth, max_step_growth)
+    tracer.step_length = min(tracer.step_length / max(attempt.factor, inv(growth)), max_step)
     tracer.steps += 1
     return tracer
 end

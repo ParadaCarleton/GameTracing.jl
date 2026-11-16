@@ -28,7 +28,8 @@ algorithm = PseudoArclength(;
         max_iterations = 8, converged = settled, contraction_limit = 0.5, error_estimate = ContractionEstimate(; safety = 0.1),
     ),
     step_control = StepControl(;
-        target_contraction = 0.25, target_correction = 0.1, target_turn = 0.1, max_step_growth = 2.0, max_step = 0.5,
+        target_contraction = 0.25, target_correction = 0.1, target_turn = 0.1, max_step_growth = 2.0,
+        max_first_growth = 100.0, max_step = 0.5,
     ),
     metric = FixedWeights([1.0, 1.0]),
     orientation_check = DeterminantSign(; persistence = 4),
@@ -50,7 +51,8 @@ point. Use it to stop at an exact parameter value that a step passed.
 - `Newton`: the corrector's iterations, convergence test, contraction limit, error estimate and correction length.
   `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the tolerance;
   `LastCorrection()` settles on the last correction, often one iteration later.
-- `StepControl`: the target contraction, first correction and turn, the largest growth and the largest step.
+- `StepControl`: the target contraction, first correction and turn, the largest growth (and the largest after the
+  first step) and the largest step.
 - `FixedWeights`, `PointWeights`: the step metric and the turn metric. `PointWeights` reweights at each accepted
   point.
 - `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.

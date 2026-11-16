@@ -176,9 +176,9 @@ end
     spent = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; max_steps = 1)))
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
-    # A first step a hundred times past its target correction is refused, and no refusal is allowed.
-    for distance in (StrategyDistance{element}(; target_correction = 1.0f-2), LogitDistance{element}(; target_correction = 1.0f-2))
-        refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; first_step = 100, distance, max_refusals = 0)))
+    # A first correction far past a 1e-6 target is refused, and no refusal is allowed.
+    for distance in (StrategyDistance{element}(; target_correction = 1.0f-6), LogitDistance{element}(; target_correction = 1.0f-6))
+        refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
     # A distance in another element type is refused.
@@ -207,6 +207,9 @@ end
     # No step cap by default; the growth bound then must stay finite.
     @test PathFollowingSettings{element}().max_step == Inf32
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; max_step_growth = Inf32))
+    # The first step comes from the game: the precision where a logit moves by one, or one for equal payoffs.
+    @test GameTracing.opening_step(gains, element) == inv(element(GameTracing.payoff_range(gains)))
+    @test GameTracing.opening_step(NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), element) == 1
 end
 
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))

@@ -69,6 +69,16 @@ const FOLDING_BRANCH_GAME = (
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
 )
 
+# A fresh draw of a CI run: PathFollowing ends it at logits near ±300, where every strategy has settled but the logits
+# sit about 1000 ulps off the map. Its points settle in strategies, PathFollowing's measure, and fail in logits.
+const SATURATED_BRANCH_GAME = (Float32[1.9945446 -6.476125; -0.60958946 -0.019216493;;; 2.4169908 1.7390554; 2.7044353 -5.6631885], Float32[3.0360756 1.9217091; 0.7952187 -5.8968396;;; -2.338289 3.3105536; -2.648212 1.6191502], Float32[-1.675467 -0.60522515; 0.72147083 -0.13347721;;; -5.2404265 3.434299; 2.0519495 3.9997408])
+
+"""Whether a branch point settles as its engine's corrector settles points: in logits, or in strategies (`StrategyDistance`)."""
+settled_point(gains::NormalFormGains, profile::LogitQREProfile, ::BifurcationKitSettings)::Bool =
+    settled_logits(gains, profile.logits, profile.lam, BifurcationKitSettings{eltype(profile.logits)}())
+settled_point(gains::NormalFormGains, profile::LogitQREProfile, settings::PathFollowingSettings)::Bool =
+    settled_strategies(gains, profile.logits, profile.lam, settings.distance)
+
 """The random games of the branch testset, one per strategy count in `((3, 3), (2, 2, 2))`, drawn from `rng`."""
 function branch_games(rng::AbstractRNG)::AbstractVector
     return [ntuple(_ -> 3 .* randn(rng, Float32, counts), length(counts)) for counts in ((3, 3), (2, 2, 2))]
@@ -78,7 +88,7 @@ end
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, branch_games(fresh_rng())...)
+    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, branch_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
         result = logit_solve_branch(gains; settings)
         @test !is_error(result)
@@ -100,7 +110,7 @@ end
             continue
         end
         for profile in branch
-            @test settled_logits(gains, profile.logits, profile.lam, BifurcationKitSettings{eltype(profile.logits)}())
+            @test settled_point(gains, profile, settings)
         end
         # The last point is on Gambit's branch, and logit_solve_lambda finds it at its precision.
         @test largest_gap(last(branch).profile, gambit_strategies(payoffs, last(branch).lam).strategies) <

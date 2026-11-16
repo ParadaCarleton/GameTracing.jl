@@ -331,14 +331,14 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
             distance = measure,
         ),
         step_control = PathFollowing.StepControl(;
-            settings.nominal_contraction, nominal_distance = settings.distance.nominal, settings.nominal_turn,
-            settings.growth_limit, settings.max_step,
+            target_contraction = settings.nominal_contraction, target_correction = settings.distance.nominal,
+            target_turn = settings.nominal_turn, max_step_growth = settings.growth_limit, settings.max_step,
         ),
         metric = PathFollowing.PointWeights(GeometryWeights(settings.geometry)),
-        settings.orientation,
+        orientation_check = settings.orientation,
         settings.linear_solver,
         accept = WithinReach(settings.reach, settings.distance.tolerance, measure),
-        settings.resolution_ulps,
+        min_step_ulps = settings.resolution_ulps,
         settings.max_refusals,
     )
 end

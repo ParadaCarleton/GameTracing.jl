@@ -22,6 +22,8 @@ Euclidean length of a Newton step's logit part (Gambit's 0.4 in log probabilitie
 growth (Gambit's `max_accel` 1.1), and the step then shrinks as the distance or contraction nears its limit.
 `turn_limit` refuses a step whose tangent turns this many radians from the last one, Allgower and Georg's
 test (6.1.10) for a step across a fold onto another branch; 1 is under Gambit's quarter turn (`t·newT < 0`, path.cc).
+Without `BifurcationKitSettings`' `orientation_check` each tangent keeps the last one's direction, so a turn `α` reads
+`min(α, π - α)`: the test catches turns near a right angle and misses a reversal.
 The corrector's contraction rate (`CorrectorSettings`) also slows growth. `nothing` switches a threshold off.
 """
 Base.@kwdef struct StepControl{E <: Real}
@@ -55,8 +57,8 @@ distance (`TraceGeometry`).
   perturbation"). Over 40 random unfoldings at payoff scale 1e-4 it kept the branch in none, `Bordered()` in all 40.
 - `bordered_solver`: a `BorderedSolver`.
 - `step_control`: a `StepControl`, or `nothing` for none.
-- `orientation_check` orients a bordered tangent by the determinant of the bordered matrix. It takes effect only with
-  `MatrixSolve`, the one solver that has a determinant.
+- `orientation_check` orients a bordered tangent by the determinant of the bordered matrix. Only `MatrixSolve` has a
+  determinant, so `BorderingSolve` needs `orientation_check = false`; the constructor throws otherwise.
 - `palc_corrector`: PALC's `corrector` keyword, `nothing` by default, which is BifurcationKit's own Newton method
   (`newton_palc`; it stops on leaving `[0, 1]`). `BifurcationKit.FreeParameterNewton()` leaves `ρ` free there instead,
   the trace's choice before this field. `CorrectorReach` reads any corrector's Newton callbacks.
@@ -109,10 +111,17 @@ function BifurcationKitSettings{E}(;
         E <: Real, T <: BifurcationKit.AbstractTangentComputation, C, P <: NamedTuple, O <: NamedTuple,
     }
     return BifurcationKitSettings{E, T, C, P, O}(
-        E(first_step), E(max_step), E(aggressiveness), step_metric, corrector,
-        Int(max_steps), tangent, bordered_solver, step_control, orientation_check, palc_corrector, palc_options,
+        E(first_step), E(max_step), E(aggressiveness), step_metric, corrector, Int(max_steps), tangent, bordered_solver,
+        step_control, checked_orientation(orientation_check, bordered_solver), palc_corrector, palc_options,
         continuation_options,
     )
+end
+
+"""`orientation_check`, or a throw where it asks for a determinant that `bordered_solver` does not compute (`BorderingSolve`)."""
+function checked_orientation(orientation_check::Bool, bordered_solver::BorderedSolver)::Bool
+    orientation_check && bordered_solver == BorderingSolve &&
+        throw(ArgumentError("BorderingSolve has no bordered determinant for orientation_check; pass orientation_check = false"))
+    return orientation_check
 end
 
 """`limit * scale`, or `nothing` where the threshold is off (`limit` is `nothing`)."""
@@ -122,16 +131,13 @@ scaled_limit(limit::Real, scale::Real)::typeof(limit * scale) = limit * scale
 """
 PALC's `step_control` for `control` over `width` gaps in `geometry`: `nothing` when it is off, else BifurcationKit's
 `CorrectorQuality`, its distance limit scaled from the gaps' Euclidean length into the norm. Its contraction rate,
-`corrector`'s limit and offset, slows growth only: `CorrectorReach` refuses on the rate in logits. A path that is not
-oriented has no turn test: a solver without the bordered determinant that BifurcationKit's turn of a `Bordered`
-tangent needs.
+`corrector`'s limit and offset, slows growth only: `CorrectorReach` refuses on the rate in logits.
 """
 corrector_quality(
     ::Nothing,
     ::CorrectorSettings,
     ::TraceGeometry,
     ::Integer,
-    ::Bool,
 )::Nothing = nothing
 
 function corrector_quality(
@@ -139,14 +145,13 @@ function corrector_quality(
         corrector::CorrectorSettings{E},
         geometry::TraceGeometry{E},
         width::Integer,
-        oriented::Bool,
     )::BifurcationKit.CorrectorQuality{E} where {E <: Real}
     return BifurcationKit.CorrectorQuality{E}(
         scaled_limit(control.distance_limit, sqrt(coordinate_weight(geometry, width))),
         scaled_limit(corrector.contraction_limit, one(E)),
         scaled_limit(control.max_step_growth, one(E)),
         corrector.contraction_offset,
-        scaled_limit(ifelse(oriented, control.turn_limit, nothing), one(E)),
+        scaled_limit(control.turn_limit, one(E)),
         false,
     )
 end
@@ -193,7 +198,7 @@ end
 
 """
 BifurcationKit's PALC for `settings` over `width` logits in `geometry` (`palc_geometry`), whose type varies by
-distance, with the bordered determinant's `orientation_check` (with `MatrixSolve` only) and `orientation`.
+distance, with the bordered determinant's `orientation_check` (`MatrixSolve` only; it throws otherwise) and `orientation`.
 """
 function palc_with_geometry(
         settings::BifurcationKitSettings{E},
@@ -202,7 +207,6 @@ function palc_with_geometry(
         orientation_check::Bool,
         orientation::PlainOrientation{E},
     )::BifurcationKit.AbstractContinuationAlgorithm where {E <: Real}
-    oriented = orientation_check && settings.bordered_solver == MatrixSolve
     own = (;
         tangent = settings.tangent,
         θ = geometry.palc_state_weight,
@@ -213,9 +217,8 @@ function palc_with_geometry(
             settings.corrector,
             settings.step_metric,
             width,
-            oriented,
         ),
-        orientation_check = oriented,
+        orientation_check = checked_orientation(orientation_check, settings.bordered_solver),
         corrector = settings.palc_corrector,
         orientation_dot = orientation,
     )

@@ -77,9 +77,19 @@ const SATURATED_BRANCH_GAME = (
     Float32[-1.675467f0 -0.60522515f0; 0.72147083f0 -0.13347721f0;;; -5.2404265f0 3.434299f0; 2.0519495f0 3.9997408f0],
 )
 
-"""Whether a branch point settles as its engine's corrector settles points: in logits, or in strategies (`StrategyDistance`)."""
+# A fresh draw of a CI run: BifurcationKit lands a point at its branch's fold peak, λ ≈ 2.7237. There `I - ∂T/∂z` is
+# singular, so a Newton step at fixed λ grows past the settle bound; `branch_step` frees λ and stays bounded.
+const FOLD_PEAK_GAME = (
+    Float32[-1.7090197f0 3.4388857f0 4.108635f0; 1.6385761f0 -2.7659307f0 5.6244125f0; -2.6847887f0 -0.8351383f0 -6.3075285f0],
+    Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
+)
+
+"""
+Whether a branch point settles as its engine's corrector settles points, by a Newton step with the precision free
+(`branch_step`): in logits, or in strategies (`StrategyDistance`).
+"""
 settled_point(gains::NormalFormGains, profile::LogitQREProfile, ::BifurcationKitSettings)::Bool =
-    settled_logits(gains, profile.logits, profile.lam, BifurcationKitSettings{eltype(profile.logits)}())
+    settled_branch_logits(gains, profile.logits, profile.lam, BifurcationKitSettings{eltype(profile.logits)}())
 settled_point(gains::NormalFormGains, profile::LogitQREProfile, settings::PathFollowingSettings)::Bool =
     settled_strategies(gains, profile.logits, profile.lam, settings.distance)
 
@@ -92,7 +102,7 @@ end
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, branch_games(fresh_rng())...)
+    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, branch_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
         result = logit_solve_branch(gains; settings)
         @test !is_error(result)
@@ -106,15 +116,15 @@ end
         @test GameTracing.max_regret(gains, last(branch).logits) <= sqrt(eps(Float32)) * GameTracing.payoff_range(gains)
         solved = unwrap(logit_solve(gains; settings))
         @test solved.lam == last(branch).lam
+        for profile in branch
+            @test settled_point(gains, profile, settings)
+        end
         # A fold leaves the λ-fixed checks below without a unique answer (`FOLDING_BRANCH_GAME`), even past its peak.
         folded = !issorted([profile.lam for profile in branch])
         # A fresh draw may fold too; the fixed game must.
         @test folded || payoffs !== FOLDING_BRANCH_GAME
         if folded
             continue
-        end
-        for profile in branch
-            @test settled_point(gains, profile, settings)
         end
         # The last point is on Gambit's branch, and logit_solve_lambda finds it at its precision.
         @test largest_gap(last(branch).profile, gambit_strategies(payoffs, last(branch).lam).strategies) <

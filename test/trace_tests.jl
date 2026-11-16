@@ -18,7 +18,7 @@ end
     reference = unwrap(trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}())).logits
     for settings in (
             BifurcationKitSettings{Float32}(tangent = BifurcationKit.Secant()),
-            BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve),
+            BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve, orientation_check = false),
             BifurcationKitSettings{Float32}(step_control = nothing),
             BifurcationKitSettings{Float32}(
                 step_control = StepControl{Float32}(distance_limit = nothing),
@@ -157,18 +157,14 @@ end
     end
 end
 
-@testset "PALC orients by determinant only where the solver has one" begin
-    for check in (true, false), solver in instances(BorderedSolver)
-        settings = BifurcationKitSettings{Float32}(
-            orientation_check = check,
-            bordered_solver = solver,
-        )
-        oriented = GameTracing.palc_algorithm(
-            settings,
-            WIDTH,
-            TARGET_PRECISION,
-        ).orientation_check
-        @test oriented == (check && solver == MatrixSolve)
+@testset "an orientation check without a determinant throws; the turn test runs with or without the check" begin
+    @test_throws ArgumentError BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve)
+    bordering = BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve, orientation_check = false)
+    @test_throws ArgumentError GameTracing.palc_algorithm(bordering, WIDTH, TARGET_PRECISION; orientation_check = true)
+    for (settings, check) in ((BifurcationKitSettings{Float32}(), true), (bordering, false), (BifurcationKitSettings{Float32}(orientation_check = false), false))
+        algorithm = GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION)
+        @test algorithm.orientation_check == check
+        @test algorithm.step_control.max_turn == 1
     end
 end
 
@@ -397,9 +393,8 @@ end
     @test ended.exception isa SingularException
 end
 
-@testset "the turn test is on by default, on oriented paths only ($element)" for element in (Float32, widen(Float32))
+@testset "the turn test is on by default and off with turn_limit = nothing ($element)" for element in (Float32, widen(Float32))
     corrector, geometry = GameTracing.CorrectorSettings{element}(), GameTracing.TraceGeometry{element}()
-    @test GameTracing.corrector_quality(StepControl{element}(), corrector, geometry, WIDTH, true).max_turn == one(element)
-    @test isnothing(GameTracing.corrector_quality(StepControl{element}(), corrector, geometry, WIDTH, false).max_turn)
-    @test isnothing(GameTracing.corrector_quality(StepControl{element}(turn_limit = nothing), corrector, geometry, WIDTH, true).max_turn)
+    @test GameTracing.corrector_quality(StepControl{element}(), corrector, geometry, WIDTH).max_turn == one(element)
+    @test isnothing(GameTracing.corrector_quality(StepControl{element}(turn_limit = nothing), corrector, geometry, WIDTH).max_turn)
 end

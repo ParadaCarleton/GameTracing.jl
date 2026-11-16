@@ -225,6 +225,17 @@ end
     @test GameTracing.noise_confirmed(check)
 end
 
+@testset "a pure equilibrium traced to λ 1e6 reaches it, its logits settled to their rounding ($element)" for element in (Float32, widen(Float32))
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
+    settings = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; distance = FisherLogPrecisionDistance))
+    traced = unwrap(trace_endpoint(LogitGame(gains, element(FAR_TARGET)), GameTracing.logit_count(gains), settings))
+    # Defecting gains 1 against a defector, so each logit is λ.
+    @test traced.logits ≈ fill(element(FAR_TARGET), 2)
+    @test traced.logit_accuracy <= settle_bound(settings.corrector, traced.logits)
+    landed = only(unwrap(logit_solve_lambda(gains, element(FAR_TARGET); settings = PathFollowingSettings{element}())))
+    @test landed.logits ≈ fill(element(FAR_TARGET), 2)
+end
+
 @testset "a gain with noise of size η fails PrecisionExhausted where λ η passes the logit tolerance" begin
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
     # stalled the opening at ρ ≈ 4e-19, whatever η: zero-slope gains whose every evaluation jumps leave no first step.

@@ -14,11 +14,13 @@ const FOLD_SETTINGS = BifurcationKitSettings{Float32}()
                 BifurcationKitSettings{Float32}(tangent = BifurcationKit.Secant()),
                 BifurcationKitSettings{Float32}(
                     bordered_solver = BorderingSolve,
+                    orientation_check = false,
                 ),
                 BifurcationKitSettings{Float32}(step_control = nothing),
                 # Past the second fold this arm's Fisher-weighted tangent once turned back (`PlainOrientation`).
                 BifurcationKitSettings{Float32}(
                     bordered_solver = BorderingSolve,
+                    orientation_check = false,
                     corrector = CorrectorSettings{Float32}(; logit_tolerance = 1.0f-5),
                 ),
             )

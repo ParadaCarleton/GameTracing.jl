@@ -179,7 +179,7 @@ function settled_points(
         max_accel::Real = 1.1f0,
         maximum_precision::Real = 1.0f6,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
-        maxregret::Real = sqrt(eps(typeof(settings.first_step))),
+        maxregret::Real = sqrt(eps(element_type(settings))),
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
     if !(maxregret > 0)
         throw(ArgumentError("maxregret must be positive; got $maxregret"))

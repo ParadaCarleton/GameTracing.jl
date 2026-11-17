@@ -118,6 +118,8 @@ function PathFollowingSettings{E}(;
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
+        # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
+        # on two-action games and 37% fewer on categorical ones, but stalls at battle of the sexes' exact pitchfork.
         step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}

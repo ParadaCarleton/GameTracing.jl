@@ -180,8 +180,8 @@ end
     @test doubled.logit_accuracy <= settle_bound(double_settings.corrector, double_logits)
     @test agreeing(first_choices(double_logits), oracle.first_choices)
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
-    # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under growth 1.1 this includes
-    # fisher_log_precision_reach at state weight 0.01, which before exhausted near λ 0.808 (runs 40803122294, 40806444224).
+    # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under the categorical Fisher
+    # metric the log term exhausts near λ 0.808 below state weight 0.03, which `ARM_WEIGHTS` leaves out.
     for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants(ARM_WEIGHTS)]
         result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
         @test !is_error(result)

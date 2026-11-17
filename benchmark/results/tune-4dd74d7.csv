@@ -1,0 +1,1400 @@
+game,variant,status,steps,crossing_steps,iterations,refused_reach,refused_kl,refused_angle,refused_nonfinite,last_refusal,stop_reason,gap,bytes,reference,group
+battle_of_the_sexes,shipped,PrecisionExhausted,8,0,72,12,0,0,0,unresolved,precision_exhausted,NaN,139248,reference,fixed
+battle_of_the_sexes,fisher_reach state_weight 0.003,PrecisionExhausted,9,0,71,12,0,0,0,unresolved,precision_exhausted,NaN,140576,reference,fixed
+battle_of_the_sexes,fisher_reach state_weight 0.01,PrecisionExhausted,8,0,72,12,0,0,0,unresolved,precision_exhausted,NaN,139248,reference,fixed
+battle_of_the_sexes,fisher_reach state_weight 0.03,PrecisionExhausted,6,0,64,11,0,0,0,unresolved,precision_exhausted,NaN,136288,reference,fixed
+battle_of_the_sexes,fisher_reach state_weight 0.1,PrecisionExhausted,10,0,77,12,0,0,0,unresolved,precision_exhausted,NaN,142336,reference,fixed
+battle_of_the_sexes,fisher_reach state_weight 0.3,PrecisionExhausted,10,0,75,13,0,0,0,unresolved,precision_exhausted,NaN,142512,reference,fixed
+battle_of_the_sexes,fisher_reach state_weight 0.9,PrecisionExhausted,9,0,72,13,0,0,0,unresolved,precision_exhausted,NaN,141024,reference,fixed
+battle_of_the_sexes,fisher_log_precision_reach state_weight 0.003,PrecisionExhausted,15,0,84,11,0,0,0,unresolved,precision_exhausted,NaN,151632,reference,fixed
+battle_of_the_sexes,fisher_log_precision_reach state_weight 0.01,PrecisionExhausted,13,0,84,11,0,0,0,unresolved,precision_exhausted,NaN,148592,reference,fixed
+battle_of_the_sexes,fisher_log_precision_reach state_weight 0.03,PrecisionExhausted,11,0,76,11,0,0,0,unresolved,precision_exhausted,NaN,144672,reference,fixed
+battle_of_the_sexes,fisher_log_precision_reach state_weight 0.1,PrecisionExhausted,12,0,82,11,0,0,0,unresolved,precision_exhausted,NaN,147200,reference,fixed
+battle_of_the_sexes,fisher_log_precision_reach state_weight 0.3,PrecisionExhausted,13,0,83,11,0,0,0,unresolved,precision_exhausted,NaN,148800,reference,fixed
+battle_of_the_sexes,fisher_log_precision_reach state_weight 0.9,PrecisionExhausted,12,0,77,11,0,0,0,unresolved,precision_exhausted,NaN,146080,reference,fixed
+battle_of_the_sexes,path shipped,reached,24,0,0,0,0,0,0,none,none,0.5828678,8368,reference,fixed
+battle_of_the_sexes,path fisher_reach state_weight 0.003,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+battle_of_the_sexes,path fisher_reach state_weight 0.01,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+battle_of_the_sexes,path fisher_reach state_weight 0.03,reached,23,0,0,0,0,0,0,none,none,0.5828678,9088,reference,fixed
+battle_of_the_sexes,path fisher_reach state_weight 0.1,reached,29,0,0,0,0,0,0,none,none,0.5828678,9376,reference,fixed
+battle_of_the_sexes,path fisher_reach state_weight 0.3,TraceStuck,11,0,0,0,0,0,0,none,unresolved_step,NaN,8640,reference,fixed
+battle_of_the_sexes,path fisher_reach state_weight 0.9,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+battle_of_the_sexes,path fisher_log_precision_reach state_weight 0.003,TraceStuck,18,0,0,0,0,0,0,none,unresolved_step,NaN,8976,reference,fixed
+battle_of_the_sexes,path fisher_log_precision_reach state_weight 0.01,TraceStuck,8,0,0,0,0,0,0,none,unresolved_step,NaN,8496,reference,fixed
+battle_of_the_sexes,path fisher_log_precision_reach state_weight 0.03,TraceStuck,16,0,0,0,0,0,0,none,unresolved_step,NaN,8880,reference,fixed
+battle_of_the_sexes,path fisher_log_precision_reach state_weight 0.1,TraceStuck,8,0,0,0,0,0,0,none,unresolved_step,NaN,8496,reference,fixed
+battle_of_the_sexes,path fisher_log_precision_reach state_weight 0.3,TraceStuck,11,0,0,0,0,0,0,none,unresolved_step,NaN,8640,reference,fixed
+battle_of_the_sexes,path fisher_log_precision_reach state_weight 0.9,reached,24,0,0,0,0,0,0,none,none,0.5828678,9136,reference,fixed
+battle_of_the_sexes,logitnash,reached,26,0,0,0,0,0,0,none,none,2.3314684e-15,1632,reference,fixed
+coordination_wiki,shipped,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_reach state_weight 0.003,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_reach state_weight 0.01,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_reach state_weight 0.03,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_reach state_weight 0.1,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_reach state_weight 0.3,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_reach state_weight 0.9,Singular,15,0,58,0,0,0,0,none,solver_blowup,NaN,59040,reference,fixed
+coordination_wiki,fisher_log_precision_reach state_weight 0.003,TraceStuck,18,0,57,0,0,0,0,unresolved,unresolved_step,NaN,157312,reference,fixed
+coordination_wiki,fisher_log_precision_reach state_weight 0.01,TraceStuck,18,0,57,0,0,0,0,unresolved,unresolved_step,NaN,157312,reference,fixed
+coordination_wiki,fisher_log_precision_reach state_weight 0.03,TraceStuck,18,0,57,0,0,0,0,unresolved,unresolved_step,NaN,157312,reference,fixed
+coordination_wiki,fisher_log_precision_reach state_weight 0.1,TraceStuck,18,0,57,0,0,0,0,unresolved,unresolved_step,NaN,157312,reference,fixed
+coordination_wiki,fisher_log_precision_reach state_weight 0.3,TraceStuck,18,0,57,0,0,0,0,unresolved,unresolved_step,NaN,157312,reference,fixed
+coordination_wiki,fisher_log_precision_reach state_weight 0.9,TraceStuck,18,0,57,0,0,0,0,unresolved,unresolved_step,NaN,157312,reference,fixed
+coordination_wiki,path shipped,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,8352,reference,fixed
+coordination_wiki,path fisher_reach state_weight 0.003,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_wiki,path fisher_reach state_weight 0.01,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_wiki,path fisher_reach state_weight 0.03,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_wiki,path fisher_reach state_weight 0.1,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_wiki,path fisher_reach state_weight 0.3,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_wiki,path fisher_reach state_weight 0.9,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_wiki,path fisher_log_precision_reach state_weight 0.003,TraceStuck,10,0,0,0,0,0,0,none,unresolved_step,NaN,8592,reference,fixed
+coordination_wiki,path fisher_log_precision_reach state_weight 0.01,TraceStuck,10,0,0,0,0,0,0,none,unresolved_step,NaN,8592,reference,fixed
+coordination_wiki,path fisher_log_precision_reach state_weight 0.03,TraceStuck,10,0,0,0,0,0,0,none,unresolved_step,NaN,8592,reference,fixed
+coordination_wiki,path fisher_log_precision_reach state_weight 0.1,TraceStuck,10,0,0,0,0,0,0,none,unresolved_step,NaN,8592,reference,fixed
+coordination_wiki,path fisher_log_precision_reach state_weight 0.3,TraceStuck,10,0,0,0,0,0,0,none,unresolved_step,NaN,8592,reference,fixed
+coordination_wiki,path fisher_log_precision_reach state_weight 0.9,TraceStuck,10,0,0,0,0,0,0,none,unresolved_step,NaN,8592,reference,fixed
+coordination_wiki,logitnash,stalled,0,0,0,0,0,0,0,none,stall,NaN,1632,reference,fixed
+coordination_pure,shipped,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_reach state_weight 0.003,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_reach state_weight 0.01,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_reach state_weight 0.03,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_reach state_weight 0.1,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_reach state_weight 0.3,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_reach state_weight 0.9,TraceStuck,12,0,59,0,0,0,0,unresolved,unresolved_step,NaN,145776,reference,fixed
+coordination_pure,fisher_log_precision_reach state_weight 0.003,TraceStuck,13,0,57,0,0,0,0,unresolved,unresolved_step,NaN,146848,reference,fixed
+coordination_pure,fisher_log_precision_reach state_weight 0.01,TraceStuck,13,0,57,0,0,0,0,unresolved,unresolved_step,NaN,146848,reference,fixed
+coordination_pure,fisher_log_precision_reach state_weight 0.03,TraceStuck,13,0,57,0,0,0,0,unresolved,unresolved_step,NaN,146848,reference,fixed
+coordination_pure,fisher_log_precision_reach state_weight 0.1,TraceStuck,13,0,57,0,0,0,0,unresolved,unresolved_step,NaN,146848,reference,fixed
+coordination_pure,fisher_log_precision_reach state_weight 0.3,TraceStuck,13,0,57,0,0,0,0,unresolved,unresolved_step,NaN,146848,reference,fixed
+coordination_pure,fisher_log_precision_reach state_weight 0.9,TraceStuck,13,0,57,0,0,0,0,unresolved,unresolved_step,NaN,146848,reference,fixed
+coordination_pure,path shipped,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,8352,reference,fixed
+coordination_pure,path fisher_reach state_weight 0.003,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_pure,path fisher_reach state_weight 0.01,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_pure,path fisher_reach state_weight 0.03,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_pure,path fisher_reach state_weight 0.1,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_pure,path fisher_reach state_weight 0.3,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_pure,path fisher_reach state_weight 0.9,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9120,reference,fixed
+coordination_pure,path fisher_log_precision_reach state_weight 0.003,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+coordination_pure,path fisher_log_precision_reach state_weight 0.01,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+coordination_pure,path fisher_log_precision_reach state_weight 0.03,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+coordination_pure,path fisher_log_precision_reach state_weight 0.1,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+coordination_pure,path fisher_log_precision_reach state_weight 0.3,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+coordination_pure,path fisher_log_precision_reach state_weight 0.9,TraceStuck,13,0,0,0,0,0,0,none,unresolved_step,NaN,8736,reference,fixed
+coordination_pure,logitnash,stalled,0,0,0,0,0,0,0,none,stall,NaN,1632,reference,fixed
+coordination_assurance,shipped,reached,13,0,35,0,0,0,0,none,none,1.26565425e-14,39664,reference,fixed
+coordination_assurance,fisher_reach state_weight 0.003,reached,12,0,31,0,0,0,0,none,none,1.26565425e-14,37632,reference,fixed
+coordination_assurance,fisher_reach state_weight 0.01,reached,13,0,35,0,0,0,0,none,none,1.26565425e-14,39664,reference,fixed
+coordination_assurance,fisher_reach state_weight 0.03,reached,17,0,44,0,0,0,0,none,none,1.26565425e-14,52032,reference,fixed
+coordination_assurance,fisher_reach state_weight 0.1,reached,15,0,38,0,0,0,0,none,none,1.26565425e-14,42720,reference,fixed
+coordination_assurance,fisher_reach state_weight 0.3,reached,18,0,45,0,0,0,0,none,none,1.26565425e-14,52640,reference,fixed
+coordination_assurance,fisher_reach state_weight 0.9,reached,21,0,52,0,0,0,0,none,none,1.26565425e-14,58480,reference,fixed
+coordination_assurance,fisher_log_precision_reach state_weight 0.003,reached,16,0,46,0,0,0,0,none,none,1.26565425e-14,50352,reference,fixed
+coordination_assurance,fisher_log_precision_reach state_weight 0.01,reached,16,0,46,0,0,0,0,none,none,1.26565425e-14,50400,reference,fixed
+coordination_assurance,fisher_log_precision_reach state_weight 0.03,reached,17,0,49,0,0,0,0,none,none,1.26565425e-14,53040,reference,fixed
+coordination_assurance,fisher_log_precision_reach state_weight 0.1,reached,18,0,52,0,0,0,0,none,none,1.26565425e-14,53984,reference,fixed
+coordination_assurance,fisher_log_precision_reach state_weight 0.3,reached,23,0,62,0,0,0,0,none,none,1.26565425e-14,61984,reference,fixed
+coordination_assurance,fisher_log_precision_reach state_weight 0.9,reached,22,0,58,0,0,0,0,none,none,1.26565425e-14,60000,reference,fixed
+coordination_assurance,path shipped,reached,7,0,0,0,0,0,0,none,none,1.26565425e-14,7552,reference,fixed
+coordination_assurance,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,1.26565425e-14,8224,reference,fixed
+coordination_assurance,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,1.26565425e-14,8224,reference,fixed
+coordination_assurance,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,1.26565425e-14,8224,reference,fixed
+coordination_assurance,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,1.26565425e-14,8224,reference,fixed
+coordination_assurance,path fisher_log_precision_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,1.26565425e-14,8224,reference,fixed
+coordination_assurance,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,1.26565425e-14,8272,reference,fixed
+coordination_assurance,logitnash,reached,49,0,0,0,0,0,0,none,none,0.0,1632,reference,fixed
+stag_hunt,shipped,reached,13,0,37,0,0,0,0,none,none,2.798344e-17,40096,reference,fixed
+stag_hunt,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,2.798344e-17,44448,reference,fixed
+stag_hunt,fisher_reach state_weight 0.01,reached,13,0,37,0,0,0,0,none,none,2.798344e-17,40096,reference,fixed
+stag_hunt,fisher_reach state_weight 0.03,reached,13,0,36,0,0,0,0,none,none,2.798344e-17,39904,reference,fixed
+stag_hunt,fisher_reach state_weight 0.1,reached,15,0,40,0,0,0,0,none,none,2.798344e-17,43104,reference,fixed
+stag_hunt,fisher_reach state_weight 0.3,reached,28,0,65,0,0,0,0,none,none,2.798344e-17,68640,reference,fixed
+stag_hunt,fisher_reach state_weight 0.9,reached,21,0,55,0,0,0,0,none,none,2.798344e-17,58208,reference,fixed
+stag_hunt,fisher_log_precision_reach state_weight 0.003,reached,16,0,45,0,0,0,0,none,none,2.798344e-17,51168,reference,fixed
+stag_hunt,fisher_log_precision_reach state_weight 0.01,reached,16,0,44,0,0,0,0,none,none,2.798344e-17,50976,reference,fixed
+stag_hunt,fisher_log_precision_reach state_weight 0.03,reached,17,0,47,0,0,0,0,none,none,2.798344e-17,51808,reference,fixed
+stag_hunt,fisher_log_precision_reach state_weight 0.1,reached,17,0,45,0,0,0,0,none,none,2.798344e-17,52384,reference,fixed
+stag_hunt,fisher_log_precision_reach state_weight 0.3,reached,19,0,52,0,0,0,0,none,none,2.798344e-17,56160,reference,fixed
+stag_hunt,fisher_log_precision_reach state_weight 0.9,reached,26,0,69,0,0,0,0,none,none,2.798344e-17,66976,reference,fixed
+stag_hunt,path shipped,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,7504,reference,fixed
+stag_hunt,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,2.798344e-17,8224,reference,fixed
+stag_hunt,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,2.798344e-17,8224,reference,fixed
+stag_hunt,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,2.798344e-17,8224,reference,fixed
+stag_hunt,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,2.798344e-17,8224,reference,fixed
+stag_hunt,path fisher_log_precision_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,2.798344e-17,8224,reference,fixed
+stag_hunt,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.798344e-17,8272,reference,fixed
+stag_hunt,logitnash,reached,46,0,0,0,0,0,0,none,none,3.142852e-20,1632,reference,fixed
+prisoners_dilemma,shipped,reached,12,0,33,0,0,0,0,none,none,6.9415247e-9,39984,reference,fixed
+prisoners_dilemma,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,5.090558e-10,45360,reference,fixed
+prisoners_dilemma,fisher_reach state_weight 0.01,reached,12,0,33,0,0,0,0,none,none,6.9415247e-9,39984,reference,fixed
+prisoners_dilemma,fisher_reach state_weight 0.03,reached,13,0,36,0,0,0,0,none,none,5.090558e-10,40864,reference,fixed
+prisoners_dilemma,fisher_reach state_weight 0.1,reached,14,0,39,0,0,0,0,none,none,7.9596365e-9,42656,reference,fixed
+prisoners_dilemma,fisher_reach state_weight 0.3,reached,25,0,65,0,0,0,0,none,none,5.090558e-10,66864,reference,fixed
+prisoners_dilemma,fisher_reach state_weight 0.9,reached,18,0,47,0,0,0,0,none,none,5.090558e-10,54896,reference,fixed
+prisoners_dilemma,fisher_log_precision_reach state_weight 0.003,reached,16,0,46,0,0,0,0,none,none,5.090558e-10,52272,reference,fixed
+prisoners_dilemma,fisher_log_precision_reach state_weight 0.01,reached,16,0,44,0,0,0,0,none,none,5.090558e-10,51888,reference,fixed
+prisoners_dilemma,fisher_log_precision_reach state_weight 0.03,reached,16,0,45,0,0,0,0,none,none,5.090558e-10,52080,reference,fixed
+prisoners_dilemma,fisher_log_precision_reach state_weight 0.1,reached,17,0,48,0,0,0,0,none,none,5.090558e-10,53872,reference,fixed
+prisoners_dilemma,fisher_log_precision_reach state_weight 0.3,reached,18,0,50,0,0,0,0,none,none,5.090558e-10,54560,reference,fixed
+prisoners_dilemma,fisher_log_precision_reach state_weight 0.9,reached,20,0,53,0,0,0,0,none,none,5.090558e-10,57568,reference,fixed
+prisoners_dilemma,path shipped,reached,6,0,0,0,0,0,0,none,none,7.9596365e-9,7504,reference,fixed
+prisoners_dilemma,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,5.090558e-10,8272,reference,fixed
+prisoners_dilemma,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,5.090558e-10,8272,reference,fixed
+prisoners_dilemma,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,5.090558e-10,8272,reference,fixed
+prisoners_dilemma,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,5.090558e-10,8272,reference,fixed
+prisoners_dilemma,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,5.090558e-10,8272,reference,fixed
+prisoners_dilemma,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,5.090558e-10,8272,reference,fixed
+prisoners_dilemma,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,5.090558e-10,8224,reference,fixed
+prisoners_dilemma,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,6.9415247e-9,8224,reference,fixed
+prisoners_dilemma,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,5.090558e-10,8224,reference,fixed
+prisoners_dilemma,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,6.9415247e-9,8224,reference,fixed
+prisoners_dilemma,path fisher_log_precision_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,5.090558e-10,8224,reference,fixed
+prisoners_dilemma,path fisher_log_precision_reach state_weight 0.9,reached,5,0,0,0,0,0,0,none,none,5.090558e-10,8224,reference,fixed
+prisoners_dilemma,logitnash,reached,35,0,0,0,0,0,0,none,none,1.26756244e-14,1632,reference,fixed
+matching_pennies,shipped,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_reach state_weight 0.003,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_reach state_weight 0.01,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_reach state_weight 0.03,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_reach state_weight 0.1,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_reach state_weight 0.3,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_reach state_weight 0.9,reached,12,0,17,0,0,0,0,none,none,0.0,34800,reference,fixed
+matching_pennies,fisher_log_precision_reach state_weight 0.003,reached,16,0,26,0,0,0,0,none,none,0.0,46368,reference,fixed
+matching_pennies,fisher_log_precision_reach state_weight 0.01,reached,16,0,26,0,0,0,0,none,none,0.0,46368,reference,fixed
+matching_pennies,fisher_log_precision_reach state_weight 0.03,reached,16,0,26,0,0,0,0,none,none,0.0,46368,reference,fixed
+matching_pennies,fisher_log_precision_reach state_weight 0.1,reached,16,0,26,0,0,0,0,none,none,0.0,46368,reference,fixed
+matching_pennies,fisher_log_precision_reach state_weight 0.3,reached,16,0,26,0,0,0,0,none,none,0.0,46368,reference,fixed
+matching_pennies,fisher_log_precision_reach state_weight 0.9,reached,16,0,26,0,0,0,0,none,none,0.0,46368,reference,fixed
+matching_pennies,path shipped,reached,4,0,0,0,0,0,0,none,none,0.0,7408,reference,fixed
+matching_pennies,path fisher_reach state_weight 0.003,reached,4,0,0,0,0,0,0,none,none,0.0,8176,reference,fixed
+matching_pennies,path fisher_reach state_weight 0.01,reached,4,0,0,0,0,0,0,none,none,0.0,8176,reference,fixed
+matching_pennies,path fisher_reach state_weight 0.03,reached,4,0,0,0,0,0,0,none,none,0.0,8176,reference,fixed
+matching_pennies,path fisher_reach state_weight 0.1,reached,4,0,0,0,0,0,0,none,none,0.0,8176,reference,fixed
+matching_pennies,path fisher_reach state_weight 0.3,reached,4,0,0,0,0,0,0,none,none,0.0,8176,reference,fixed
+matching_pennies,path fisher_reach state_weight 0.9,reached,4,0,0,0,0,0,0,none,none,0.0,8176,reference,fixed
+matching_pennies,path fisher_log_precision_reach state_weight 0.003,reached,3,0,0,0,0,0,0,none,none,0.0,8128,reference,fixed
+matching_pennies,path fisher_log_precision_reach state_weight 0.01,reached,3,0,0,0,0,0,0,none,none,0.0,8128,reference,fixed
+matching_pennies,path fisher_log_precision_reach state_weight 0.03,reached,3,0,0,0,0,0,0,none,none,0.0,8128,reference,fixed
+matching_pennies,path fisher_log_precision_reach state_weight 0.1,reached,3,0,0,0,0,0,0,none,none,0.0,8128,reference,fixed
+matching_pennies,path fisher_log_precision_reach state_weight 0.3,reached,3,0,0,0,0,0,0,none,none,0.0,8128,reference,fixed
+matching_pennies,path fisher_log_precision_reach state_weight 0.9,reached,3,0,0,0,0,0,0,none,none,0.0,8128,reference,fixed
+matching_pennies,logitnash,stalled,0,0,0,0,0,0,0,none,stall,NaN,1632,reference,fixed
+three_prisoners,shipped,reached,12,0,32,0,0,0,0,none,none,1.8763977e-9,42144,reference,fixed
+three_prisoners,fisher_reach state_weight 0.003,reached,12,0,32,0,0,0,0,none,none,1.8763977e-9,42144,reference,fixed
+three_prisoners,fisher_reach state_weight 0.01,reached,12,0,32,0,0,0,0,none,none,1.8763977e-9,42144,reference,fixed
+three_prisoners,fisher_reach state_weight 0.03,reached,13,0,35,0,0,0,0,none,none,1.8763977e-9,44128,reference,fixed
+three_prisoners,fisher_reach state_weight 0.1,reached,14,0,39,0,0,0,0,none,none,1.8763977e-9,46352,reference,fixed
+three_prisoners,fisher_reach state_weight 0.3,reached,16,0,44,0,0,0,0,none,none,1.8763977e-9,55008,reference,fixed
+three_prisoners,fisher_reach state_weight 0.9,reached,19,0,49,0,0,0,0,none,none,1.8763977e-9,60000,reference,fixed
+three_prisoners,fisher_log_precision_reach state_weight 0.003,reached,16,0,42,0,0,0,0,none,none,1.8763977e-9,54528,reference,fixed
+three_prisoners,fisher_log_precision_reach state_weight 0.01,reached,16,0,42,0,0,0,0,none,none,1.8763977e-9,54528,reference,fixed
+three_prisoners,fisher_log_precision_reach state_weight 0.03,reached,16,0,41,0,0,0,0,none,none,1.8763977e-9,54288,reference,fixed
+three_prisoners,fisher_log_precision_reach state_weight 0.1,reached,17,0,43,0,0,0,0,none,none,1.8763977e-9,57136,reference,fixed
+three_prisoners,fisher_log_precision_reach state_weight 0.3,reached,18,0,47,0,0,0,0,none,none,1.8763977e-9,58256,reference,fixed
+three_prisoners,fisher_log_precision_reach state_weight 0.9,reached,20,0,50,0,0,0,0,none,none,1.8763977e-9,61504,reference,fixed
+three_prisoners,path shipped,reached,5,0,0,0,0,0,0,none,none,5.574183e-9,8544,reference,fixed
+three_prisoners,path fisher_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,5.574183e-9,9504,reference,fixed
+three_prisoners,path fisher_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,1.8763977e-9,9504,reference,fixed
+three_prisoners,path fisher_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,7.464333e-9,9504,reference,fixed
+three_prisoners,path fisher_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,7.464333e-9,9504,reference,fixed
+three_prisoners,path fisher_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,7.464333e-9,9504,reference,fixed
+three_prisoners,path fisher_reach state_weight 0.9,reached,5,0,0,0,0,0,0,none,none,7.464333e-9,9504,reference,fixed
+three_prisoners,path fisher_log_precision_reach state_weight 0.003,reached,4,0,0,0,0,0,0,none,none,1.8763977e-9,9456,reference,fixed
+three_prisoners,path fisher_log_precision_reach state_weight 0.01,reached,4,0,0,0,0,0,0,none,none,1.8763977e-9,9456,reference,fixed
+three_prisoners,path fisher_log_precision_reach state_weight 0.03,reached,4,0,0,0,0,0,0,none,none,1.8763977e-9,9456,reference,fixed
+three_prisoners,path fisher_log_precision_reach state_weight 0.1,reached,4,0,0,0,0,0,0,none,none,1.8763977e-9,9456,reference,fixed
+three_prisoners,path fisher_log_precision_reach state_weight 0.3,reached,4,0,0,0,0,0,0,none,none,7.464333e-9,9456,reference,fixed
+three_prisoners,path fisher_log_precision_reach state_weight 0.9,reached,5,0,0,0,0,0,0,none,none,5.574183e-9,9504,reference,fixed
+three_prisoners,logitnash,reached,36,0,0,0,0,0,0,none,none,4.5153985e-13,2448,reference,fixed
+overshot 3,shipped,reached,12,0,40,0,0,0,0,none,none,5.2994004e-8,46272,reference,fixed
+overshot 3,fisher_reach state_weight 0.003,reached,15,0,50,0,0,0,0,none,none,1.00497004e-7,52464,reference,fixed
+overshot 3,fisher_reach state_weight 0.01,reached,12,0,40,0,0,0,0,none,none,5.2994004e-8,46272,reference,fixed
+overshot 3,fisher_reach state_weight 0.03,reached,16,0,52,0,0,0,0,none,none,5.3065897e-8,58032,reference,fixed
+overshot 3,fisher_reach state_weight 0.1,reached,13,0,44,0,0,0,0,none,none,6.696939e-8,48496,reference,fixed
+overshot 3,fisher_reach state_weight 0.3,reached,14,0,47,0,0,0,0,none,none,6.614339e-8,50480,reference,fixed
+overshot 3,fisher_reach state_weight 0.9,reached,16,0,48,0,0,0,0,none,none,1.2749982e-7,58176,reference,fixed
+overshot 3,fisher_log_precision_reach state_weight 0.003,reached,15,0,49,0,0,0,0,none,none,1.0811925e-7,52224,reference,fixed
+overshot 3,fisher_log_precision_reach state_weight 0.01,reached,15,0,49,0,0,0,0,none,none,3.8092843e-8,52224,reference,fixed
+overshot 3,fisher_log_precision_reach state_weight 0.03,reached,15,0,48,0,0,0,0,none,none,1.2302041e-7,51984,reference,fixed
+overshot 3,fisher_log_precision_reach state_weight 0.1,reached,15,0,48,0,0,0,0,none,none,6.696939e-8,51984,reference,fixed
+overshot 3,fisher_log_precision_reach state_weight 0.3,reached,16,0,51,0,0,0,0,none,none,3.8092843e-8,58896,reference,fixed
+overshot 3,fisher_log_precision_reach state_weight 0.9,reached,18,0,56,0,0,0,0,none,none,1.6382694e-7,62624,reference,fixed
+overshot 3,path shipped,reached,8,0,0,0,0,0,0,none,none,1.8617868e-7,8688,reference,fixed
+overshot 3,path fisher_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,9.694338e-8,9648,reference,fixed
+overshot 3,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,2.7558565e-7,9648,reference,fixed
+overshot 3,path fisher_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,4.851461e-8,9648,reference,fixed
+overshot 3,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,3.8092843e-8,9600,reference,fixed
+overshot 3,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,1.11672875e-7,9600,reference,fixed
+overshot 3,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,6.610641e-9,9600,reference,fixed
+overshot 3,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,3.8092843e-8,9552,reference,fixed
+overshot 3,path fisher_log_precision_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,2.0125151e-7,9600,reference,fixed
+overshot 3,path fisher_log_precision_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,4.8342937e-8,9600,reference,fixed
+overshot 3,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,1.4815325e-8,9600,reference,fixed
+overshot 3,path fisher_log_precision_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,8.187055e-8,9600,reference,fixed
+overshot 3,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,0.027844189,9600,reference,fixed
+overshot 3,logitnash,reached,32,0,0,0,0,0,0,none,none,1.5111518e-9,2448,reference,fixed
+overshot 3.1,shipped,reached,12,0,40,0,0,0,0,none,none,2.7284669e-8,47472,reference,fixed
+overshot 3.1,fisher_reach state_weight 0.003,reached,15,0,48,0,0,0,0,none,none,1.5121643e-7,53184,reference,fixed
+overshot 3.1,fisher_reach state_weight 0.01,reached,12,0,40,0,0,0,0,none,none,2.7284669e-8,47472,reference,fixed
+overshot 3.1,fisher_reach state_weight 0.03,reached,16,0,54,0,0,0,0,none,none,7.298533e-8,58608,reference,fixed
+overshot 3.1,fisher_reach state_weight 0.1,reached,13,0,45,0,0,0,0,none,none,2.5924984e-7,48736,reference,fixed
+overshot 3.1,fisher_reach state_weight 0.3,reached,18,0,56,0,0,0,0,none,none,2.3062583e-7,62624,reference,fixed
+overshot 3.1,fisher_reach state_weight 0.9,reached,20,0,60,0,0,0,0,none,none,1.3004299e-7,67312,reference,fixed
+overshot 3.1,fisher_log_precision_reach state_weight 0.003,reached,15,0,49,0,0,0,0,none,none,2.6874545e-8,53424,reference,fixed
+overshot 3.1,fisher_log_precision_reach state_weight 0.01,reached,15,0,49,0,0,0,0,none,none,5.7086993e-8,53424,reference,fixed
+overshot 3.1,fisher_log_precision_reach state_weight 0.03,reached,15,0,48,0,0,0,0,none,none,1.3631526e-7,53184,reference,fixed
+overshot 3.1,fisher_log_precision_reach state_weight 0.1,reached,15,0,48,0,0,0,0,none,none,1.0769125e-7,53184,reference,fixed
+overshot 3.1,fisher_log_precision_reach state_weight 0.3,reached,16,0,51,0,0,0,0,none,none,3.27301e-8,60096,reference,fixed
+overshot 3.1,fisher_log_precision_reach state_weight 0.9,reached,18,0,56,0,0,0,0,none,none,1.3749357e-7,62624,reference,fixed
+overshot 3.1,path shipped,reached,9,0,0,0,0,0,0,none,none,1.17004475e-7,8736,reference,fixed
+overshot 3.1,path fisher_reach state_weight 0.003,reached,9,0,0,0,0,0,0,none,none,3.27301e-8,9696,reference,fixed
+overshot 3.1,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,2.3248847e-7,9648,reference,fixed
+overshot 3.1,path fisher_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,3.014449e-8,9696,reference,fixed
+overshot 3.1,path fisher_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,3.6287364e-7,9648,reference,fixed
+overshot 3.1,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,3.27301e-8,9600,reference,fixed
+overshot 3.1,path fisher_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,1.7543081e-7,9648,reference,fixed
+overshot 3.1,path fisher_log_precision_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,2.622908e-7,9600,reference,fixed
+overshot 3.1,path fisher_log_precision_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,6.7397394e-8,9648,reference,fixed
+overshot 3.1,path fisher_log_precision_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,5.2496233e-8,9648,reference,fixed
+overshot 3.1,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,1.9219462e-7,9600,reference,fixed
+overshot 3.1,path fisher_log_precision_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,3.7595072e-8,9600,reference,fixed
+overshot 3.1,path fisher_log_precision_reach state_weight 0.9,reached,12,0,0,0,0,0,0,none,none,0.40683407,9840,reference,fixed
+overshot 3.1,logitnash,reached,32,0,0,0,0,0,0,none,none,1.5111518e-9,2448,reference,fixed
+fold,shipped,reached,64,0,213,2,0,0,0,reach,none,4.5590358e-8,134784,reference,fixed
+fold,fisher_reach state_weight 0.003,reached,97,0,330,5,0,0,0,reach,none,4.5590358e-8,212632,reference,fixed
+fold,fisher_reach state_weight 0.01,reached,64,0,213,2,0,0,0,reach,none,4.5590358e-8,134784,reference,fixed
+fold,fisher_reach state_weight 0.03,reached,53,0,180,0,0,0,0,contraction,none,4.5590358e-8,116864,reference,fixed
+fold,fisher_reach state_weight 0.1,reached,34,0,119,0,0,0,0,contraction,none,4.5590358e-8,83296,reference,fixed
+fold,fisher_reach state_weight 0.3,reached,21,0,70,0,0,0,0,none,none,4.5590358e-8,58160,reference,fixed
+fold,fisher_reach state_weight 0.9,reached,20,0,63,0,0,0,0,none,none,4.5590358e-8,55184,reference,fixed
+fold,fisher_log_precision_reach state_weight 0.003,reached,91,0,303,4,0,0,0,reach,none,4.5590358e-8,200696,reference,fixed
+fold,fisher_log_precision_reach state_weight 0.01,reached,73,0,258,0,0,0,0,contraction,none,4.5590358e-8,173192,reference,fixed
+fold,fisher_log_precision_reach state_weight 0.03,reached,52,0,188,1,0,0,0,contraction,none,4.5590358e-8,115952,reference,fixed
+fold,fisher_log_precision_reach state_weight 0.1,reached,33,0,119,0,0,0,0,none,none,4.5590358e-8,82720,reference,fixed
+fold,fisher_log_precision_reach state_weight 0.3,reached,21,0,67,0,0,0,0,none,none,4.5590358e-8,57824,reference,fixed
+fold,fisher_log_precision_reach state_weight 0.9,reached,20,0,62,0,0,0,0,none,none,4.5590358e-8,55648,reference,fixed
+random 1,shipped,reached,12,0,33,0,0,0,0,none,none,3.2916557e-8,39072,reference,fixed
+random 1,fisher_reach state_weight 0.003,reached,15,0,41,0,0,0,0,none,none,3.2916557e-8,44256,reference,fixed
+random 1,fisher_reach state_weight 0.01,reached,12,0,33,0,0,0,0,none,none,3.2916557e-8,39072,reference,fixed
+random 1,fisher_reach state_weight 0.03,reached,13,0,34,0,0,0,0,none,none,3.2916557e-8,40480,reference,fixed
+random 1,fisher_reach state_weight 0.1,reached,15,0,41,0,0,0,0,none,none,3.2916557e-8,44256,reference,fixed
+random 1,fisher_reach state_weight 0.3,reached,17,0,45,0,0,0,0,none,none,3.2916557e-8,52384,reference,fixed
+random 1,fisher_reach state_weight 0.9,reached,20,0,51,0,0,0,0,none,none,3.2916557e-8,57184,reference,fixed
+random 1,fisher_log_precision_reach state_weight 0.003,reached,15,0,41,0,0,0,0,none,none,3.2916557e-8,44256,reference,fixed
+random 1,fisher_log_precision_reach state_weight 0.01,reached,15,0,41,0,0,0,0,none,none,3.2916557e-8,44256,reference,fixed
+random 1,fisher_log_precision_reach state_weight 0.03,reached,15,0,41,0,0,0,0,none,none,3.2916557e-8,44256,reference,fixed
+random 1,fisher_log_precision_reach state_weight 0.1,reached,16,0,43,0,0,0,0,none,none,3.2916557e-8,50784,reference,fixed
+random 1,fisher_log_precision_reach state_weight 0.3,reached,18,0,48,0,0,0,0,none,none,3.2916557e-8,54176,reference,fixed
+random 1,fisher_log_precision_reach state_weight 0.9,reached,21,0,52,0,0,0,0,none,none,3.2916557e-8,58592,reference,fixed
+random 1,path shipped,reached,7,0,0,0,0,0,0,none,none,3.2916557e-8,7552,reference,fixed
+random 1,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,3.2916557e-8,8320,reference,fixed
+random 1,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,3.2916557e-8,8224,reference,fixed
+random 1,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,3.2916557e-8,8224,reference,fixed
+random 1,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,3.2916557e-8,8224,reference,fixed
+random 1,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,3.2916557e-8,8224,reference,fixed
+random 1,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,3.2916557e-8,8272,reference,fixed
+random 1,logitnash,reached,42,0,0,0,0,0,0,none,none,2.220446e-16,1632,reference,fixed
+random 2,shipped,reached,16,0,46,0,0,0,0,none,none,3.6260657e-9,51168,reference,fixed
+random 2,fisher_reach state_weight 0.003,reached,15,0,46,0,0,0,0,none,none,3.6260657e-9,45024,reference,fixed
+random 2,fisher_reach state_weight 0.01,reached,16,0,46,0,0,0,0,none,none,3.6260657e-9,51168,reference,fixed
+random 2,fisher_reach state_weight 0.03,reached,14,0,42,0,0,0,0,none,none,3.6260657e-9,43040,reference,fixed
+random 2,fisher_reach state_weight 0.1,reached,16,0,47,0,0,0,0,none,none,3.6260657e-9,51360,reference,fixed
+random 2,fisher_reach state_weight 0.3,reached,19,0,54,0,0,0,0,none,none,3.6260657e-9,56352,reference,fixed
+random 2,fisher_reach state_weight 0.9,reached,25,0,69,0,0,0,0,none,none,3.6260657e-9,66528,reference,fixed
+random 2,fisher_log_precision_reach state_weight 0.003,reached,15,0,44,0,0,0,0,none,none,3.6260657e-9,44640,reference,fixed
+random 2,fisher_log_precision_reach state_weight 0.01,reached,15,0,46,0,0,0,0,none,none,3.6260657e-9,45024,reference,fixed
+random 2,fisher_log_precision_reach state_weight 0.03,reached,15,0,44,0,0,0,0,none,none,3.6260657e-9,44640,reference,fixed
+random 2,fisher_log_precision_reach state_weight 0.1,reached,20,0,57,0,0,0,0,none,none,3.6260657e-9,58144,reference,fixed
+random 2,fisher_log_precision_reach state_weight 0.3,reached,18,0,51,0,0,0,0,none,none,3.6260657e-9,54560,reference,fixed
+random 2,fisher_log_precision_reach state_weight 0.9,reached,21,0,60,0,0,0,0,none,none,3.6260657e-9,59936,reference,fixed
+random 2,path shipped,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,7504,reference,fixed
+random 2,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,3.6260657e-9,8224,reference,fixed
+random 2,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,3.6260657e-9,8224,reference,fixed
+random 2,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,3.6260657e-9,8224,reference,fixed
+random 2,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,3.6260657e-9,8224,reference,fixed
+random 2,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,3.6260657e-9,8272,reference,fixed
+random 2,logitnash,reached,46,0,0,0,0,0,0,none,none,0.0,1632,reference,fixed
+random 3,shipped,reached,15,0,45,0,0,0,0,none,none,1.4396825e-8,50160,reference,fixed
+random 3,fisher_reach state_weight 0.003,reached,15,0,46,0,0,0,0,none,none,1.3360611e-7,50400,reference,fixed
+random 3,fisher_reach state_weight 0.01,reached,15,0,45,0,0,0,0,none,none,1.4396825e-8,50160,reference,fixed
+random 3,fisher_reach state_weight 0.03,reached,13,0,42,0,0,0,0,none,none,7.400147e-8,46912,reference,fixed
+random 3,fisher_reach state_weight 0.1,reached,14,0,43,0,0,0,0,none,none,1.4396825e-8,48416,reference,fixed
+random 3,fisher_reach state_weight 0.3,reached,19,0,59,0,0,0,0,none,none,2.3090848e-8,63504,reference,fixed
+random 3,fisher_reach state_weight 0.9,reached,18,0,54,0,0,0,0,none,none,2.3090848e-8,61040,reference,fixed
+random 3,fisher_log_precision_reach state_weight 0.003,reached,15,0,47,0,0,0,0,none,none,2.3090848e-8,50640,reference,fixed
+random 3,fisher_log_precision_reach state_weight 0.01,reached,15,0,47,0,0,0,0,none,none,2.3090848e-8,50640,reference,fixed
+random 3,fisher_log_precision_reach state_weight 0.03,reached,15,0,46,0,0,0,0,none,none,4.520782e-8,50400,reference,fixed
+random 3,fisher_log_precision_reach state_weight 0.1,reached,16,0,51,0,0,0,0,none,none,3.6513796e-8,57792,reference,fixed
+random 3,fisher_log_precision_reach state_weight 0.3,reached,17,0,53,0,0,0,0,none,none,1.4396825e-8,59536,reference,fixed
+random 3,fisher_log_precision_reach state_weight 0.9,reached,19,0,58,0,0,0,0,none,none,4.520782e-8,63264,reference,fixed
+random 3,path shipped,reached,7,0,0,0,0,0,0,none,none,2.3090848e-8,8640,reference,fixed
+random 3,path fisher_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,2.3090848e-8,9600,reference,fixed
+random 3,path fisher_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,4.520782e-8,9600,reference,fixed
+random 3,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,4.520782e-8,9600,reference,fixed
+random 3,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,1.4396825e-8,9600,reference,fixed
+random 3,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,4.520782e-8,9600,reference,fixed
+random 3,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,4.520782e-8,9600,reference,fixed
+random 3,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,4.520782e-8,9552,reference,fixed
+random 3,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,1.4396825e-8,9552,reference,fixed
+random 3,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,4.520782e-8,9552,reference,fixed
+random 3,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,4.520782e-8,9552,reference,fixed
+random 3,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.3090848e-8,9552,reference,fixed
+random 3,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.3090848e-8,9552,reference,fixed
+random 3,logitnash,reached,39,0,0,0,0,0,0,none,none,2.4757973e-14,2448,reference,fixed
+random 4,shipped,reached,16,0,56,0,0,0,0,none,none,6.400172e-8,60640,reference,fixed
+random 4,fisher_reach state_weight 0.003,reached,12,0,42,0,0,0,0,none,none,6.400172e-8,48576,reference,fixed
+random 4,fisher_reach state_weight 0.01,reached,16,0,56,0,0,0,0,none,none,6.400172e-8,60640,reference,fixed
+random 4,fisher_reach state_weight 0.03,reached,17,0,58,0,0,0,0,none,none,6.400172e-8,62384,reference,fixed
+random 4,fisher_reach state_weight 0.1,reached,19,0,62,0,0,0,0,none,none,6.400172e-8,65872,reference,fixed
+random 4,fisher_reach state_weight 0.3,reached,22,0,70,0,0,0,0,none,none,2.329554e-8,71584,reference,fixed
+random 4,fisher_reach state_weight 0.9,reached,26,0,80,0,0,0,0,none,none,6.400172e-8,80320,reference,fixed
+random 4,fisher_log_precision_reach state_weight 0.003,reached,15,0,50,0,0,0,0,none,none,6.400172e-8,54288,reference,fixed
+random 4,fisher_log_precision_reach state_weight 0.01,reached,15,0,50,0,0,0,0,none,none,2.2533307e-8,54288,reference,fixed
+random 4,fisher_log_precision_reach state_weight 0.03,reached,15,0,49,0,0,0,0,none,none,6.400172e-8,54048,reference,fixed
+random 4,fisher_log_precision_reach state_weight 0.1,reached,17,0,56,0,0,0,0,none,none,6.400172e-8,61904,reference,fixed
+random 4,fisher_log_precision_reach state_weight 0.3,reached,19,0,61,0,0,0,0,none,none,2.2533307e-8,65632,reference,fixed
+random 4,fisher_log_precision_reach state_weight 0.9,reached,22,0,68,0,0,0,0,none,none,2.2533307e-8,72384,reference,fixed
+random 4,path shipped,reached,11,0,0,0,0,0,0,none,none,5.5207572e-8,11712,reference,fixed
+random 4,path fisher_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,2.2533307e-8,12912,reference,fixed
+random 4,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,5.5207572e-8,12912,reference,fixed
+random 4,path fisher_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,2.2533307e-8,12912,reference,fixed
+random 4,path fisher_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,2.2533307e-8,12912,reference,fixed
+random 4,path fisher_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,2.2533307e-8,12912,reference,fixed
+random 4,path fisher_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,6.400172e-8,12912,reference,fixed
+random 4,path fisher_log_precision_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,5.5207572e-8,12864,reference,fixed
+random 4,path fisher_log_precision_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,6.400172e-8,12864,reference,fixed
+random 4,path fisher_log_precision_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,2.2533307e-8,12864,reference,fixed
+random 4,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,5.5207572e-8,12864,reference,fixed
+random 4,path fisher_log_precision_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,2.2533307e-8,12864,reference,fixed
+random 4,path fisher_log_precision_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,2.2533307e-8,12912,reference,fixed
+random 4,logitnash,reached,42,0,0,0,0,0,0,none,none,2.8090863e-12,4880,reference,fixed
+random 5,shipped,reached,13,0,45,0,0,0,0,none,none,1.5129054e-7,50560,reference,fixed
+random 5,fisher_reach state_weight 0.003,reached,15,0,53,0,0,0,0,none,none,1.219399e-7,55008,reference,fixed
+random 5,fisher_reach state_weight 0.01,reached,13,0,45,0,0,0,0,none,none,1.5129054e-7,50560,reference,fixed
+random 5,fisher_reach state_weight 0.03,reached,13,0,46,0,0,0,0,none,none,9.2137576e-8,50896,reference,fixed
+random 5,fisher_reach state_weight 0.1,reached,15,0,50,0,0,0,0,none,none,4.1428127e-8,54288,reference,fixed
+random 5,fisher_reach state_weight 0.3,reached,19,0,63,0,0,0,0,none,none,9.2137576e-8,67392,reference,fixed
+random 5,fisher_reach state_weight 0.9,reached,22,0,71,0,0,0,0,none,none,6.233525e-8,73104,reference,fixed
+random 5,fisher_log_precision_reach state_weight 0.003,reached,15,0,52,0,0,0,0,none,none,4.1428127e-8,54960,reference,fixed
+random 5,fisher_log_precision_reach state_weight 0.01,reached,15,0,52,0,0,0,0,none,none,9.168589e-8,54960,reference,fixed
+random 5,fisher_log_precision_reach state_weight 0.03,reached,16,0,52,0,0,0,0,none,none,4.1428127e-8,60960,reference,fixed
+random 5,fisher_log_precision_reach state_weight 0.1,reached,17,0,56,0,0,0,0,none,none,6.233525e-8,61904,reference,fixed
+random 5,fisher_log_precision_reach state_weight 0.3,reached,19,0,62,0,0,0,0,none,none,4.1428127e-8,67152,reference,fixed
+random 5,fisher_log_precision_reach state_weight 0.9,reached,23,0,74,0,0,0,0,none,none,1.5129054e-7,75088,reference,fixed
+random 5,path shipped,reached,10,0,0,0,0,0,0,none,none,1.9644571e-7,11664,reference,fixed
+random 5,path fisher_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,7.17752e-8,12912,reference,fixed
+random 5,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,1.8109286e-7,12912,reference,fixed
+random 5,path fisher_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,8.667636e-8,12912,reference,fixed
+random 5,path fisher_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,1.5129054e-7,12912,reference,fixed
+random 5,path fisher_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,7.7236415e-8,12960,reference,fixed
+random 5,path fisher_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,4.1428127e-8,12912,reference,fixed
+random 5,path fisher_log_precision_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,1.0703874e-7,12864,reference,fixed
+random 5,path fisher_log_precision_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,1.8109286e-7,12864,reference,fixed
+random 5,path fisher_log_precision_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,1.3684107e-7,12864,reference,fixed
+random 5,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,1.3684107e-7,12864,reference,fixed
+random 5,path fisher_log_precision_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,6.188357e-8,12912,reference,fixed
+random 5,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,1.5129054e-7,12864,reference,fixed
+random 5,logitnash,reached,41,0,0,0,0,0,0,none,none,1.4777657e-10,4880,reference,fixed
+random 6,shipped,reached,16,0,57,0,0,0,0,none,none,1.282069e-7,62256,reference,fixed
+random 6,fisher_reach state_weight 0.003,reached,12,0,43,0,0,0,0,none,none,1.282069e-7,48912,reference,fixed
+random 6,fisher_reach state_weight 0.01,reached,16,0,57,0,0,0,0,none,none,1.282069e-7,62256,reference,fixed
+random 6,fisher_reach state_weight 0.03,reached,13,0,46,0,0,0,0,none,none,6.860226e-8,52272,reference,fixed
+random 6,fisher_reach state_weight 0.1,reached,19,0,62,0,0,0,0,none,none,2.474162e-7,67248,reference,fixed
+random 6,fisher_reach state_weight 0.3,reached,19,0,61,0,0,0,0,none,none,1.282069e-7,68288,reference,fixed
+random 6,fisher_reach state_weight 0.9,reached,23,0,74,0,0,0,0,none,none,1.282069e-7,73904,reference,fixed
+random 6,fisher_log_precision_reach state_weight 0.003,reached,18,0,59,0,0,0,0,none,none,1.282069e-7,66544,reference,fixed
+random 6,fisher_log_precision_reach state_weight 0.01,reached,15,0,51,0,0,0,0,none,none,1.282069e-7,56000,reference,fixed
+random 6,fisher_log_precision_reach state_weight 0.03,reached,16,0,54,0,0,0,0,none,none,6.860226e-8,60256,reference,fixed
+random 6,fisher_log_precision_reach state_weight 0.1,reached,17,0,58,0,0,0,0,none,none,6.860226e-8,63760,reference,fixed
+random 6,fisher_log_precision_reach state_weight 0.3,reached,19,0,60,0,0,0,0,none,none,1.282069e-7,68048,reference,fixed
+random 6,fisher_log_precision_reach state_weight 0.9,reached,23,0,71,0,0,0,0,none,none,6.860226e-8,75744,reference,fixed
+random 6,path shipped,reached,8,0,0,0,0,0,0,none,none,6.860226e-8,11568,reference,fixed
+random 6,path fisher_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,6.860226e-8,12864,reference,fixed
+random 6,path fisher_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,5.0607024e-8,12864,reference,fixed
+random 6,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,6.860226e-8,12864,reference,fixed
+random 6,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,5.0607024e-8,12864,reference,fixed
+random 6,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,6.860226e-8,12864,reference,fixed
+random 6,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,1.1021167e-7,12864,reference,fixed
+random 6,path fisher_log_precision_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,1.282069e-7,12864,reference,fixed
+random 6,path fisher_log_precision_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,5.0607024e-8,12864,reference,fixed
+random 6,path fisher_log_precision_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,5.0607024e-8,12864,reference,fixed
+random 6,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,5.0607024e-8,12816,reference,fixed
+random 6,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,6.860226e-8,12816,reference,fixed
+random 6,path fisher_log_precision_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,5.0607024e-8,12912,reference,fixed
+random 6,logitnash,reached,43,0,0,0,0,0,0,none,none,6.570411e-12,4880,reference,fixed
+random 7,shipped,reached,13,0,39,0,0,0,0,none,none,4.9714316e-8,41248,reference,fixed
+random 7,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,4.9714316e-8,44256,reference,fixed
+random 7,fisher_reach state_weight 0.01,reached,13,0,39,0,0,0,0,none,none,4.9714316e-8,41248,reference,fixed
+random 7,fisher_reach state_weight 0.03,reached,17,0,46,0,0,0,0,none,none,4.9714316e-8,52384,reference,fixed
+random 7,fisher_reach state_weight 0.1,reached,15,0,42,0,0,0,0,none,none,4.9714316e-8,44256,reference,fixed
+random 7,fisher_reach state_weight 0.3,reached,17,0,46,0,0,0,0,none,none,4.9714316e-8,52384,reference,fixed
+random 7,fisher_reach state_weight 0.9,reached,21,0,56,0,0,0,0,none,none,4.9714316e-8,59168,reference,fixed
+random 7,fisher_log_precision_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,4.9714316e-8,44256,reference,fixed
+random 7,fisher_log_precision_reach state_weight 0.01,reached,15,0,42,0,0,0,0,none,none,4.9714316e-8,44256,reference,fixed
+random 7,fisher_log_precision_reach state_weight 0.03,reached,19,0,54,0,0,0,0,none,none,4.9714316e-8,56352,reference,fixed
+random 7,fisher_log_precision_reach state_weight 0.1,reached,16,0,44,0,0,0,0,none,none,4.9714316e-8,50784,reference,fixed
+random 7,fisher_log_precision_reach state_weight 0.3,reached,18,0,49,0,0,0,0,none,none,4.9714316e-8,54176,reference,fixed
+random 7,fisher_log_precision_reach state_weight 0.9,reached,21,0,56,0,0,0,0,none,none,4.9714316e-8,59168,reference,fixed
+random 7,path shipped,reached,7,0,0,0,0,0,0,none,none,4.9714316e-8,7552,reference,fixed
+random 7,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,4.9714316e-8,8224,reference,fixed
+random 7,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,4.9714316e-8,8224,reference,fixed
+random 7,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,4.9714316e-8,8224,reference,fixed
+random 7,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,4.9714316e-8,8224,reference,fixed
+random 7,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,4.9714316e-8,8272,reference,fixed
+random 7,logitnash,reached,43,0,0,0,0,0,0,none,none,1.3685342e-16,1632,reference,fixed
+random 8,shipped,reached,15,0,46,0,0,0,0,none,none,2.7011327e-8,50400,reference,fixed
+random 8,fisher_reach state_weight 0.003,reached,12,0,37,0,0,0,0,none,none,3.259332e-8,44448,reference,fixed
+random 8,fisher_reach state_weight 0.01,reached,15,0,46,0,0,0,0,none,none,2.7011327e-8,50400,reference,fixed
+random 8,fisher_reach state_weight 0.03,reached,13,0,39,0,0,0,0,none,none,3.259332e-8,46192,reference,fixed
+random 8,fisher_reach state_weight 0.1,reached,16,0,49,0,0,0,0,none,none,5.956105e-8,56208,reference,fixed
+random 8,fisher_reach state_weight 0.3,reached,13,0,43,0,0,0,0,none,none,3.2219017e-8,47152,reference,fixed
+random 8,fisher_reach state_weight 0.9,reached,17,0,55,0,0,0,0,none,none,2.7011327e-8,60016,reference,fixed
+random 8,fisher_log_precision_reach state_weight 0.003,reached,15,0,48,0,0,0,0,none,none,2.7011327e-8,50880,reference,fixed
+random 8,fisher_log_precision_reach state_weight 0.01,reached,15,0,48,0,0,0,0,none,none,3.259332e-8,50880,reference,fixed
+random 8,fisher_log_precision_reach state_weight 0.03,reached,15,0,48,0,0,0,0,none,none,2.7011327e-8,50880,reference,fixed
+random 8,fisher_log_precision_reach state_weight 0.1,reached,15,0,48,0,0,0,0,none,none,3.259332e-8,50880,reference,fixed
+random 8,fisher_log_precision_reach state_weight 0.3,reached,15,0,48,0,0,0,0,none,none,5.9648244e-8,50880,reference,fixed
+random 8,fisher_log_precision_reach state_weight 0.9,reached,16,0,51,0,0,0,0,none,none,2.7011327e-8,57792,reference,fixed
+random 8,path shipped,reached,8,0,0,0,0,0,0,none,none,3.259332e-8,8688,reference,fixed
+random 8,path fisher_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,2.7011327e-8,9600,reference,fixed
+random 8,path fisher_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,3.259332e-8,9600,reference,fixed
+random 8,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,3.259332e-8,9600,reference,fixed
+random 8,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,5.718795e-8,9600,reference,fixed
+random 8,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,3.259332e-8,9552,reference,fixed
+random 8,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,9.2197965e-8,9600,reference,fixed
+random 8,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,3.259332e-8,9552,reference,fixed
+random 8,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,3.259332e-8,9552,reference,fixed
+random 8,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,3.259332e-8,9552,reference,fixed
+random 8,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,3.259332e-8,9552,reference,fixed
+random 8,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,3.2219017e-8,9552,reference,fixed
+random 8,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,3.259332e-8,9552,reference,fixed
+random 8,logitnash,reached,27,0,0,0,0,0,0,none,none,6.5924044e-11,2448,reference,fixed
+random 9,shipped,reached,13,0,42,0,0,0,0,none,none,4.3575664e-8,45808,reference,fixed
+random 9,fisher_reach state_weight 0.003,reached,15,0,48,0,0,0,0,none,none,4.3575664e-8,50880,reference,fixed
+random 9,fisher_reach state_weight 0.01,reached,13,0,42,0,0,0,0,none,none,4.3575664e-8,45808,reference,fixed
+random 9,fisher_reach state_weight 0.03,reached,17,0,57,0,0,0,0,none,none,4.3575664e-8,60496,reference,fixed
+random 9,fisher_reach state_weight 0.1,reached,16,0,52,0,0,0,0,none,none,4.3575664e-8,58032,reference,fixed
+random 9,fisher_reach state_weight 0.3,reached,19,0,55,0,0,0,0,none,none,4.3575664e-8,62544,reference,fixed
+random 9,fisher_reach state_weight 0.9,reached,22,0,63,0,0,0,0,none,none,4.3575664e-8,68256,reference,fixed
+random 9,fisher_log_precision_reach state_weight 0.003,reached,16,0,52,0,0,0,0,none,none,4.3575664e-8,58032,reference,fixed
+random 9,fisher_log_precision_reach state_weight 0.01,reached,15,0,49,0,0,0,0,none,none,4.3575664e-8,51120,reference,fixed
+random 9,fisher_log_precision_reach state_weight 0.03,reached,16,0,53,0,0,0,0,none,none,4.3575664e-8,57168,reference,fixed
+random 9,fisher_log_precision_reach state_weight 0.1,reached,17,0,56,0,0,0,0,none,none,4.3575664e-8,60256,reference,fixed
+random 9,fisher_log_precision_reach state_weight 0.3,reached,19,0,60,0,0,0,0,none,none,4.3575664e-8,63744,reference,fixed
+random 9,fisher_log_precision_reach state_weight 0.9,reached,22,0,64,0,0,0,0,none,none,4.3575664e-8,68496,reference,fixed
+random 9,path shipped,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,8640,reference,fixed
+random 9,path fisher_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,9600,reference,fixed
+random 9,path fisher_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,9600,reference,fixed
+random 9,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,9600,reference,fixed
+random 9,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,9600,reference,fixed
+random 9,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,9600,reference,fixed
+random 9,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,4.3575664e-8,9600,reference,fixed
+random 9,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,4.3575664e-8,9552,reference,fixed
+random 9,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,4.3575664e-8,9552,reference,fixed
+random 9,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,4.3575664e-8,9552,reference,fixed
+random 9,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,4.3575664e-8,9552,reference,fixed
+random 9,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,4.3575664e-8,9552,reference,fixed
+random 9,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,4.3575664e-8,9552,reference,fixed
+random 9,logitnash,reached,45,0,0,0,0,0,0,none,none,2.220446e-16,2448,reference,fixed
+random 10,shipped,reached,15,0,42,0,0,0,0,none,none,1.9457064e-8,49440,reference,fixed
+random 10,fisher_reach state_weight 0.003,reached,12,0,38,0,0,0,0,none,none,1.9457064e-8,44688,reference,fixed
+random 10,fisher_reach state_weight 0.01,reached,15,0,42,0,0,0,0,none,none,1.9457064e-8,49440,reference,fixed
+random 10,fisher_reach state_weight 0.03,reached,12,0,38,0,0,0,0,none,none,6.439879e-8,44688,reference,fixed
+random 10,fisher_reach state_weight 0.1,reached,12,0,39,0,0,0,0,none,none,7.114139e-8,44928,reference,fixed
+random 10,fisher_reach state_weight 0.3,reached,13,0,42,0,0,0,0,none,none,4.8067893e-8,46912,reference,fixed
+random 10,fisher_reach state_weight 0.9,reached,14,0,47,0,0,0,0,none,none,7.114139e-8,49376,reference,fixed
+random 10,fisher_log_precision_reach state_weight 0.003,reached,15,0,47,0,0,0,0,none,none,1.9457064e-8,50640,reference,fixed
+random 10,fisher_log_precision_reach state_weight 0.01,reached,15,0,47,0,0,0,0,none,none,7.114139e-8,50640,reference,fixed
+random 10,fisher_log_precision_reach state_weight 0.03,reached,15,0,47,0,0,0,0,none,none,4.0147583e-8,50640,reference,fixed
+random 10,fisher_log_precision_reach state_weight 0.1,reached,15,0,47,0,0,0,0,none,none,4.0147583e-8,50640,reference,fixed
+random 10,fisher_log_precision_reach state_weight 0.3,reached,15,0,46,0,0,0,0,none,none,7.114139e-8,50400,reference,fixed
+random 10,fisher_log_precision_reach state_weight 0.9,reached,19,0,58,0,0,0,0,none,none,1.9457064e-8,64368,reference,fixed
+random 10,path shipped,reached,7,0,0,0,0,0,0,none,none,7.114139e-8,8640,reference,fixed
+random 10,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,4.0147583e-8,9552,reference,fixed
+random 10,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,7.114139e-8,9552,reference,fixed
+random 10,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,7.114139e-8,9552,reference,fixed
+random 10,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,1.9457064e-8,9552,reference,fixed
+random 10,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,4.0147583e-8,9552,reference,fixed
+random 10,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,1.9457064e-8,9600,reference,fixed
+random 10,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,7.114139e-8,9552,reference,fixed
+random 10,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,4.0147583e-8,9552,reference,fixed
+random 10,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,7.114139e-8,9552,reference,fixed
+random 10,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,1.9457064e-8,9552,reference,fixed
+random 10,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,7.114139e-8,9552,reference,fixed
+random 10,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,7.114139e-8,9552,reference,fixed
+random 10,logitnash,reached,27,0,0,0,0,0,0,none,none,7.3930184e-10,2448,reference,fixed
+random 11,shipped,reached,16,0,51,0,0,0,0,none,none,1.836909e-9,58400,reference,fixed
+random 11,fisher_reach state_weight 0.003,reached,15,0,48,0,0,0,0,none,none,1.836909e-9,51488,reference,fixed
+random 11,fisher_reach state_weight 0.01,reached,16,0,51,0,0,0,0,none,none,1.836909e-9,58400,reference,fixed
+random 11,fisher_reach state_weight 0.03,reached,14,0,45,0,0,0,0,none,none,1.836909e-9,49504,reference,fixed
+random 11,fisher_reach state_weight 0.1,reached,24,0,72,0,0,0,0,none,none,1.836909e-9,73552,reference,fixed
+random 11,fisher_reach state_weight 0.3,reached,23,0,68,0,0,0,0,none,none,1.836909e-9,71328,reference,fixed
+random 11,fisher_reach state_weight 0.9,reached,27,0,79,0,0,0,0,none,none,1.836909e-9,79024,reference,fixed
+random 11,fisher_log_precision_reach state_weight 0.003,reached,15,0,47,0,0,0,0,none,none,1.836909e-9,51248,reference,fixed
+random 11,fisher_log_precision_reach state_weight 0.01,reached,15,0,47,0,0,0,0,none,none,1.836909e-9,51248,reference,fixed
+random 11,fisher_log_precision_reach state_weight 0.03,reached,16,0,51,0,0,0,0,none,none,1.836909e-9,58400,reference,fixed
+random 11,fisher_log_precision_reach state_weight 0.1,reached,17,0,54,0,0,0,0,none,none,1.836909e-9,60384,reference,fixed
+random 11,fisher_log_precision_reach state_weight 0.3,reached,23,0,69,0,0,0,0,none,none,1.836909e-9,71568,reference,fixed
+random 11,fisher_log_precision_reach state_weight 0.9,reached,23,0,67,0,0,0,0,none,none,1.836909e-9,71088,reference,fixed
+random 11,path shipped,reached,9,0,0,0,0,0,0,none,none,9.570588e-10,10096,reference,fixed
+random 11,path fisher_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,path fisher_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,9.570588e-10,11200,reference,fixed
+random 11,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,9.570588e-10,11200,reference,fixed
+random 11,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,9.570588e-10,11200,reference,fixed
+random 11,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,9.570588e-10,11200,reference,fixed
+random 11,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,9.570588e-10,11200,reference,fixed
+random 11,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,9.570588e-10,11248,reference,fixed
+random 11,logitnash,reached,46,0,0,0,0,0,0,none,none,3.1797481e-15,3568,reference,fixed
+random 12,shipped,reached,20,0,66,0,0,0,0,none,none,3.9330452e-8,65856,reference,fixed
+random 12,fisher_reach state_weight 0.003,reached,23,0,77,0,0,0,0,none,none,3.9330452e-8,73040,reference,fixed
+random 12,fisher_reach state_weight 0.01,reached,20,0,66,0,0,0,0,none,none,3.9330452e-8,65856,reference,fixed
+random 12,fisher_reach state_weight 0.03,reached,21,0,69,0,0,0,0,none,none,3.9330452e-8,67184,reference,fixed
+random 12,fisher_reach state_weight 0.1,reached,21,0,67,0,0,0,0,none,none,3.9330452e-8,65696,reference,fixed
+random 12,fisher_reach state_weight 0.3,reached,20,0,64,0,0,0,0,none,none,3.9330452e-8,64624,reference,fixed
+random 12,fisher_reach state_weight 0.9,reached,24,0,77,0,0,0,0,none,none,3.9330452e-8,72800,reference,fixed
+random 12,fisher_log_precision_reach state_weight 0.003,reached,32,0,111,1,0,0,0,reach,none,3.9330452e-8,92960,reference,fixed
+random 12,fisher_log_precision_reach state_weight 0.01,reached,20,0,66,0,0,0,0,none,none,3.9330452e-8,65856,reference,fixed
+random 12,fisher_log_precision_reach state_weight 0.03,reached,21,0,70,0,0,0,0,none,none,3.9330452e-8,67984,reference,fixed
+random 12,fisher_log_precision_reach state_weight 0.1,reached,18,0,60,0,0,0,0,none,none,3.9330452e-8,61232,reference,fixed
+random 12,fisher_log_precision_reach state_weight 0.3,reached,21,0,68,0,0,0,0,none,none,3.9330452e-8,66848,reference,fixed
+random 12,fisher_log_precision_reach state_weight 0.9,reached,24,0,75,0,0,0,0,none,none,3.9330452e-8,72320,reference,fixed
+random 12,path shipped,reached,9,0,0,0,0,0,0,none,none,3.9330452e-8,8736,reference,fixed
+random 12,path fisher_reach state_weight 0.003,reached,12,0,0,0,0,0,0,none,none,3.9330452e-8,9840,reference,fixed
+random 12,path fisher_reach state_weight 0.01,reached,12,0,0,0,0,0,0,none,none,3.9330452e-8,9840,reference,fixed
+random 12,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,3.9330452e-8,9600,reference,fixed
+random 12,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,3.9330452e-8,9600,reference,fixed
+random 12,path fisher_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,3.9330452e-8,9696,reference,fixed
+random 12,path fisher_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,3.9330452e-8,9744,reference,fixed
+random 12,path fisher_log_precision_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,3.9330452e-8,9744,reference,fixed
+random 12,path fisher_log_precision_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,3.9330452e-8,9696,reference,fixed
+random 12,path fisher_log_precision_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,3.9330452e-8,9696,reference,fixed
+random 12,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,3.9330452e-8,9600,reference,fixed
+random 12,path fisher_log_precision_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,3.9330452e-8,9744,reference,fixed
+random 12,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,3.9330452e-8,9744,reference,fixed
+random 12,logitnash,reached,47,0,0,0,0,0,0,none,none,3.816413e-18,2448,reference,fixed
+random 13,shipped,reached,15,0,42,0,0,0,0,none,none,5.448759e-8,45360,reference,fixed
+random 13,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,7.058253e-8,45360,reference,fixed
+random 13,fisher_reach state_weight 0.01,reached,15,0,42,0,0,0,0,none,none,5.448759e-8,45360,reference,fixed
+random 13,fisher_reach state_weight 0.03,reached,15,0,42,0,0,0,0,none,none,1.0977886e-8,45360,reference,fixed
+random 13,fisher_reach state_weight 0.1,reached,15,0,42,0,0,0,0,none,none,1.8824435e-8,45360,reference,fixed
+random 13,fisher_reach state_weight 0.3,reached,12,0,33,0,0,0,0,none,none,7.058253e-8,39984,reference,fixed
+random 13,fisher_reach state_weight 0.9,reached,12,0,33,0,0,0,0,none,none,1.8824435e-8,39984,reference,fixed
+random 13,fisher_log_precision_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,1.8824435e-8,45360,reference,fixed
+random 13,fisher_log_precision_reach state_weight 0.01,reached,15,0,42,0,0,0,0,none,none,7.058253e-8,45360,reference,fixed
+random 13,fisher_log_precision_reach state_weight 0.03,reached,15,0,42,0,0,0,0,none,none,1.8824435e-8,45360,reference,fixed
+random 13,fisher_log_precision_reach state_weight 0.1,reached,15,0,42,0,0,0,0,none,none,1.8824435e-8,45360,reference,fixed
+random 13,fisher_log_precision_reach state_weight 0.3,reached,15,0,42,0,0,0,0,none,none,7.058253e-8,45360,reference,fixed
+random 13,fisher_log_precision_reach state_weight 0.9,reached,15,0,42,0,0,0,0,none,none,5.448759e-8,45360,reference,fixed
+random 13,path shipped,reached,6,0,0,0,0,0,0,none,none,2.4685267e-8,7504,reference,fixed
+random 13,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,4.0780208e-8,8272,reference,fixed
+random 13,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,2.4685267e-8,8272,reference,fixed
+random 13,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,2.4685267e-8,8272,reference,fixed
+random 13,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,2.4685267e-8,8272,reference,fixed
+random 13,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.4685267e-8,8272,reference,fixed
+random 13,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.4685267e-8,8272,reference,fixed
+random 13,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,2.4685267e-8,8224,reference,fixed
+random 13,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,2.4685267e-8,8224,reference,fixed
+random 13,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,2.4685267e-8,8224,reference,fixed
+random 13,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,2.4685267e-8,8224,reference,fixed
+random 13,path fisher_log_precision_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,2.4685267e-8,8224,reference,fixed
+random 13,path fisher_log_precision_reach state_weight 0.9,reached,5,0,0,0,0,0,0,none,none,2.4685267e-8,8224,reference,fixed
+random 13,logitnash,reached,25,0,0,0,0,0,0,none,none,4.867554e-8,1632,reference,fixed
+random 14,shipped,reached,25,0,87,0,0,0,0,none,none,4.4353182e-8,80928,reference,fixed
+random 14,fisher_reach state_weight 0.003,reached,42,0,141,2,0,0,0,reach,none,4.4353182e-8,116832,reference,fixed
+random 14,fisher_reach state_weight 0.01,reached,25,0,87,0,0,0,0,none,none,4.4353182e-8,80928,reference,fixed
+random 14,fisher_reach state_weight 0.03,reached,36,0,115,1,0,0,0,reach,none,1.4550859e-8,101872,reference,fixed
+random 14,fisher_reach state_weight 0.1,reached,34,0,120,0,0,0,0,none,none,4.4353182e-8,101104,reference,fixed
+random 14,fisher_reach state_weight 0.3,reached,31,0,101,1,0,0,0,reach,none,3.082377e-8,91232,reference,fixed
+random 14,fisher_reach state_weight 0.9,reached,35,0,109,0,0,0,0,none,none,2.8780875e-8,98128,reference,fixed
+random 14,fisher_log_precision_reach state_weight 0.003,reached,43,0,146,3,0,0,0,reach,none,7.41555e-8,119088,reference,fixed
+random 14,fisher_log_precision_reach state_weight 0.01,reached,38,0,129,2,0,0,0,reach,none,2.8780875e-8,106896,reference,fixed
+random 14,fisher_log_precision_reach state_weight 0.03,reached,34,0,116,2,0,0,0,reach,none,1.4550859e-8,99344,reference,fixed
+random 14,fisher_log_precision_reach state_weight 0.1,reached,29,0,99,0,0,0,0,none,none,5.9254344e-8,88672,reference,fixed
+random 14,fisher_log_precision_reach state_weight 0.3,reached,32,0,106,0,0,0,0,none,none,2.8780875e-8,95712,reference,fixed
+random 14,fisher_log_precision_reach state_weight 0.9,reached,30,0,96,0,0,0,0,none,none,2.8780875e-8,89936,reference,fixed
+random 14,path shipped,reached,12,0,0,0,0,0,0,none,none,5.8583197e-8,11760,reference,fixed
+random 14,path fisher_reach state_weight 0.003,reached,19,0,0,0,0,0,0,none,none,3.082377e-8,13440,reference,fixed
+random 14,path fisher_reach state_weight 0.01,reached,16,0,0,0,0,0,0,none,none,4.5053785e-8,13296,reference,fixed
+random 14,path fisher_reach state_weight 0.03,reached,14,0,0,0,0,0,0,none,none,1.5251464e-8,13200,reference,fixed
+random 14,path fisher_reach state_weight 0.1,reached,14,0,0,0,0,0,0,none,none,4.5053785e-8,13200,reference,fixed
+random 14,path fisher_reach state_weight 0.3,reached,13,0,0,0,0,0,0,none,none,4.5053785e-8,13152,reference,fixed
+random 14,path fisher_reach state_weight 0.9,reached,12,0,0,0,0,0,0,none,none,5.8583197e-8,13104,reference,fixed
+random 14,path fisher_log_precision_reach state_weight 0.003,reached,15,0,0,0,0,0,0,none,none,2.8780875e-8,13248,reference,fixed
+random 14,path fisher_log_precision_reach state_weight 0.01,reached,14,0,0,0,0,0,0,none,none,5.8583197e-8,13200,reference,fixed
+random 14,path fisher_log_precision_reach state_weight 0.03,reached,14,0,0,0,0,0,0,none,none,1.4550859e-8,13200,reference,fixed
+random 14,path fisher_log_precision_reach state_weight 0.1,reached,11,0,0,0,0,0,0,none,none,4.5053785e-8,13056,reference,fixed
+random 14,path fisher_log_precision_reach state_weight 0.3,reached,12,0,0,0,0,0,0,none,none,4.5053785e-8,13104,reference,fixed
+random 14,path fisher_log_precision_reach state_weight 0.9,reached,13,0,0,0,0,0,0,none,none,4.5053785e-8,13152,reference,fixed
+random 14,logitnash,reached,54,0,0,0,0,0,0,none,none,1.6886213e-8,4880,reference,fixed
+random 15,shipped,reached,13,0,41,0,0,0,0,none,none,3.3258477e-8,46672,reference,fixed
+random 15,fisher_reach state_weight 0.003,reached,15,0,43,0,0,0,0,none,none,3.3258477e-8,49680,reference,fixed
+random 15,fisher_reach state_weight 0.01,reached,13,0,41,0,0,0,0,none,none,3.3258477e-8,46672,reference,fixed
+random 15,fisher_reach state_weight 0.03,reached,13,0,40,0,0,0,0,none,none,3.3258477e-8,46432,reference,fixed
+random 15,fisher_reach state_weight 0.1,reached,15,0,44,0,0,0,0,none,none,3.3258477e-8,49920,reference,fixed
+random 15,fisher_reach state_weight 0.3,reached,18,0,54,0,0,0,0,none,none,3.3258477e-8,61040,reference,fixed
+random 15,fisher_reach state_weight 0.9,reached,21,0,60,0,0,0,0,none,none,3.3258477e-8,66272,reference,fixed
+random 15,fisher_log_precision_reach state_weight 0.003,reached,15,0,45,0,0,0,0,none,none,3.3258477e-8,50160,reference,fixed
+random 15,fisher_log_precision_reach state_weight 0.01,reached,16,0,47,0,0,0,0,none,none,3.3258477e-8,56832,reference,fixed
+random 15,fisher_log_precision_reach state_weight 0.03,reached,19,0,54,0,0,0,0,none,none,3.3258477e-8,62304,reference,fixed
+random 15,fisher_log_precision_reach state_weight 0.1,reached,20,0,59,0,0,0,0,none,none,3.3258477e-8,64768,reference,fixed
+random 15,fisher_log_precision_reach state_weight 0.3,reached,19,0,56,0,0,0,0,none,none,3.3258477e-8,62784,reference,fixed
+random 15,fisher_log_precision_reach state_weight 0.9,reached,22,0,62,0,0,0,0,none,none,3.3258477e-8,68016,reference,fixed
+random 15,path shipped,reached,8,0,0,0,0,0,0,none,none,2.9533188e-8,8688,reference,fixed
+random 15,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,2.9533188e-8,9504,reference,fixed
+random 15,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,2.9533188e-8,9504,reference,fixed
+random 15,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,2.9533188e-8,9504,reference,fixed
+random 15,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,2.9533188e-8,9504,reference,fixed
+random 15,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.9533188e-8,9552,reference,fixed
+random 15,logitnash,reached,45,0,0,0,0,0,0,none,none,4.649059e-16,2448,reference,fixed
+random 16,shipped,reached,12,0,40,0,0,0,0,none,none,1.3069885e-7,46944,reference,fixed
+random 16,fisher_reach state_weight 0.003,reached,12,0,40,0,0,0,0,none,none,7.335883e-8,45776,reference,fixed
+random 16,fisher_reach state_weight 0.01,reached,12,0,40,0,0,0,0,none,none,1.3069885e-7,46944,reference,fixed
+random 16,fisher_reach state_weight 0.03,reached,16,0,50,0,0,0,0,none,none,7.335883e-8,58160,reference,fixed
+random 16,fisher_reach state_weight 0.1,reached,18,0,57,0,0,0,0,none,none,1.3069885e-7,62368,reference,fixed
+random 16,fisher_reach state_weight 0.3,reached,16,0,50,0,0,0,0,none,none,1.903035e-7,59328,reference,fixed
+random 16,fisher_reach state_weight 0.9,reached,20,0,61,0,0,0,0,none,none,7.335883e-8,65856,reference,fixed
+random 16,fisher_log_precision_reach state_weight 0.003,reached,15,0,48,0,0,0,0,none,none,7.335883e-8,51488,reference,fixed
+random 16,fisher_log_precision_reach state_weight 0.01,reached,15,0,47,0,0,0,0,none,none,7.10942e-8,51248,reference,fixed
+random 16,fisher_log_precision_reach state_weight 0.03,reached,15,0,48,0,0,0,0,none,none,7.335883e-8,52656,reference,fixed
+random 16,fisher_log_precision_reach state_weight 0.1,reached,16,0,50,0,0,0,0,none,none,2.4990814e-7,58160,reference,fixed
+random 16,fisher_log_precision_reach state_weight 0.3,reached,18,0,56,0,0,0,0,none,none,1.903035e-7,62128,reference,fixed
+random 16,fisher_log_precision_reach state_weight 0.9,reached,20,0,60,0,0,0,0,none,none,1.903035e-7,66784,reference,fixed
+random 16,path shipped,reached,7,0,0,0,0,0,0,none,none,1.07719735e-7,10000,reference,fixed
+random 16,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,7.335883e-8,11200,reference,fixed
+random 16,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,7.10942e-8,11200,reference,fixed
+random 16,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,7.335883e-8,11248,reference,fixed
+random 16,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,7.335883e-8,11248,reference,fixed
+random 16,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,7.335883e-8,11248,reference,fixed
+random 16,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,1.07719735e-7,11248,reference,fixed
+random 16,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,7.335883e-8,11200,reference,fixed
+random 16,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,7.10942e-8,11200,reference,fixed
+random 16,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,7.335883e-8,11200,reference,fixed
+random 16,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,1.3296348e-7,11200,reference,fixed
+random 16,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,7.10942e-8,11200,reference,fixed
+random 16,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,7.10942e-8,11248,reference,fixed
+random 16,logitnash,reached,39,0,0,0,0,0,0,none,none,1.6653345e-15,3568,reference,fixed
+random 17,shipped,reached,12,0,42,0,0,0,0,none,none,8.1046245e-8,48576,reference,fixed
+random 17,fisher_reach state_weight 0.003,reached,15,0,52,0,0,0,0,none,none,8.1046245e-8,54768,reference,fixed
+random 17,fisher_reach state_weight 0.01,reached,12,0,42,0,0,0,0,none,none,8.1046245e-8,48576,reference,fixed
+random 17,fisher_reach state_weight 0.03,reached,13,0,45,0,0,0,0,none,none,1.381159e-7,49280,reference,fixed
+random 17,fisher_reach state_weight 0.1,reached,14,0,47,0,0,0,0,none,none,8.1046245e-8,52304,reference,fixed
+random 17,fisher_reach state_weight 0.3,reached,16,0,53,0,0,0,0,none,none,8.1046245e-8,61200,reference,fixed
+random 17,fisher_reach state_weight 0.9,reached,20,0,64,0,0,0,0,none,none,8.1046245e-8,67616,reference,fixed
+random 17,fisher_log_precision_reach state_weight 0.003,reached,15,0,50,0,0,0,0,none,none,9.355993e-8,53008,reference,fixed
+random 17,fisher_log_precision_reach state_weight 0.01,reached,15,0,50,0,0,0,0,none,none,8.1046245e-8,54288,reference,fixed
+random 17,fisher_log_precision_reach state_weight 0.03,reached,15,0,50,0,0,0,0,none,none,8.1046245e-8,54288,reference,fixed
+random 17,fisher_log_precision_reach state_weight 0.1,reached,16,0,53,0,0,0,0,none,none,8.1046245e-8,61200,reference,fixed
+random 17,fisher_log_precision_reach state_weight 0.3,reached,17,0,54,0,0,0,0,none,none,9.355993e-8,62704,reference,fixed
+random 17,fisher_log_precision_reach state_weight 0.9,reached,20,0,62,0,0,0,0,none,none,8.1046245e-8,68416,reference,fixed
+random 17,path shipped,reached,10,0,0,0,0,0,0,none,none,8.1046245e-8,11664,reference,fixed
+random 17,path fisher_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,9.355993e-8,12912,reference,fixed
+random 17,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,9.355993e-8,12912,reference,fixed
+random 17,path fisher_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,9.355993e-8,12912,reference,fixed
+random 17,path fisher_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,8.1046245e-8,12912,reference,fixed
+random 17,path fisher_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,8.1046245e-8,12912,reference,fixed
+random 17,path fisher_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,8.1046245e-8,12912,reference,fixed
+random 17,path fisher_log_precision_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,8.1046245e-8,12864,reference,fixed
+random 17,path fisher_log_precision_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,8.1046245e-8,12864,reference,fixed
+random 17,path fisher_log_precision_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,8.1046245e-8,12864,reference,fixed
+random 17,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,8.1046245e-8,12864,reference,fixed
+random 17,path fisher_log_precision_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,8.1046245e-8,12912,reference,fixed
+random 17,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,8.1046245e-8,12864,reference,fixed
+random 17,logitnash,reached,39,0,0,0,0,0,0,none,none,9.1315844e-14,4880,reference,fixed
+random 18,shipped,reached,13,0,35,0,0,0,0,none,none,7.665279e-9,39712,reference,fixed
+random 18,fisher_reach state_weight 0.003,reached,12,0,33,0,0,0,0,none,none,7.665279e-9,38112,reference,fixed
+random 18,fisher_reach state_weight 0.01,reached,13,0,35,0,0,0,0,none,none,7.665279e-9,39712,reference,fixed
+random 18,fisher_reach state_weight 0.03,reached,13,0,33,0,0,0,0,none,none,7.665279e-9,40288,reference,fixed
+random 18,fisher_reach state_weight 0.1,reached,15,0,41,0,0,0,0,none,none,7.665279e-9,44256,reference,fixed
+random 18,fisher_reach state_weight 0.3,reached,18,0,50,0,0,0,0,none,none,7.665279e-9,53600,reference,fixed
+random 18,fisher_reach state_weight 0.9,reached,21,0,57,0,0,0,0,none,none,7.665279e-9,59552,reference,fixed
+random 18,fisher_log_precision_reach state_weight 0.003,reached,19,0,52,0,0,0,0,none,none,7.665279e-9,56160,reference,fixed
+random 18,fisher_log_precision_reach state_weight 0.01,reached,16,0,46,0,0,0,0,none,none,7.665279e-9,50400,reference,fixed
+random 18,fisher_log_precision_reach state_weight 0.03,reached,19,0,52,0,0,0,0,none,none,7.665279e-9,55200,reference,fixed
+random 18,fisher_log_precision_reach state_weight 0.1,reached,17,0,47,0,0,0,0,none,none,7.665279e-9,51808,reference,fixed
+random 18,fisher_log_precision_reach state_weight 0.3,reached,19,0,53,0,0,0,0,none,none,7.665279e-9,56352,reference,fixed
+random 18,fisher_log_precision_reach state_weight 0.9,reached,22,0,58,0,0,0,0,none,none,7.665279e-9,60000,reference,fixed
+random 18,path shipped,reached,6,0,0,0,0,0,0,none,none,7.665279e-9,7504,reference,fixed
+random 18,path fisher_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,7.665279e-9,8272,reference,fixed
+random 18,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,7.665279e-9,8272,reference,fixed
+random 18,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,7.665279e-9,8272,reference,fixed
+random 18,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_log_precision_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,7.665279e-9,8224,reference,fixed
+random 18,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,7.665279e-9,8272,reference,fixed
+random 18,logitnash,reached,47,0,0,0,0,0,0,none,none,7.9267016e-24,1632,reference,fixed
+random 19,shipped,reached,53,0,202,3,0,0,0,reach,none,6.703934e-9,146288,reference,fixed
+random 19,fisher_reach state_weight 0.003,reached,78,0,285,0,0,0,0,contraction,none,6.703934e-9,218104,reference,fixed
+random 19,fisher_reach state_weight 0.01,reached,53,0,202,3,0,0,0,reach,none,6.703934e-9,146288,reference,fixed
+random 19,fisher_reach state_weight 0.03,reached,29,0,112,0,0,0,0,none,none,6.703934e-9,91584,reference,fixed
+random 19,fisher_reach state_weight 0.1,reached,29,0,115,0,0,0,0,contraction,none,6.703934e-9,92736,reference,fixed
+random 19,fisher_reach state_weight 0.3,reached,28,0,99,0,0,0,0,none,none,6.703934e-9,86784,reference,fixed
+random 19,fisher_reach state_weight 0.9,reached,25,0,88,0,0,0,0,none,none,6.703934e-9,81264,reference,fixed
+random 19,fisher_log_precision_reach state_weight 0.003,reached,79,0,289,3,0,0,0,reach,none,6.703934e-9,220744,reference,fixed
+random 19,fisher_log_precision_reach state_weight 0.01,reached,58,0,222,1,0,0,0,contraction,none,6.703934e-9,157824,reference,fixed
+random 19,fisher_log_precision_reach state_weight 0.03,reached,35,0,135,0,0,0,0,none,none,6.703934e-9,106688,reference,fixed
+random 19,fisher_log_precision_reach state_weight 0.1,reached,25,0,97,0,0,0,0,contraction,none,6.703934e-9,83024,reference,fixed
+random 19,fisher_log_precision_reach state_weight 0.3,reached,24,0,92,0,0,0,0,none,none,6.703934e-9,80496,reference,fixed
+random 19,fisher_log_precision_reach state_weight 0.9,reached,26,0,93,0,0,0,0,none,none,6.703934e-9,82448,reference,fixed
+random 19,path shipped,reached,12,0,0,0,0,0,0,none,none,6.081197e-9,11760,reference,fixed
+random 19,path fisher_reach state_weight 0.003,reached,40,0,0,0,0,0,0,none,none,6.081197e-9,14448,reference,fixed
+random 19,path fisher_reach state_weight 0.01,reached,16,0,0,0,0,0,0,none,none,6.081197e-9,13296,reference,fixed
+random 19,path fisher_reach state_weight 0.03,reached,28,0,0,0,0,0,0,none,none,2.9055675e-8,13872,reference,fixed
+random 19,path fisher_reach state_weight 0.1,reached,21,0,0,0,0,0,0,none,none,6.081197e-9,13536,reference,fixed
+random 19,path fisher_reach state_weight 0.3,reached,18,0,0,0,0,0,0,none,none,1.5647808e-8,13392,reference,fixed
+random 19,path fisher_reach state_weight 0.9,reached,16,0,0,0,0,0,0,none,none,6.081197e-9,13296,reference,fixed
+random 19,path fisher_log_precision_reach state_weight 0.003,reached,31,0,0,0,0,0,0,none,none,6.081197e-9,14016,reference,fixed
+random 19,path fisher_log_precision_reach state_weight 0.01,reached,26,0,0,0,0,0,0,none,none,6.081197e-9,13776,reference,fixed
+random 19,path fisher_log_precision_reach state_weight 0.03,reached,20,0,0,0,0,0,0,none,none,6.081197e-9,13488,reference,fixed
+random 19,path fisher_log_precision_reach state_weight 0.1,reached,17,0,0,0,0,0,0,none,none,1.5647808e-8,13344,reference,fixed
+random 19,path fisher_log_precision_reach state_weight 0.3,reached,14,0,0,0,0,0,0,none,none,2.9055675e-8,13200,reference,fixed
+random 19,path fisher_log_precision_reach state_weight 0.9,reached,14,0,0,0,0,0,0,none,none,6.081197e-9,13200,reference,fixed
+random 19,logitnash,reached,59,0,0,0,0,0,0,none,none,1.6903146e-14,4880,reference,fixed
+random 20,shipped,reached,12,0,35,0,0,0,0,none,none,2.8171847e-8,43968,reference,fixed
+random 20,fisher_reach state_weight 0.003,reached,12,0,35,0,0,0,0,none,none,1.598919e-8,43968,reference,fixed
+random 20,fisher_reach state_weight 0.01,reached,12,0,35,0,0,0,0,none,none,2.8171847e-8,43968,reference,fixed
+random 20,fisher_reach state_weight 0.03,reached,16,0,45,0,0,0,0,none,none,2.8171847e-8,56352,reference,fixed
+random 20,fisher_reach state_weight 0.1,reached,13,0,36,0,0,0,0,none,none,2.8171847e-8,45472,reference,fixed
+random 20,fisher_reach state_weight 0.3,reached,15,0,42,0,0,0,0,none,none,2.8171847e-8,49440,reference,fixed
+random 20,fisher_reach state_weight 0.9,reached,18,0,49,0,0,0,0,none,none,2.8171847e-8,59840,reference,fixed
+random 20,fisher_log_precision_reach state_weight 0.003,reached,15,0,44,0,0,0,0,none,none,2.8171847e-8,49920,reference,fixed
+random 20,fisher_log_precision_reach state_weight 0.01,reached,16,0,46,0,0,0,0,none,none,3.1432798e-8,56592,reference,fixed
+random 20,fisher_log_precision_reach state_weight 0.03,reached,15,0,41,0,0,0,0,none,none,2.8171847e-8,49200,reference,fixed
+random 20,fisher_log_precision_reach state_weight 0.1,reached,16,0,45,0,0,0,0,none,none,2.8171847e-8,55248,reference,fixed
+random 20,fisher_log_precision_reach state_weight 0.3,reached,17,0,47,0,0,0,0,none,none,1.598919e-8,56992,reference,fixed
+random 20,fisher_log_precision_reach state_weight 0.9,reached,19,0,51,0,0,0,0,none,none,3.1432798e-8,61584,reference,fixed
+random 20,path shipped,reached,7,0,0,0,0,0,0,none,none,2.8171847e-8,8640,reference,fixed
+random 20,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,2.8171847e-8,9552,reference,fixed
+random 20,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,8.777649e-8,9552,reference,fixed
+random 20,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,4.3615454e-8,9552,reference,fixed
+random 20,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,8.777649e-8,9552,reference,fixed
+random 20,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,4.3615454e-8,9552,reference,fixed
+random 20,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,1.598919e-8,9600,reference,fixed
+random 20,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,1.598919e-8,9552,reference,fixed
+random 20,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,1.598919e-8,9552,reference,fixed
+random 20,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,2.8171847e-8,9552,reference,fixed
+random 20,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,1.598919e-8,9552,reference,fixed
+random 20,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,1.598919e-8,9552,reference,fixed
+random 20,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,4.3615454e-8,9552,reference,fixed
+random 20,logitnash,reached,38,0,0,0,0,0,0,none,none,1.0813572e-13,2448,reference,fixed
+random 21,shipped,reached,16,0,45,0,0,0,0,none,none,2.741118e-8,51168,reference,fixed
+random 21,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,2.741118e-8,44448,reference,fixed
+random 21,fisher_reach state_weight 0.01,reached,16,0,45,0,0,0,0,none,none,2.741118e-8,51168,reference,fixed
+random 21,fisher_reach state_weight 0.03,reached,16,0,43,0,0,0,0,none,none,2.741118e-8,50784,reference,fixed
+random 21,fisher_reach state_weight 0.1,reached,15,0,41,0,0,0,0,none,none,2.741118e-8,44256,reference,fixed
+random 21,fisher_reach state_weight 0.3,reached,21,0,54,0,0,0,0,none,none,2.741118e-8,58976,reference,fixed
+random 21,fisher_reach state_weight 0.9,reached,20,0,49,0,0,0,0,none,none,2.741118e-8,56800,reference,fixed
+random 21,fisher_log_precision_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,2.741118e-8,44448,reference,fixed
+random 21,fisher_log_precision_reach state_weight 0.01,reached,15,0,41,0,0,0,0,none,none,2.741118e-8,44256,reference,fixed
+random 21,fisher_log_precision_reach state_weight 0.03,reached,15,0,41,0,0,0,0,none,none,2.741118e-8,44256,reference,fixed
+random 21,fisher_log_precision_reach state_weight 0.1,reached,16,0,44,0,0,0,0,none,none,2.741118e-8,50976,reference,fixed
+random 21,fisher_log_precision_reach state_weight 0.3,reached,18,0,50,0,0,0,0,none,none,2.741118e-8,54560,reference,fixed
+random 21,fisher_log_precision_reach state_weight 0.9,reached,21,0,52,0,0,0,0,none,none,2.741118e-8,58592,reference,fixed
+random 21,path shipped,reached,7,0,0,0,0,0,0,none,none,2.741118e-8,7552,reference,fixed
+random 21,path fisher_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.741118e-8,8272,reference,fixed
+random 21,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.741118e-8,8272,reference,fixed
+random 21,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_log_precision_reach state_weight 0.3,reached,5,0,0,0,0,0,0,none,none,2.741118e-8,8224,reference,fixed
+random 21,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.741118e-8,8272,reference,fixed
+random 21,logitnash,reached,43,0,0,0,0,0,0,none,none,5.0232442e-17,1632,reference,fixed
+random 22,shipped,reached,12,0,41,0,0,0,0,none,none,2.0980899e-8,41520,reference,fixed
+random 22,fisher_reach state_weight 0.003,reached,15,0,50,0,0,0,0,none,none,2.0980899e-8,46896,reference,fixed
+random 22,fisher_reach state_weight 0.01,reached,12,0,41,0,0,0,0,none,none,2.0980899e-8,41520,reference,fixed
+random 22,fisher_reach state_weight 0.03,reached,14,0,47,0,0,0,0,none,none,2.0980899e-8,44192,reference,fixed
+random 22,fisher_reach state_weight 0.1,reached,18,0,57,0,0,0,0,none,none,2.0980899e-8,55904,reference,fixed
+random 22,fisher_reach state_weight 0.3,reached,17,0,54,0,0,0,0,none,none,2.0980899e-8,55024,reference,fixed
+random 22,fisher_reach state_weight 0.9,reached,20,0,63,0,0,0,0,none,none,2.0980899e-8,59488,reference,fixed
+random 22,fisher_log_precision_reach state_weight 0.003,reached,15,0,49,0,0,0,0,none,none,2.0980899e-8,46704,reference,fixed
+random 22,fisher_log_precision_reach state_weight 0.01,reached,15,0,49,0,0,0,0,none,none,2.0980899e-8,46704,reference,fixed
+random 22,fisher_log_precision_reach state_weight 0.03,reached,15,0,49,0,0,0,0,none,none,2.0980899e-8,45792,reference,fixed
+random 22,fisher_log_precision_reach state_weight 0.1,reached,16,0,51,0,0,0,0,none,none,2.0980899e-8,53232,reference,fixed
+random 22,fisher_log_precision_reach state_weight 0.3,reached,17,0,53,0,0,0,0,none,none,2.0980899e-8,54832,reference,fixed
+random 22,fisher_log_precision_reach state_weight 0.9,reached,20,0,62,0,0,0,0,none,none,2.0980899e-8,60208,reference,fixed
+random 22,path shipped,reached,9,0,0,0,0,0,0,none,none,2.0980899e-8,7648,reference,fixed
+random 22,path fisher_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,2.0980899e-8,8320,reference,fixed
+random 22,path fisher_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,2.0980899e-8,8320,reference,fixed
+random 22,path fisher_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,2.0980899e-8,8320,reference,fixed
+random 22,path fisher_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,2.0980899e-8,8320,reference,fixed
+random 22,path fisher_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,2.0980899e-8,8320,reference,fixed
+random 22,path fisher_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,2.0980899e-8,8320,reference,fixed
+random 22,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,2.0980899e-8,8272,reference,fixed
+random 22,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,2.0980899e-8,8272,reference,fixed
+random 22,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,2.0980899e-8,8272,reference,fixed
+random 22,path fisher_log_precision_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,2.0980899e-8,8272,reference,fixed
+random 22,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,2.0980899e-8,8272,reference,fixed
+random 22,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,2.0980899e-8,8272,reference,fixed
+random 22,logitnash,reached,41,0,0,0,0,0,0,none,none,2.4077962e-14,1632,reference,fixed
+random 23,shipped,reached,16,0,56,0,0,0,0,none,none,5.6384405e-8,59600,reference,fixed
+random 23,fisher_reach state_weight 0.003,reached,15,0,54,0,0,0,0,none,none,5.6384405e-8,54096,reference,fixed
+random 23,fisher_reach state_weight 0.01,reached,16,0,56,0,0,0,0,none,none,5.6384405e-8,59600,reference,fixed
+random 23,fisher_reach state_weight 0.03,reached,14,0,49,0,0,0,0,none,none,5.294997e-8,50464,reference,fixed
+random 23,fisher_reach state_weight 0.1,reached,15,0,51,0,0,0,0,none,none,5.294997e-8,51040,reference,fixed
+random 23,fisher_reach state_weight 0.3,reached,17,0,55,0,0,0,0,none,none,5.6384405e-8,61792,reference,fixed
+random 23,fisher_reach state_weight 0.9,reached,20,0,61,0,0,0,0,none,none,5.294997e-8,67024,reference,fixed
+random 23,fisher_log_precision_reach state_weight 0.003,reached,15,0,50,0,0,0,0,none,none,5.5502092e-8,53136,reference,fixed
+random 23,fisher_log_precision_reach state_weight 0.01,reached,15,0,50,0,0,0,0,none,none,5.6384405e-8,53136,reference,fixed
+random 23,fisher_log_precision_reach state_weight 0.03,reached,19,0,62,0,0,0,0,none,none,5.294997e-8,64832,reference,fixed
+random 23,fisher_log_precision_reach state_weight 0.1,reached,20,0,65,0,0,0,0,none,none,5.294997e-8,66816,reference,fixed
+random 23,fisher_log_precision_reach state_weight 0.3,reached,18,0,57,0,0,0,0,none,none,5.6384405e-8,63536,reference,fixed
+random 23,fisher_log_precision_reach state_weight 0.9,reached,21,0,65,0,0,0,0,none,none,5.6384405e-8,69248,reference,fixed
+random 23,path shipped,reached,10,0,0,0,0,0,0,none,none,5.294997e-8,10144,reference,fixed
+random 23,path fisher_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,5.294997e-8,11296,reference,fixed
+random 23,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,5.294997e-8,11296,reference,fixed
+random 23,path fisher_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,5.294997e-8,11296,reference,fixed
+random 23,path fisher_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,5.5502092e-8,11296,reference,fixed
+random 23,path fisher_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,5.294997e-8,11296,reference,fixed
+random 23,path fisher_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,5.294997e-8,11296,reference,fixed
+random 23,path fisher_log_precision_reach state_weight 0.003,reached,7,0,0,0,0,0,0,none,none,5.294997e-8,11248,reference,fixed
+random 23,path fisher_log_precision_reach state_weight 0.01,reached,7,0,0,0,0,0,0,none,none,5.294997e-8,11248,reference,fixed
+random 23,path fisher_log_precision_reach state_weight 0.03,reached,7,0,0,0,0,0,0,none,none,5.294997e-8,11248,reference,fixed
+random 23,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,5.294997e-8,11248,reference,fixed
+random 23,path fisher_log_precision_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,5.294997e-8,11248,reference,fixed
+random 23,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,5.5502092e-8,11248,reference,fixed
+random 23,logitnash,reached,41,0,0,0,0,0,0,none,none,7.02588e-12,3568,reference,fixed
+random 24,shipped,reached,13,0,39,0,0,0,0,none,none,5.075908e-8,41440,reference,fixed
+random 24,fisher_reach state_weight 0.003,reached,15,0,44,0,0,0,0,none,none,5.075908e-8,44832,reference,fixed
+random 24,fisher_reach state_weight 0.01,reached,13,0,39,0,0,0,0,none,none,5.075908e-8,41440,reference,fixed
+random 24,fisher_reach state_weight 0.03,reached,14,0,39,0,0,0,0,none,none,5.075908e-8,42656,reference,fixed
+random 24,fisher_reach state_weight 0.1,reached,15,0,42,0,0,0,0,none,none,5.075908e-8,44448,reference,fixed
+random 24,fisher_reach state_weight 0.3,reached,18,0,51,0,0,0,0,none,none,5.075908e-8,54752,reference,fixed
+random 24,fisher_reach state_weight 0.9,reached,21,0,60,0,0,0,0,none,none,5.075908e-8,60128,reference,fixed
+random 24,fisher_log_precision_reach state_weight 0.003,reached,15,0,44,0,0,0,0,none,none,5.075908e-8,44832,reference,fixed
+random 24,fisher_log_precision_reach state_weight 0.01,reached,15,0,44,0,0,0,0,none,none,5.075908e-8,44832,reference,fixed
+random 24,fisher_log_precision_reach state_weight 0.03,reached,15,0,43,0,0,0,0,none,none,5.075908e-8,44640,reference,fixed
+random 24,fisher_log_precision_reach state_weight 0.1,reached,20,0,57,0,0,0,0,none,none,5.075908e-8,58336,reference,fixed
+random 24,fisher_log_precision_reach state_weight 0.3,reached,22,0,62,0,0,0,0,none,none,5.075908e-8,61728,reference,fixed
+random 24,fisher_log_precision_reach state_weight 0.9,reached,25,0,71,0,0,0,0,none,none,5.075908e-8,67104,reference,fixed
+random 24,path shipped,reached,7,0,0,0,0,0,0,none,none,5.075908e-8,7552,reference,fixed
+random 24,path fisher_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_reach state_weight 0.1,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_log_precision_reach state_weight 0.003,reached,5,0,0,0,0,0,0,none,none,5.075908e-8,8224,reference,fixed
+random 24,path fisher_log_precision_reach state_weight 0.01,reached,5,0,0,0,0,0,0,none,none,5.075908e-8,8224,reference,fixed
+random 24,path fisher_log_precision_reach state_weight 0.03,reached,5,0,0,0,0,0,0,none,none,5.075908e-8,8224,reference,fixed
+random 24,path fisher_log_precision_reach state_weight 0.1,reached,5,0,0,0,0,0,0,none,none,5.075908e-8,8224,reference,fixed
+random 24,path fisher_log_precision_reach state_weight 0.3,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,path fisher_log_precision_reach state_weight 0.9,reached,6,0,0,0,0,0,0,none,none,5.075908e-8,8272,reference,fixed
+random 24,logitnash,reached,47,0,0,0,0,0,0,none,none,0.0,1632,reference,fixed
+folding 3x3,shipped,reached,67,0,272,1,0,0,0,contraction,none,3.3091162e-8,139752,reference,categ
+folding 3x3,fisher_reach state_weight 0.003,PrecisionExhausted,37,0,220,7,0,0,0,unresolved,precision_exhausted,NaN,147984,reference,categ
+folding 3x3,fisher_reach state_weight 0.01,reached,67,0,272,1,0,0,0,contraction,none,3.3091162e-8,139752,reference,categ
+folding 3x3,fisher_reach state_weight 0.03,reached,50,0,215,0,0,0,0,contraction,none,3.3091162e-8,98384,reference,categ
+folding 3x3,fisher_reach state_weight 0.1,reached,40,0,174,1,0,0,0,reach,none,2.7337892e-8,85248,reference,categ
+folding 3x3,fisher_reach state_weight 0.3,reached,45,0,183,1,0,0,0,contraction,none,3.3091162e-8,89344,reference,categ
+folding 3x3,fisher_reach state_weight 0.9,reached,55,0,223,1,0,0,0,contraction,none,2.7337892e-8,105056,reference,categ
+folding 3x3,fisher_log_precision_reach state_weight 0.003,PrecisionExhausted,42,0,229,10,0,0,0,unresolved,precision_exhausted,NaN,155328,reference,categ
+folding 3x3,fisher_log_precision_reach state_weight 0.01,PrecisionExhausted,131,0,497,7,0,0,0,unresolved,precision_exhausted,NaN,290296,reference,categ
+folding 3x3,fisher_log_precision_reach state_weight 0.03,reached,90,0,343,1,0,0,0,contraction,none,3.3091162e-8,166040,reference,categ
+folding 3x3,fisher_log_precision_reach state_weight 0.1,reached,65,0,262,3,0,0,0,reach,none,2.7337892e-8,117712,reference,categ
+folding 3x3,fisher_log_precision_reach state_weight 0.3,reached,48,0,192,1,0,0,0,reach,none,3.3091162e-8,96512,reference,categ
+folding 3x3,fisher_log_precision_reach state_weight 0.9,reached,43,0,171,0,0,0,0,contraction,none,2.7337892e-8,89968,reference,categ
+folding 3x3,path shipped,reached,36,0,0,0,0,0,0,none,none,3.3091162e-8,9840,reference,categ
+folding 3x3,path fisher_reach state_weight 0.003,TraceStuck,23,0,0,0,0,0,0,none,unresolved_step,NaN,10080,reference,categ
+folding 3x3,path fisher_reach state_weight 0.01,TraceStuck,36,0,0,0,0,0,0,none,unresolved_step,NaN,10704,reference,categ
+folding 3x3,path fisher_reach state_weight 0.03,TraceStuck,21,0,0,0,0,0,0,none,unresolved_step,NaN,9984,reference,categ
+folding 3x3,path fisher_reach state_weight 0.1,reached,49,0,0,0,0,0,0,none,none,3.3091162e-8,11248,reference,categ
+folding 3x3,path fisher_reach state_weight 0.3,reached,43,0,0,0,0,0,0,none,none,2.7337892e-8,10960,reference,categ
+folding 3x3,path fisher_reach state_weight 0.9,reached,40,0,0,0,0,0,0,none,none,2.7337892e-8,10816,reference,categ
+folding 3x3,path fisher_log_precision_reach state_weight 0.003,reached,41,0,0,0,0,0,0,none,none,3.3091162e-8,10864,reference,categ
+folding 3x3,path fisher_log_precision_reach state_weight 0.01,reached,36,0,0,0,0,0,0,none,none,3.3091162e-8,10624,reference,categ
+folding 3x3,path fisher_log_precision_reach state_weight 0.03,reached,33,0,0,0,0,0,0,none,none,3.3091162e-8,10480,reference,categ
+folding 3x3,path fisher_log_precision_reach state_weight 0.1,reached,27,0,0,0,0,0,0,none,none,2.7337892e-8,10192,reference,categ
+folding 3x3,path fisher_log_precision_reach state_weight 0.3,reached,23,0,0,0,0,0,0,none,none,3.3091162e-8,10000,reference,categ
+folding 3x3,path fisher_log_precision_reach state_weight 0.9,reached,22,0,0,0,0,0,0,none,none,5.8958243e-8,9952,reference,categ
+exhausting 2x2x2,shipped,reached,88,0,319,2,0,0,0,reach,none,7.785005e-9,164680,reference,categ
+exhausting 2x2x2,fisher_reach state_weight 0.003,reached,103,0,374,3,0,0,0,reach,none,7.785005e-9,185480,reference,categ
+exhausting 2x2x2,fisher_reach state_weight 0.01,reached,88,0,319,2,0,0,0,reach,none,7.785005e-9,164680,reference,categ
+exhausting 2x2x2,fisher_reach state_weight 0.03,reached,69,0,259,2,0,0,0,reach,none,7.785005e-9,140232,reference,categ
+exhausting 2x2x2,fisher_reach state_weight 0.1,reached,55,0,214,0,0,0,0,contraction,none,7.785005e-9,102672,reference,categ
+exhausting 2x2x2,fisher_reach state_weight 0.3,reached,55,0,211,1,0,0,0,reach,none,7.785005e-9,102192,reference,categ
+exhausting 2x2x2,fisher_reach state_weight 0.9,reached,52,0,206,0,0,0,0,contraction,none,7.785005e-9,98688,reference,categ
+exhausting 2x2x2,fisher_log_precision_reach state_weight 0.003,reached,160,0,564,7,0,0,0,contraction,none,7.785005e-9,259832,reference,categ
+exhausting 2x2x2,fisher_log_precision_reach state_weight 0.01,reached,133,0,474,4,0,0,0,reach,none,7.785005e-9,224264,reference,categ
+exhausting 2x2x2,fisher_log_precision_reach state_weight 0.03,reached,113,0,408,4,0,0,0,reach,none,7.785005e-9,198936,reference,categ
+exhausting 2x2x2,fisher_log_precision_reach state_weight 0.1,reached,87,0,316,3,0,0,0,reach,none,7.785005e-9,163304,reference,categ
+exhausting 2x2x2,fisher_log_precision_reach state_weight 0.3,reached,63,0,230,1,0,0,0,reach,none,7.785005e-9,112048,reference,categ
+exhausting 2x2x2,fisher_log_precision_reach state_weight 0.9,reached,64,0,235,2,0,0,0,reach,none,7.785005e-9,113168,reference,categ
+exhausting 2x2x2,path shipped,reached,46,0,0,0,0,0,0,none,none,7.785005e-9,10512,reference,categ
+exhausting 2x2x2,path fisher_reach state_weight 0.003,reached,71,0,0,0,0,0,0,none,none,7.785005e-9,12672,reference,categ
+exhausting 2x2x2,path fisher_reach state_weight 0.01,reached,65,0,0,0,0,0,0,none,none,7.785005e-9,12384,reference,categ
+exhausting 2x2x2,path fisher_reach state_weight 0.03,reached,57,0,0,0,0,0,0,none,none,7.785005e-9,12000,reference,categ
+exhausting 2x2x2,path fisher_reach state_weight 0.1,reached,53,0,0,0,0,0,0,none,none,7.785005e-9,11808,reference,categ
+exhausting 2x2x2,path fisher_reach state_weight 0.3,reached,47,0,0,0,0,0,0,none,none,7.785005e-9,11520,reference,categ
+exhausting 2x2x2,path fisher_reach state_weight 0.9,reached,12,0,0,0,0,0,0,none,none,7.785005e-9,9840,reference,categ
+exhausting 2x2x2,path fisher_log_precision_reach state_weight 0.003,reached,45,0,0,0,0,0,0,none,none,7.785005e-9,11424,reference,categ
+exhausting 2x2x2,path fisher_log_precision_reach state_weight 0.01,reached,41,0,0,0,0,0,0,none,none,7.785005e-9,11232,reference,categ
+exhausting 2x2x2,path fisher_log_precision_reach state_weight 0.03,reached,32,0,0,0,0,0,0,none,none,7.785005e-9,10800,reference,categ
+exhausting 2x2x2,path fisher_log_precision_reach state_weight 0.1,reached,10,0,0,0,0,0,0,none,none,7.785005e-9,9744,reference,categ
+exhausting 2x2x2,path fisher_log_precision_reach state_weight 0.3,reached,25,0,0,0,0,0,0,none,none,7.785005e-9,10464,reference,categ
+exhausting 2x2x2,path fisher_log_precision_reach state_weight 0.9,reached,25,0,0,0,0,0,0,none,none,7.785005e-9,10464,reference,categ
+categorical 1,shipped,reached,13,0,48,0,0,0,0,none,none,1.3656244e-8,40800,reference,categ
+categorical 1,fisher_reach state_weight 0.003,reached,16,0,54,0,0,0,0,none,none,1.3656244e-8,49424,reference,categ
+categorical 1,fisher_reach state_weight 0.01,reached,13,0,48,0,0,0,0,none,none,1.3656244e-8,40800,reference,categ
+categorical 1,fisher_reach state_weight 0.03,reached,15,0,53,0,0,0,0,none,none,1.3656244e-8,43328,reference,categ
+categorical 1,fisher_reach state_weight 0.1,reached,21,0,70,0,0,0,0,none,none,1.3656244e-8,55840,reference,categ
+categorical 1,fisher_reach state_weight 0.3,reached,24,0,79,0,0,0,0,none,none,1.3656244e-8,59536,reference,categ
+categorical 1,fisher_reach state_weight 0.9,reached,24,0,77,0,0,0,0,none,none,1.3656244e-8,59536,reference,categ
+categorical 1,fisher_log_precision_reach state_weight 0.003,reached,20,0,70,0,0,0,0,none,none,1.3656244e-8,54288,reference,categ
+categorical 1,fisher_log_precision_reach state_weight 0.01,reached,20,0,67,0,0,0,0,none,none,1.3656244e-8,54288,reference,categ
+categorical 1,fisher_log_precision_reach state_weight 0.03,reached,21,0,72,0,0,0,0,none,none,1.3656244e-8,55552,reference,categ
+categorical 1,fisher_log_precision_reach state_weight 0.1,reached,21,0,70,0,0,0,0,none,none,1.3656244e-8,55552,reference,categ
+categorical 1,fisher_log_precision_reach state_weight 0.3,reached,27,0,88,0,0,0,0,none,none,1.3656244e-8,63136,reference,categ
+categorical 1,fisher_log_precision_reach state_weight 0.9,reached,26,0,85,0,0,0,0,none,none,1.3656244e-8,62064,reference,categ
+categorical 1,path shipped,reached,14,0,0,0,0,0,0,none,none,1.3656244e-8,8784,reference,categ
+categorical 1,path fisher_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,1.3656244e-8,9376,reference,categ
+categorical 1,path fisher_reach state_weight 0.01,reached,10,0,0,0,0,0,0,none,none,1.3656244e-8,9376,reference,categ
+categorical 1,path fisher_reach state_weight 0.03,reached,11,0,0,0,0,0,0,none,none,1.3656244e-8,9424,reference,categ
+categorical 1,path fisher_reach state_weight 0.1,reached,10,0,0,0,0,0,0,none,none,1.3656244e-8,9376,reference,categ
+categorical 1,path fisher_reach state_weight 0.3,reached,11,0,0,0,0,0,0,none,none,1.3656244e-8,9424,reference,categ
+categorical 1,path fisher_reach state_weight 0.9,reached,11,0,0,0,0,0,0,none,none,1.3656244e-8,9424,reference,categ
+categorical 1,path fisher_log_precision_reach state_weight 0.003,reached,9,0,0,0,0,0,0,none,none,1.3656244e-8,9328,reference,categ
+categorical 1,path fisher_log_precision_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,1.3656244e-8,9328,reference,categ
+categorical 1,path fisher_log_precision_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,1.3656244e-8,9328,reference,categ
+categorical 1,path fisher_log_precision_reach state_weight 0.1,reached,9,0,0,0,0,0,0,none,none,1.3656244e-8,9328,reference,categ
+categorical 1,path fisher_log_precision_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,1.3656244e-8,9376,reference,categ
+categorical 1,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,1.3656244e-8,9376,reference,categ
+categorical 2,shipped,reached,16,0,57,0,0,0,0,none,none,5.7913663e-8,57920,reference,categ
+categorical 2,fisher_reach state_weight 0.003,reached,16,0,56,0,0,0,0,none,none,5.7913663e-8,57920,reference,categ
+categorical 2,fisher_reach state_weight 0.01,reached,16,0,57,0,0,0,0,none,none,5.7913663e-8,57920,reference,categ
+categorical 2,fisher_reach state_weight 0.03,reached,17,0,59,0,0,0,0,none,none,4.6411515e-8,59280,reference,categ
+categorical 2,fisher_reach state_weight 0.1,reached,17,0,59,0,0,0,0,none,none,6.5347194e-8,59280,reference,categ
+categorical 2,fisher_reach state_weight 0.3,reached,24,0,78,0,0,0,0,none,none,5.7913663e-8,66592,reference,categ
+categorical 2,fisher_reach state_weight 0.9,reached,28,0,88,0,0,0,0,none,none,4.6411515e-8,74240,reference,categ
+categorical 2,fisher_log_precision_reach state_weight 0.003,reached,20,0,68,0,0,0,0,none,none,5.7913663e-8,63360,reference,categ
+categorical 2,fisher_log_precision_reach state_weight 0.01,reached,20,0,68,0,0,0,0,none,none,5.7913663e-8,63360,reference,categ
+categorical 2,fisher_log_precision_reach state_weight 0.03,reached,24,0,81,0,0,0,0,none,none,5.7913663e-8,68800,reference,categ
+categorical 2,fisher_log_precision_reach state_weight 0.1,reached,21,0,71,0,0,0,0,none,none,5.7913663e-8,64720,reference,categ
+categorical 2,fisher_log_precision_reach state_weight 0.3,reached,22,0,72,0,0,0,0,none,none,5.7913663e-8,68288,reference,categ
+categorical 2,fisher_log_precision_reach state_weight 0.9,reached,25,0,79,0,0,0,0,none,none,5.7913663e-8,72368,reference,categ
+categorical 2,path shipped,reached,11,0,0,0,0,0,0,none,none,5.7913663e-8,10800,reference,categ
+categorical 2,path fisher_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,1.2090027e-7,11696,reference,categ
+categorical 2,path fisher_reach state_weight 0.01,reached,10,0,0,0,0,0,0,none,none,1.2090027e-7,11696,reference,categ
+categorical 2,path fisher_reach state_weight 0.03,reached,10,0,0,0,0,0,0,none,none,4.6411515e-8,11696,reference,categ
+categorical 2,path fisher_reach state_weight 0.1,reached,10,0,0,0,0,0,0,none,none,2.1782624e-8,11696,reference,categ
+categorical 2,path fisher_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,1.2090027e-7,11696,reference,categ
+categorical 2,path fisher_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,6.5347194e-8,11696,reference,categ
+categorical 2,path fisher_log_precision_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,6.5347194e-8,11600,reference,categ
+categorical 2,path fisher_log_precision_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,6.5347194e-8,11600,reference,categ
+categorical 2,path fisher_log_precision_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,6.5347194e-8,11600,reference,categ
+categorical 2,path fisher_log_precision_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,2.1782624e-8,11600,reference,categ
+categorical 2,path fisher_log_precision_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,2.4059773e-8,11648,reference,categ
+categorical 2,path fisher_log_precision_reach state_weight 0.9,reached,9,0,0,0,0,0,0,none,none,2.1782624e-8,11648,reference,categ
+categorical 3,shipped,reached,13,0,48,0,0,0,0,none,none,5.2235972e-8,46256,reference,categ
+categorical 3,fisher_reach state_weight 0.003,reached,16,0,57,0,0,0,0,none,none,5.2235972e-8,53232,reference,categ
+categorical 3,fisher_reach state_weight 0.01,reached,13,0,48,0,0,0,0,none,none,5.2235972e-8,46256,reference,categ
+categorical 3,fisher_reach state_weight 0.03,reached,18,0,63,0,0,0,0,none,none,5.2235972e-8,57792,reference,categ
+categorical 3,fisher_reach state_weight 0.1,reached,17,0,61,0,0,0,0,none,none,5.2235972e-8,56624,reference,categ
+categorical 3,fisher_reach state_weight 0.3,reached,21,0,73,0,0,0,0,none,none,5.2235972e-8,60128,reference,categ
+categorical 3,fisher_reach state_weight 0.9,reached,25,0,86,0,0,0,0,none,none,5.2235972e-8,67504,reference,categ
+categorical 3,fisher_log_precision_reach state_weight 0.003,reached,20,0,69,0,0,0,0,none,none,5.2235972e-8,60608,reference,categ
+categorical 3,fisher_log_precision_reach state_weight 0.01,reached,20,0,70,0,0,0,0,none,none,5.2235972e-8,60704,reference,categ
+categorical 3,fisher_log_precision_reach state_weight 0.03,reached,20,0,69,0,0,0,0,none,none,5.2235972e-8,60608,reference,categ
+categorical 3,fisher_log_precision_reach state_weight 0.1,reached,23,0,77,0,0,0,0,none,none,5.2235972e-8,64592,reference,categ
+categorical 3,fisher_log_precision_reach state_weight 0.3,reached,27,0,90,0,0,0,0,none,none,5.2235972e-8,70032,reference,categ
+categorical 3,fisher_log_precision_reach state_weight 0.9,reached,26,0,88,0,0,0,0,none,none,5.2235972e-8,68768,reference,categ
+categorical 3,path shipped,reached,16,0,0,0,0,0,0,none,none,5.2235972e-8,10192,reference,categ
+categorical 3,path fisher_reach state_weight 0.003,reached,11,0,0,0,0,0,0,none,none,5.2235972e-8,10720,reference,categ
+categorical 3,path fisher_reach state_weight 0.01,reached,11,0,0,0,0,0,0,none,none,5.2235972e-8,10720,reference,categ
+categorical 3,path fisher_reach state_weight 0.03,reached,11,0,0,0,0,0,0,none,none,5.2235972e-8,10720,reference,categ
+categorical 3,path fisher_reach state_weight 0.1,reached,11,0,0,0,0,0,0,none,none,5.2235972e-8,10720,reference,categ
+categorical 3,path fisher_reach state_weight 0.3,reached,11,0,0,0,0,0,0,none,none,5.2235972e-8,10720,reference,categ
+categorical 3,path fisher_reach state_weight 0.9,reached,11,0,0,0,0,0,0,none,none,5.2235972e-8,10720,reference,categ
+categorical 3,path fisher_log_precision_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,5.2235972e-8,10672,reference,categ
+categorical 3,path fisher_log_precision_reach state_weight 0.01,reached,10,0,0,0,0,0,0,none,none,5.2235972e-8,10672,reference,categ
+categorical 3,path fisher_log_precision_reach state_weight 0.03,reached,10,0,0,0,0,0,0,none,none,5.2235972e-8,10672,reference,categ
+categorical 3,path fisher_log_precision_reach state_weight 0.1,reached,9,0,0,0,0,0,0,none,none,5.2235972e-8,10624,reference,categ
+categorical 3,path fisher_log_precision_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,5.2235972e-8,10624,reference,categ
+categorical 3,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,5.2235972e-8,10672,reference,categ
+categorical 4,shipped,reached,20,0,64,0,0,0,0,none,none,1.118745e-9,62224,reference,categ
+categorical 4,fisher_reach state_weight 0.003,reached,13,0,39,0,0,0,0,none,none,1.118745e-9,47536,reference,categ
+categorical 4,fisher_reach state_weight 0.01,reached,20,0,64,0,0,0,0,none,none,1.118745e-9,62224,reference,categ
+categorical 4,fisher_reach state_weight 0.03,reached,15,0,47,0,0,0,0,none,none,1.118745e-9,50256,reference,categ
+categorical 4,fisher_reach state_weight 0.1,reached,17,0,55,0,0,0,0,none,none,1.118745e-9,58000,reference,categ
+categorical 4,fisher_reach state_weight 0.3,reached,21,0,64,0,0,0,0,none,none,1.118745e-9,63632,reference,categ
+categorical 4,fisher_reach state_weight 0.9,reached,25,0,74,0,0,0,0,none,none,1.118745e-9,69264,reference,categ
+categorical 4,fisher_log_precision_reach state_weight 0.003,reached,20,0,62,0,0,0,0,none,none,1.118745e-9,62224,reference,categ
+categorical 4,fisher_log_precision_reach state_weight 0.01,reached,20,0,63,0,0,0,0,none,none,1.118745e-9,62224,reference,categ
+categorical 4,fisher_log_precision_reach state_weight 0.03,reached,20,0,64,0,0,0,0,none,none,1.118745e-9,62224,reference,categ
+categorical 4,fisher_log_precision_reach state_weight 0.1,reached,21,0,66,0,0,0,0,none,none,1.118745e-9,63632,reference,categ
+categorical 4,fisher_log_precision_reach state_weight 0.3,reached,23,0,70,0,0,0,0,none,none,1.118745e-9,66448,reference,categ
+categorical 4,fisher_log_precision_reach state_weight 0.9,reached,26,0,78,0,0,0,0,none,none,1.118745e-9,70672,reference,categ
+categorical 4,path shipped,reached,11,0,0,0,0,0,0,none,none,1.118745e-9,11440,reference,categ
+categorical 4,path fisher_reach state_weight 0.003,reached,9,0,0,0,0,0,0,none,none,1.118745e-9,12128,reference,categ
+categorical 4,path fisher_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,1.118745e-9,12128,reference,categ
+categorical 4,path fisher_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,1.118745e-9,12128,reference,categ
+categorical 4,path fisher_reach state_weight 0.1,reached,9,0,0,0,0,0,0,none,none,1.118745e-9,12128,reference,categ
+categorical 4,path fisher_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,1.118745e-9,12128,reference,categ
+categorical 4,path fisher_reach state_weight 0.9,reached,9,0,0,0,0,0,0,none,none,1.118745e-9,12128,reference,categ
+categorical 4,path fisher_log_precision_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,1.118745e-9,12080,reference,categ
+categorical 4,path fisher_log_precision_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,1.118745e-9,12080,reference,categ
+categorical 4,path fisher_log_precision_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,1.118745e-9,12080,reference,categ
+categorical 4,path fisher_log_precision_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,1.118745e-9,12080,reference,categ
+categorical 4,path fisher_log_precision_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,1.118745e-9,12080,reference,categ
+categorical 4,path fisher_log_precision_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,1.118745e-9,12080,reference,categ
+categorical 5,shipped,reached,13,0,53,0,0,0,0,none,none,6.155373e-8,49264,reference,categ
+categorical 5,fisher_reach state_weight 0.003,reached,17,0,69,0,0,0,0,contraction,none,5.7655562e-8,57824,reference,categ
+categorical 5,fisher_reach state_weight 0.01,reached,13,0,53,0,0,0,0,none,none,6.155373e-8,49264,reference,categ
+categorical 5,fisher_reach state_weight 0.03,reached,15,0,60,0,0,0,0,none,none,6.155373e-8,49808,reference,categ
+categorical 5,fisher_reach state_weight 0.1,reached,18,0,67,0,0,0,0,none,none,5.7655562e-8,60912,reference,categ
+categorical 5,fisher_reach state_weight 0.3,reached,20,0,72,0,0,0,0,none,none,6.155373e-8,65920,reference,categ
+categorical 5,fisher_reach state_weight 0.9,reached,29,0,105,0,0,0,0,none,none,6.155373e-8,78688,reference,categ
+categorical 5,fisher_log_precision_reach state_weight 0.003,reached,20,0,75,0,0,0,0,none,none,6.155373e-8,63728,reference,categ
+categorical 5,fisher_log_precision_reach state_weight 0.01,reached,20,0,75,0,0,0,0,none,none,5.7655562e-8,65920,reference,categ
+categorical 5,fisher_log_precision_reach state_weight 0.03,reached,21,0,77,0,0,0,0,none,none,5.7655562e-8,67280,reference,categ
+categorical 5,fisher_log_precision_reach state_weight 0.1,reached,22,0,80,0,0,0,0,none,none,5.7655562e-8,66448,reference,categ
+categorical 5,fisher_log_precision_reach state_weight 0.3,reached,23,0,82,0,0,0,0,none,none,5.7655562e-8,67712,reference,categ
+categorical 5,fisher_log_precision_reach state_weight 0.9,reached,26,0,87,0,0,0,0,none,none,6.155373e-8,73888,reference,categ
+categorical 5,path shipped,reached,15,0,0,0,0,0,0,none,none,6.155373e-8,10944,reference,categ
+categorical 5,path fisher_reach state_weight 0.003,reached,14,0,0,0,0,0,0,none,none,6.155373e-8,11840,reference,categ
+categorical 5,path fisher_reach state_weight 0.01,reached,14,0,0,0,0,0,0,none,none,6.155373e-8,11840,reference,categ
+categorical 5,path fisher_reach state_weight 0.03,reached,14,0,0,0,0,0,0,none,none,6.155373e-8,11840,reference,categ
+categorical 5,path fisher_reach state_weight 0.1,reached,14,0,0,0,0,0,0,none,none,6.155373e-8,11840,reference,categ
+categorical 5,path fisher_reach state_weight 0.3,reached,13,0,0,0,0,0,0,none,none,6.155373e-8,11792,reference,categ
+categorical 5,path fisher_reach state_weight 0.9,reached,13,0,0,0,0,0,0,none,none,5.7655562e-8,11792,reference,categ
+categorical 5,path fisher_log_precision_reach state_weight 0.003,reached,13,0,0,0,0,0,0,none,none,1.7686484e-7,11792,reference,categ
+categorical 5,path fisher_log_precision_reach state_weight 0.01,reached,13,0,0,0,0,0,0,none,none,5.7655562e-8,11792,reference,categ
+categorical 5,path fisher_log_precision_reach state_weight 0.03,reached,13,0,0,0,0,0,0,none,none,6.155373e-8,11792,reference,categ
+categorical 5,path fisher_log_precision_reach state_weight 0.1,reached,11,0,0,0,0,0,0,none,none,5.7655562e-8,11696,reference,categ
+categorical 5,path fisher_log_precision_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,5.7655562e-8,11648,reference,categ
+categorical 5,path fisher_log_precision_reach state_weight 0.9,reached,11,0,0,0,0,0,0,none,none,6.155373e-8,11696,reference,categ
+categorical 6,shipped,reached,17,0,58,0,0,0,0,none,none,7.475551e-8,54688,reference,categ
+categorical 6,fisher_reach state_weight 0.003,reached,12,0,42,0,0,0,0,none,none,7.475551e-8,44928,reference,categ
+categorical 6,fisher_reach state_weight 0.01,reached,17,0,58,0,0,0,0,none,none,7.475551e-8,54688,reference,categ
+categorical 6,fisher_reach state_weight 0.03,reached,14,0,48,0,0,0,0,none,none,7.475551e-8,47648,reference,categ
+categorical 6,fisher_reach state_weight 0.1,reached,17,0,56,0,0,0,0,none,none,7.475551e-8,54688,reference,categ
+categorical 6,fisher_reach state_weight 0.3,reached,20,0,64,0,0,0,0,none,none,7.475551e-8,60736,reference,categ
+categorical 6,fisher_reach state_weight 0.9,reached,25,0,80,0,0,0,0,none,none,7.475551e-8,67632,reference,categ
+categorical 6,fisher_log_precision_reach state_weight 0.003,reached,20,0,65,0,0,0,0,none,none,7.475551e-8,60736,reference,categ
+categorical 6,fisher_log_precision_reach state_weight 0.01,reached,24,0,76,0,0,0,0,none,none,7.475551e-8,66176,reference,categ
+categorical 6,fisher_log_precision_reach state_weight 0.03,reached,20,0,64,0,0,0,0,none,none,7.475551e-8,60736,reference,categ
+categorical 6,fisher_log_precision_reach state_weight 0.1,reached,21,0,67,0,0,0,0,none,none,7.475551e-8,62096,reference,categ
+categorical 6,fisher_log_precision_reach state_weight 0.3,reached,23,0,72,0,0,0,0,none,none,7.475551e-8,64816,reference,categ
+categorical 6,fisher_log_precision_reach state_weight 0.9,reached,25,0,76,0,0,0,0,none,none,7.475551e-8,67536,reference,categ
+categorical 6,path shipped,reached,12,0,0,0,0,0,0,none,none,7.475551e-8,10064,reference,categ
+categorical 6,path fisher_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 6,path fisher_reach state_weight 0.01,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 6,path fisher_reach state_weight 0.03,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 6,path fisher_reach state_weight 0.1,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 6,path fisher_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 6,path fisher_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 6,path fisher_log_precision_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,7.475551e-8,10640,reference,categ
+categorical 6,path fisher_log_precision_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,7.475551e-8,10688,reference,categ
+categorical 6,path fisher_log_precision_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,7.475551e-8,10640,reference,categ
+categorical 6,path fisher_log_precision_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,7.475551e-8,10640,reference,categ
+categorical 6,path fisher_log_precision_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,7.475551e-8,10640,reference,categ
+categorical 6,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,7.475551e-8,10736,reference,categ
+categorical 7,shipped,reached,23,0,62,0,0,0,0,none,none,6.020442e-28,58352,reference,categ
+categorical 7,fisher_reach state_weight 0.003,reached,15,0,39,0,0,0,0,none,none,6.020442e-28,43136,reference,categ
+categorical 7,fisher_reach state_weight 0.01,reached,23,0,62,0,0,0,0,none,none,6.020442e-28,58352,reference,categ
+categorical 7,fisher_reach state_weight 0.03,reached,21,0,62,0,0,0,0,none,none,6.020442e-28,54384,reference,categ
+categorical 7,fisher_reach state_weight 0.1,reached,17,0,52,0,0,0,0,none,none,6.020442e-28,48960,reference,categ
+categorical 7,fisher_reach state_weight 0.3,reached,20,0,60,0,0,0,0,none,none,6.020442e-28,52656,reference,categ
+categorical 7,fisher_reach state_weight 0.9,reached,24,0,74,0,0,0,0,none,none,6.020442e-28,57760,reference,categ
+categorical 7,fisher_log_precision_reach state_weight 0.003,reached,32,0,92,0,0,0,0,none,none,6.020442e-28,70240,reference,categ
+categorical 7,fisher_log_precision_reach state_weight 0.01,reached,29,0,85,0,0,0,0,none,none,6.020442e-28,64544,reference,categ
+categorical 7,fisher_log_precision_reach state_weight 0.03,reached,21,0,59,0,0,0,0,none,none,6.020442e-28,53968,reference,categ
+categorical 7,fisher_log_precision_reach state_weight 0.1,reached,22,0,65,0,0,0,0,none,none,6.020442e-28,55232,reference,categ
+categorical 7,fisher_log_precision_reach state_weight 0.3,reached,24,0,72,0,0,0,0,none,none,6.020442e-28,57760,reference,categ
+categorical 7,fisher_log_precision_reach state_weight 0.9,reached,26,0,79,0,0,0,0,none,none,6.020442e-28,61872,reference,categ
+categorical 7,path shipped,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,8544,reference,categ
+categorical 7,path fisher_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,6.020442e-28,9376,reference,categ
+categorical 7,path fisher_reach state_weight 0.01,reached,10,0,0,0,0,0,0,none,none,6.020442e-28,9376,reference,categ
+categorical 7,path fisher_reach state_weight 0.03,reached,10,0,0,0,0,0,0,none,none,6.020442e-28,9376,reference,categ
+categorical 7,path fisher_reach state_weight 0.1,reached,10,0,0,0,0,0,0,none,none,6.020442e-28,9376,reference,categ
+categorical 7,path fisher_reach state_weight 0.3,reached,11,0,0,0,0,0,0,none,none,6.020442e-28,9424,reference,categ
+categorical 7,path fisher_reach state_weight 0.9,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,9328,reference,categ
+categorical 7,path fisher_log_precision_reach state_weight 0.003,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,9328,reference,categ
+categorical 7,path fisher_log_precision_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,9328,reference,categ
+categorical 7,path fisher_log_precision_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,9328,reference,categ
+categorical 7,path fisher_log_precision_reach state_weight 0.1,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,9328,reference,categ
+categorical 7,path fisher_log_precision_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,6.020442e-28,9328,reference,categ
+categorical 7,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,6.020442e-28,9376,reference,categ
+categorical 8,shipped,reached,14,0,51,0,0,0,0,none,none,7.2666175e-8,48352,reference,categ
+categorical 8,fisher_reach state_weight 0.003,reached,13,0,47,0,0,0,0,none,none,7.2666175e-8,47088,reference,categ
+categorical 8,fisher_reach state_weight 0.01,reached,14,0,51,0,0,0,0,none,none,7.2666175e-8,48352,reference,categ
+categorical 8,fisher_reach state_weight 0.03,reached,19,0,68,0,0,0,0,none,none,7.2666175e-8,59888,reference,categ
+categorical 8,fisher_reach state_weight 0.1,reached,18,0,63,0,0,0,0,none,none,7.2666175e-8,58528,reference,categ
+categorical 8,fisher_reach state_weight 0.3,reached,21,0,73,0,0,0,0,none,none,7.2666175e-8,62704,reference,categ
+categorical 8,fisher_reach state_weight 0.9,reached,26,0,84,0,0,0,0,none,none,7.2666175e-8,69408,reference,categ
+categorical 8,fisher_log_precision_reach state_weight 0.003,reached,20,0,69,0,0,0,0,none,none,7.2666175e-8,61152,reference,categ
+categorical 8,fisher_log_precision_reach state_weight 0.01,reached,20,0,68,0,0,0,0,none,none,7.2666175e-8,61152,reference,categ
+categorical 8,fisher_log_precision_reach state_weight 0.03,reached,20,0,70,0,0,0,0,none,none,7.2666175e-8,61152,reference,categ
+categorical 8,fisher_log_precision_reach state_weight 0.1,reached,21,0,73,0,0,0,0,none,none,7.2666175e-8,62512,reference,categ
+categorical 8,fisher_log_precision_reach state_weight 0.3,reached,28,0,90,0,0,0,0,none,none,7.2666175e-8,72032,reference,categ
+categorical 8,fisher_log_precision_reach state_weight 0.9,reached,27,0,87,0,0,0,0,none,none,7.2666175e-8,70768,reference,categ
+categorical 8,path shipped,reached,13,0,0,0,0,0,0,none,none,7.2666175e-8,10896,reference,categ
+categorical 8,path fisher_reach state_weight 0.003,reached,11,0,0,0,0,0,0,none,none,7.2666175e-8,11744,reference,categ
+categorical 8,path fisher_reach state_weight 0.01,reached,11,0,0,0,0,0,0,none,none,7.2666175e-8,11744,reference,categ
+categorical 8,path fisher_reach state_weight 0.03,reached,11,0,0,0,0,0,0,none,none,7.2666175e-8,11744,reference,categ
+categorical 8,path fisher_reach state_weight 0.1,reached,11,0,0,0,0,0,0,none,none,7.2666175e-8,11744,reference,categ
+categorical 8,path fisher_reach state_weight 0.3,reached,11,0,0,0,0,0,0,none,none,7.2666175e-8,11744,reference,categ
+categorical 8,path fisher_reach state_weight 0.9,reached,11,0,0,0,0,0,0,none,none,7.2666175e-8,11744,reference,categ
+categorical 8,path fisher_log_precision_reach state_weight 0.003,reached,9,0,0,0,0,0,0,none,none,7.2666175e-8,11648,reference,categ
+categorical 8,path fisher_log_precision_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,7.2666175e-8,11648,reference,categ
+categorical 8,path fisher_log_precision_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,7.2666175e-8,11648,reference,categ
+categorical 8,path fisher_log_precision_reach state_weight 0.1,reached,9,0,0,0,0,0,0,none,none,7.2666175e-8,11648,reference,categ
+categorical 8,path fisher_log_precision_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,7.2666175e-8,11648,reference,categ
+categorical 8,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,7.2666175e-8,11696,reference,categ
+categorical 9,shipped,reached,12,0,41,0,0,0,0,none,none,2.1960908e-7,44704,reference,categ
+categorical 9,fisher_reach state_weight 0.003,reached,15,0,47,0,0,0,0,none,none,1.8622936e-7,48784,reference,categ
+categorical 9,fisher_reach state_weight 0.01,reached,12,0,41,0,0,0,0,none,none,2.1960908e-7,44704,reference,categ
+categorical 9,fisher_reach state_weight 0.03,reached,16,0,51,0,0,0,0,none,none,2.9873124e-7,55072,reference,categ
+categorical 9,fisher_reach state_weight 0.1,reached,17,0,56,0,0,0,0,none,none,2.0932426e-7,56432,reference,categ
+categorical 9,fisher_reach state_weight 0.3,reached,16,0,57,0,0,0,0,none,none,4.5802767e-7,55072,reference,categ
+categorical 9,fisher_reach state_weight 0.9,reached,19,0,61,0,0,0,0,none,none,2.0790826e-7,59152,reference,categ
+categorical 9,fisher_log_precision_reach state_weight 0.003,reached,20,0,63,0,0,0,0,none,none,5.7742376e-8,60512,reference,categ
+categorical 9,fisher_log_precision_reach state_weight 0.01,reached,20,0,63,0,0,0,0,none,none,2.0790826e-7,60512,reference,categ
+categorical 9,fisher_log_precision_reach state_weight 0.03,reached,20,0,63,0,0,0,0,none,none,6.146691e-8,60512,reference,categ
+categorical 9,fisher_log_precision_reach state_weight 0.1,reached,20,0,62,0,0,0,0,none,none,2.1960908e-7,60512,reference,categ
+categorical 9,fisher_log_precision_reach state_weight 0.3,reached,20,0,62,0,0,0,0,none,none,2.9873124e-7,62448,reference,categ
+categorical 9,fisher_log_precision_reach state_weight 0.9,reached,22,0,68,0,0,0,0,none,none,5.7723696e-7,63232,reference,categ
+categorical 9,path shipped,reached,11,0,0,0,0,0,0,none,none,5.7742376e-8,9952,reference,categ
+categorical 9,path fisher_reach state_weight 0.003,reached,9,0,0,0,0,0,0,none,none,2.9873124e-7,10624,reference,categ
+categorical 9,path fisher_reach state_weight 0.01,reached,9,0,0,0,0,0,0,none,none,2.0790826e-7,10624,reference,categ
+categorical 9,path fisher_reach state_weight 0.03,reached,9,0,0,0,0,0,0,none,none,2.0932426e-7,10624,reference,categ
+categorical 9,path fisher_reach state_weight 0.1,reached,9,0,0,0,0,0,0,none,none,2.973152e-7,10624,reference,categ
+categorical 9,path fisher_reach state_weight 0.3,reached,9,0,0,0,0,0,0,none,none,2.0790826e-7,10624,reference,categ
+categorical 9,path fisher_reach state_weight 0.9,reached,9,0,0,0,0,0,0,none,none,2.0790826e-7,10624,reference,categ
+categorical 9,path fisher_log_precision_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,2.1960908e-7,10576,reference,categ
+categorical 9,path fisher_log_precision_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,3.5833588e-7,10576,reference,categ
+categorical 9,path fisher_log_precision_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,3.5833588e-7,10576,reference,categ
+categorical 9,path fisher_log_precision_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,3.5833588e-7,10576,reference,categ
+categorical 9,path fisher_log_precision_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,3.3524097e-7,10576,reference,categ
+categorical 9,path fisher_log_precision_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,5.6553614e-7,10576,reference,categ
+categorical 10,shipped,reached,16,0,60,0,0,0,0,none,none,5.609532e-8,61424,reference,categ
+categorical 10,fisher_reach state_weight 0.003,reached,12,0,47,0,0,0,0,none,none,5.609532e-8,51152,reference,categ
+categorical 10,fisher_reach state_weight 0.01,reached,16,0,60,0,0,0,0,none,none,5.609532e-8,61424,reference,categ
+categorical 10,fisher_reach state_weight 0.03,reached,14,0,53,0,0,0,0,none,none,2.6292998e-8,51456,reference,categ
+categorical 10,fisher_reach state_weight 0.1,reached,15,0,54,0,0,0,0,none,none,5.609532e-8,55184,reference,categ
+categorical 10,fisher_reach state_weight 0.3,reached,19,0,68,0,0,0,0,none,none,5.188821e-8,65936,reference,categ
+categorical 10,fisher_reach state_weight 0.9,reached,22,0,75,0,0,0,0,none,none,5.188821e-8,70160,reference,categ
+categorical 10,fisher_log_precision_reach state_weight 0.003,reached,20,0,70,0,0,0,0,none,none,5.609532e-8,64736,reference,categ
+categorical 10,fisher_log_precision_reach state_weight 0.01,reached,20,0,69,0,0,0,0,none,none,5.188821e-8,64736,reference,categ
+categorical 10,fisher_log_precision_reach state_weight 0.03,reached,20,0,69,0,0,0,0,none,none,7.5935546e-8,67152,reference,categ
+categorical 10,fisher_log_precision_reach state_weight 0.1,reached,20,0,69,0,0,0,0,none,none,5.609532e-8,69664,reference,categ
+categorical 10,fisher_log_precision_reach state_weight 0.3,reached,21,0,73,0,0,0,0,none,none,5.609532e-8,71168,reference,categ
+categorical 10,fisher_log_precision_reach state_weight 0.9,reached,24,0,81,0,0,0,0,none,none,7.50564e-8,70464,reference,categ
+categorical 10,path shipped,reached,15,0,0,0,0,0,0,none,none,5.609532e-8,11632,reference,categ
+categorical 10,path fisher_reach state_weight 0.003,reached,12,0,0,0,0,0,0,none,none,5.609532e-8,12272,reference,categ
+categorical 10,path fisher_reach state_weight 0.01,reached,12,0,0,0,0,0,0,none,none,3.3311647e-8,12272,reference,categ
+categorical 10,path fisher_reach state_weight 0.03,reached,12,0,0,0,0,0,0,none,none,5.609532e-8,12272,reference,categ
+categorical 10,path fisher_reach state_weight 0.1,reached,12,0,0,0,0,0,0,none,none,5.609532e-8,12272,reference,categ
+categorical 10,path fisher_reach state_weight 0.3,reached,12,0,0,0,0,0,0,none,none,5.188821e-8,12272,reference,categ
+categorical 10,path fisher_reach state_weight 0.9,reached,12,0,0,0,0,0,0,none,none,5.609532e-8,12272,reference,categ
+categorical 10,path fisher_log_precision_reach state_weight 0.003,reached,10,0,0,0,0,0,0,none,none,5.188821e-8,12176,reference,categ
+categorical 10,path fisher_log_precision_reach state_weight 0.01,reached,10,0,0,0,0,0,0,none,none,5.188821e-8,12176,reference,categ
+categorical 10,path fisher_log_precision_reach state_weight 0.03,reached,10,0,0,0,0,0,0,none,none,7.50564e-8,12176,reference,categ
+categorical 10,path fisher_log_precision_reach state_weight 0.1,reached,10,0,0,0,0,0,0,none,none,5.609532e-8,12176,reference,categ
+categorical 10,path fisher_log_precision_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,5.609532e-8,12176,reference,categ
+categorical 10,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,5.609532e-8,12176,reference,categ
+categorical 11,shipped,reached,16,0,66,0,0,0,0,none,none,1.8143307e-7,58752,reference,categ
+categorical 11,fisher_reach state_weight 0.003,reached,20,0,78,0,0,0,0,none,none,1.713887e-7,64848,reference,categ
+categorical 11,fisher_reach state_weight 0.01,reached,16,0,66,0,0,0,0,none,none,1.8143307e-7,58752,reference,categ
+categorical 11,fisher_reach state_weight 0.03,reached,17,0,69,0,0,0,0,none,none,1.1462678e-8,60112,reference,categ
+categorical 11,fisher_reach state_weight 0.1,reached,19,0,75,0,0,0,0,none,none,2.0215557e-8,65024,reference,categ
+categorical 11,fisher_reach state_weight 0.3,reached,21,0,79,0,0,0,0,none,none,1.713887e-7,67648,reference,categ
+categorical 11,fisher_reach state_weight 0.9,reached,25,0,90,0,0,0,0,none,none,9.68322e-8,72944,reference,categ
+categorical 11,fisher_log_precision_reach state_weight 0.003,reached,25,0,94,0,0,0,0,none,none,1.713887e-7,73456,reference,categ
+categorical 11,fisher_log_precision_reach state_weight 0.01,reached,25,0,96,0,0,0,0,none,none,1.713887e-7,71360,reference,categ
+categorical 11,fisher_log_precision_reach state_weight 0.03,reached,26,0,98,0,0,0,0,none,none,9.68322e-8,72624,reference,categ
+categorical 11,fisher_log_precision_reach state_weight 0.1,reached,23,0,85,0,0,0,0,none,none,2.0215557e-8,67984,reference,categ
+categorical 11,fisher_log_precision_reach state_weight 0.3,reached,24,0,88,0,0,0,0,none,none,1.713887e-7,71536,reference,categ
+categorical 11,fisher_log_precision_reach state_weight 0.9,reached,31,0,108,0,0,0,0,none,none,8.198173e-8,81104,reference,categ
+categorical 11,path shipped,reached,17,0,0,0,0,0,0,none,none,8.198173e-8,11040,reference,categ
+categorical 11,path fisher_reach state_weight 0.003,reached,13,0,0,0,0,0,0,none,none,3.1951775e-8,11792,reference,categ
+categorical 11,path fisher_reach state_weight 0.01,reached,13,0,0,0,0,0,0,none,none,8.198173e-8,11792,reference,categ
+categorical 11,path fisher_reach state_weight 0.03,reached,13,0,0,0,0,0,0,none,none,1.713887e-7,11792,reference,categ
+categorical 11,path fisher_reach state_weight 0.1,reached,15,0,0,0,0,0,0,none,none,9.68322e-8,11888,reference,categ
+categorical 11,path fisher_reach state_weight 0.3,reached,13,0,0,0,0,0,0,none,none,2.0215557e-8,11792,reference,categ
+categorical 11,path fisher_reach state_weight 0.9,reached,15,0,0,0,0,0,0,none,none,8.198173e-8,11888,reference,categ
+categorical 11,path fisher_log_precision_reach state_weight 0.003,reached,11,0,0,0,0,0,0,none,none,9.68322e-8,11696,reference,categ
+categorical 11,path fisher_log_precision_reach state_weight 0.01,reached,14,0,0,0,0,0,0,none,none,1.2182842e-7,11840,reference,categ
+categorical 11,path fisher_log_precision_reach state_weight 0.03,reached,12,0,0,0,0,0,0,none,none,5.0022486e-8,11744,reference,categ
+categorical 11,path fisher_log_precision_reach state_weight 0.1,reached,14,0,0,0,0,0,0,none,none,1.8143307e-7,11840,reference,categ
+categorical 11,path fisher_log_precision_reach state_weight 0.3,reached,10,0,0,0,0,0,0,none,none,2.0215557e-8,11648,reference,categ
+categorical 11,path fisher_log_precision_reach state_weight 0.9,reached,10,0,0,0,0,0,0,none,none,9.68322e-8,11648,reference,categ
+categorical 12,shipped,reached,14,0,44,0,0,0,0,none,none,4.6909808e-8,45680,reference,categ
+categorical 12,fisher_reach state_weight 0.003,reached,16,0,47,0,0,0,0,none,none,4.6909808e-8,53328,reference,categ
+categorical 12,fisher_reach state_weight 0.01,reached,14,0,44,0,0,0,0,none,none,4.6909808e-8,45680,reference,categ
+categorical 12,fisher_reach state_weight 0.03,reached,14,0,45,0,0,0,0,none,none,4.6909808e-8,45680,reference,categ
+categorical 12,fisher_reach state_weight 0.1,reached,16,0,51,0,0,0,0,none,none,4.6909808e-8,55296,reference,categ
+categorical 12,fisher_reach state_weight 0.3,reached,19,0,58,0,0,0,0,none,none,4.6909808e-8,57408,reference,categ
+categorical 12,fisher_reach state_weight 0.9,reached,23,0,69,0,0,0,0,none,none,4.6909808e-8,62848,reference,categ
+categorical 12,fisher_log_precision_reach state_weight 0.003,reached,20,0,61,0,0,0,0,none,none,4.6909808e-8,58768,reference,categ
+categorical 12,fisher_log_precision_reach state_weight 0.01,reached,20,0,63,0,0,0,0,none,none,4.6909808e-8,58768,reference,categ
+categorical 12,fisher_log_precision_reach state_weight 0.03,reached,20,0,63,0,0,0,0,none,none,4.6909808e-8,58768,reference,categ
+categorical 12,fisher_log_precision_reach state_weight 0.1,reached,21,0,66,0,0,0,0,none,none,4.6909808e-8,60128,reference,categ
+categorical 12,fisher_log_precision_reach state_weight 0.3,reached,23,0,69,0,0,0,0,none,none,4.6909808e-8,62848,reference,categ
+categorical 12,fisher_log_precision_reach state_weight 0.9,reached,25,0,74,0,0,0,0,none,none,4.6909808e-8,65568,reference,categ
+categorical 12,path shipped,reached,9,0,0,0,0,0,0,none,none,4.6909808e-8,9920,reference,categ
+categorical 12,path fisher_reach state_weight 0.003,reached,8,0,0,0,0,0,0,none,none,4.6909808e-8,10640,reference,categ
+categorical 12,path fisher_reach state_weight 0.01,reached,8,0,0,0,0,0,0,none,none,4.6909808e-8,10640,reference,categ
+categorical 12,path fisher_reach state_weight 0.03,reached,8,0,0,0,0,0,0,none,none,4.6909808e-8,10640,reference,categ
+categorical 12,path fisher_reach state_weight 0.1,reached,8,0,0,0,0,0,0,none,none,4.6909808e-8,10640,reference,categ
+categorical 12,path fisher_reach state_weight 0.3,reached,8,0,0,0,0,0,0,none,none,4.6909808e-8,10640,reference,categ
+categorical 12,path fisher_reach state_weight 0.9,reached,8,0,0,0,0,0,0,none,none,4.6909808e-8,10640,reference,categ
+categorical 12,path fisher_log_precision_reach state_weight 0.003,reached,6,0,0,0,0,0,0,none,none,4.6909808e-8,10544,reference,categ
+categorical 12,path fisher_log_precision_reach state_weight 0.01,reached,6,0,0,0,0,0,0,none,none,4.6909808e-8,10544,reference,categ
+categorical 12,path fisher_log_precision_reach state_weight 0.03,reached,6,0,0,0,0,0,0,none,none,4.6909808e-8,10544,reference,categ
+categorical 12,path fisher_log_precision_reach state_weight 0.1,reached,7,0,0,0,0,0,0,none,none,4.6909808e-8,10592,reference,categ
+categorical 12,path fisher_log_precision_reach state_weight 0.3,reached,7,0,0,0,0,0,0,none,none,4.6909808e-8,10592,reference,categ
+categorical 12,path fisher_log_precision_reach state_weight 0.9,reached,7,0,0,0,0,0,0,none,none,4.6909808e-8,10592,reference,categ
+near swap,shipped,reached,12,0,32,0,0,0,0,none,none,1.23677495e-8,65600,reference,swap
+near swap,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,1.23677495e-8,73376,reference,swap
+near swap,fisher_reach state_weight 0.01,reached,12,0,32,0,0,0,0,none,none,1.23677495e-8,65600,reference,swap
+near swap,fisher_reach state_weight 0.03,reached,12,0,32,0,0,0,0,none,none,1.23677495e-8,65600,reference,swap
+near swap,fisher_reach state_weight 0.1,reached,16,0,43,0,0,0,0,none,none,1.23677495e-8,75360,reference,swap
+near swap,fisher_reach state_weight 0.3,reached,14,0,38,0,0,0,0,none,none,1.23677495e-8,70624,reference,swap
+near swap,fisher_reach state_weight 0.9,reached,16,0,42,0,0,0,0,none,none,1.23677495e-8,75104,reference,swap
+near swap,fisher_log_precision_reach state_weight 0.003,reached,16,0,41,0,0,0,0,none,none,1.23677495e-8,73344,reference,swap
+near swap,fisher_log_precision_reach state_weight 0.01,reached,16,0,41,0,0,0,0,none,none,1.23677495e-8,73344,reference,swap
+near swap,fisher_log_precision_reach state_weight 0.03,reached,16,0,41,0,0,0,0,none,none,1.23677495e-8,73344,reference,swap
+near swap,fisher_log_precision_reach state_weight 0.1,reached,16,0,40,0,0,0,0,none,none,1.23677495e-8,74128,reference,swap
+near swap,fisher_log_precision_reach state_weight 0.3,reached,17,0,42,0,0,0,0,none,none,1.23677495e-8,75328,reference,swap
+near swap,fisher_log_precision_reach state_weight 0.9,reached,18,0,45,0,0,0,0,none,none,1.23677495e-8,79296,reference,swap
+far swap,shipped,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139728,reference,swap
+far swap,fisher_reach state_weight 0.003,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139728,reference,swap
+far swap,fisher_reach state_weight 0.01,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139728,reference,swap
+far swap,fisher_reach state_weight 0.03,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139728,reference,swap
+far swap,fisher_reach state_weight 0.1,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139728,reference,swap
+far swap,fisher_reach state_weight 0.3,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139728,reference,swap
+far swap,fisher_reach state_weight 0.9,TraceStuck,8,0,37,0,0,0,0,unresolved,unresolved_step,NaN,139504,reference,swap
+far swap,fisher_log_precision_reach state_weight 0.003,TraceStuck,7,0,36,0,0,0,0,unresolved,unresolved_step,NaN,138064,reference,swap
+far swap,fisher_log_precision_reach state_weight 0.01,TraceStuck,7,0,36,0,0,0,0,unresolved,unresolved_step,NaN,138064,reference,swap
+far swap,fisher_log_precision_reach state_weight 0.03,TraceStuck,7,0,36,0,0,0,0,unresolved,unresolved_step,NaN,137840,reference,swap
+far swap,fisher_log_precision_reach state_weight 0.1,TraceStuck,7,0,36,0,0,0,0,unresolved,unresolved_step,NaN,137840,reference,swap
+far swap,fisher_log_precision_reach state_weight 0.3,TraceStuck,7,0,36,0,0,0,0,unresolved,unresolved_step,NaN,137840,reference,swap
+far swap,fisher_log_precision_reach state_weight 0.9,TraceStuck,7,0,36,0,0,0,0,unresolved,unresolved_step,NaN,133360,reference,swap
+swap 1,shipped,reached,15,0,42,0,0,0,0,none,none,2.4869504e-8,74880,reference,swap
+swap 1,fisher_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,4.932819e-9,74880,reference,swap
+swap 1,fisher_reach state_weight 0.01,reached,15,0,42,0,0,0,0,none,none,2.4869504e-8,74880,reference,swap
+swap 1,fisher_reach state_weight 0.03,reached,13,0,36,0,0,0,0,none,none,2.4869504e-8,69840,reference,swap
+swap 1,fisher_reach state_weight 0.1,reached,13,0,36,0,0,0,0,none,none,2.4869504e-8,69840,reference,swap
+swap 1,fisher_reach state_weight 0.3,reached,18,0,51,0,0,0,0,none,none,5.8178575e-8,82368,reference,swap
+swap 1,fisher_reach state_weight 0.9,reached,17,0,48,0,0,0,0,none,none,2.4869504e-8,79824,reference,swap
+swap 1,fisher_log_precision_reach state_weight 0.003,reached,15,0,42,0,0,0,0,none,none,4.9328195e-9,73344,reference,swap
+swap 1,fisher_log_precision_reach state_weight 0.01,reached,15,0,42,0,0,0,0,none,none,2.4869504e-8,73344,reference,swap
+swap 1,fisher_log_precision_reach state_weight 0.03,reached,15,0,42,0,0,0,0,none,none,4.932819e-9,73344,reference,swap
+swap 1,fisher_log_precision_reach state_weight 0.1,reached,15,0,42,0,0,0,0,none,none,5.4671826e-8,73344,reference,swap
+swap 1,fisher_log_precision_reach state_weight 0.3,reached,20,0,57,0,0,0,0,none,none,5.8178575e-8,92240,reference,swap
+swap 1,fisher_log_precision_reach state_weight 0.9,reached,18,0,51,0,0,0,0,none,none,2.4869504e-8,80832,reference,swap
+swap 2,shipped,reached,13,0,45,0,0,0,0,none,none,1.2512862e-9,72000,reference,swap
+swap 2,fisher_reach state_weight 0.003,reached,15,0,52,0,0,0,0,none,none,3.105361e-8,77280,reference,swap
+swap 2,fisher_reach state_weight 0.01,reached,13,0,45,0,0,0,0,none,none,1.2512862e-9,72000,reference,swap
+swap 2,fisher_reach state_weight 0.03,reached,13,0,45,0,0,0,0,none,none,3.105361e-8,72000,reference,swap
+swap 2,fisher_reach state_weight 0.1,reached,15,0,50,0,0,0,0,none,none,1.2512862e-9,76752,reference,swap
+swap 2,fisher_reach state_weight 0.3,reached,16,0,52,0,0,0,0,none,none,1.2512862e-9,77520,reference,swap
+swap 2,fisher_reach state_weight 0.9,reached,23,0,71,0,0,0,0,none,none,3.105361e-8,100544,reference,swap
+swap 2,fisher_log_precision_reach state_weight 0.003,reached,15,0,49,0,0,0,0,none,none,1.761396e-8,75024,reference,swap
+swap 2,fisher_log_precision_reach state_weight 0.01,reached,15,0,49,0,0,0,0,none,none,1.2512862e-9,75024,reference,swap
+swap 2,fisher_log_precision_reach state_weight 0.03,reached,15,0,49,0,0,0,0,none,none,1.2512862e-9,76128,reference,swap
+swap 2,fisher_log_precision_reach state_weight 0.1,reached,16,0,52,0,0,0,0,none,none,2.8551037e-8,77520,reference,swap
+swap 2,fisher_log_precision_reach state_weight 0.3,reached,21,0,66,0,0,0,0,none,none,1.2512862e-9,94688,reference,swap
+swap 2,fisher_log_precision_reach state_weight 0.9,reached,20,0,63,0,0,0,0,none,none,1.2512862e-9,92192,reference,swap
+swap 3,shipped,reached,15,0,48,0,0,0,0,none,none,5.508221e-8,77376,reference,swap
+swap 3,fisher_reach state_weight 0.003,reached,15,0,46,0,0,0,0,none,none,5.508221e-8,75840,reference,swap
+swap 3,fisher_reach state_weight 0.01,reached,15,0,48,0,0,0,0,none,none,5.508221e-8,77376,reference,swap
+swap 3,fisher_reach state_weight 0.03,reached,16,0,51,0,0,0,0,none,none,5.508221e-8,78816,reference,swap
+swap 3,fisher_reach state_weight 0.1,reached,17,0,55,0,0,0,0,none,none,5.508221e-8,81504,reference,swap
+swap 3,fisher_reach state_weight 0.3,reached,18,0,57,0,0,0,0,none,none,5.508221e-8,83760,reference,swap
+swap 3,fisher_reach state_weight 0.9,reached,19,0,58,0,0,0,0,none,none,5.508221e-8,89216,reference,swap
+swap 3,fisher_log_precision_reach state_weight 0.003,reached,15,0,48,0,0,0,0,none,none,5.508221e-8,74784,reference,swap
+swap 3,fisher_log_precision_reach state_weight 0.01,reached,15,0,48,0,0,0,0,none,none,5.508221e-8,74784,reference,swap
+swap 3,fisher_log_precision_reach state_weight 0.03,reached,15,0,48,0,0,0,0,none,none,5.508221e-8,75888,reference,swap
+swap 3,fisher_log_precision_reach state_weight 0.1,reached,16,0,51,0,0,0,0,none,none,5.508221e-8,77280,reference,swap
+swap 3,fisher_log_precision_reach state_weight 0.3,reached,17,0,52,0,0,0,0,none,none,5.508221e-8,80400,reference,swap
+swap 3,fisher_log_precision_reach state_weight 0.9,reached,20,0,60,0,0,0,0,none,none,5.508221e-8,90368,reference,swap
+swap 4,shipped,reached,16,0,45,0,0,0,0,none,none,3.2278532e-8,76272,reference,swap
+swap 4,fisher_reach state_weight 0.003,reached,15,0,43,0,0,0,0,none,none,3.2278532e-8,73968,reference,swap
+swap 4,fisher_reach state_weight 0.01,reached,16,0,45,0,0,0,0,none,none,3.2278532e-8,76272,reference,swap
+swap 4,fisher_reach state_weight 0.03,reached,14,0,40,0,0,0,0,none,none,3.2278532e-8,71472,reference,swap
+swap 4,fisher_reach state_weight 0.1,reached,15,0,42,0,0,0,0,none,none,3.2278532e-8,72240,reference,swap
+swap 4,fisher_reach state_weight 0.3,reached,22,0,63,0,0,0,0,none,none,3.2278532e-8,94640,reference,swap
+swap 4,fisher_reach state_weight 0.9,reached,22,0,62,0,0,0,0,none,none,3.2278532e-8,94352,reference,swap
+swap 4,fisher_log_precision_reach state_weight 0.003,reached,15,0,44,0,0,0,0,none,none,3.2278532e-8,72720,reference,swap
+swap 4,fisher_log_precision_reach state_weight 0.01,reached,15,0,44,0,0,0,0,none,none,3.2278532e-8,72720,reference,swap
+swap 4,fisher_log_precision_reach state_weight 0.03,reached,16,0,46,0,0,0,0,none,none,3.2278532e-8,74976,reference,swap
+swap 4,fisher_log_precision_reach state_weight 0.1,reached,21,0,59,0,0,0,0,none,none,3.2278532e-8,91904,reference,swap
+swap 4,fisher_log_precision_reach state_weight 0.3,reached,20,0,57,0,0,0,0,none,none,3.2278532e-8,89648,reference,swap
+swap 4,fisher_log_precision_reach state_weight 0.9,reached,22,0,62,0,0,0,0,none,none,3.2278532e-8,94352,reference,swap
+swap 5,shipped,reached,12,0,37,0,0,0,0,none,none,2.0720533e-7,68304,reference,swap
+swap 5,fisher_reach state_weight 0.003,reached,12,0,38,0,0,0,0,none,none,2.0720533e-7,68544,reference,swap
+swap 5,fisher_reach state_weight 0.01,reached,12,0,37,0,0,0,0,none,none,2.0720533e-7,68304,reference,swap
+swap 5,fisher_reach state_weight 0.03,reached,13,0,41,0,0,0,0,none,none,2.0720533e-7,71040,reference,swap
+swap 5,fisher_reach state_weight 0.1,reached,14,0,43,0,0,0,0,none,none,2.0720533e-7,71808,reference,swap
+swap 5,fisher_reach state_weight 0.3,reached,17,0,51,0,0,0,0,none,none,2.0720533e-7,79056,reference,swap
+swap 5,fisher_reach state_weight 0.9,reached,21,0,64,0,0,0,0,none,none,2.0720533e-7,94160,reference,swap
+swap 5,fisher_log_precision_reach state_weight 0.003,reached,15,0,47,0,0,0,0,none,none,2.0720533e-7,74544,reference,swap
+swap 5,fisher_log_precision_reach state_weight 0.01,reached,15,0,47,0,0,0,0,none,none,2.0720533e-7,74544,reference,swap
+swap 5,fisher_log_precision_reach state_weight 0.03,reached,15,0,47,0,0,0,0,none,none,2.0720533e-7,74544,reference,swap
+swap 5,fisher_log_precision_reach state_weight 0.1,reached,16,0,50,0,0,0,0,none,none,2.0720533e-7,77040,reference,swap
+swap 5,fisher_log_precision_reach state_weight 0.3,reached,18,0,55,0,0,0,0,none,none,2.0720533e-7,81792,reference,swap
+swap 5,fisher_log_precision_reach state_weight 0.9,reached,21,0,64,0,0,0,0,none,none,2.0720533e-7,94160,reference,swap
+swap 6,shipped,reached,13,0,41,0,0,0,0,none,none,1.9552294e-12,69936,reference,swap
+swap 6,fisher_reach state_weight 0.003,reached,16,0,50,0,0,0,0,none,none,1.9552294e-12,76320,reference,swap
+swap 6,fisher_reach state_weight 0.01,reached,13,0,41,0,0,0,0,none,none,1.9552294e-12,69936,reference,swap
+swap 6,fisher_reach state_weight 0.03,reached,14,0,44,0,0,0,0,none,none,1.955234e-12,72432,reference,swap
+swap 6,fisher_reach state_weight 0.1,reached,16,0,45,0,0,0,0,none,none,1.9552294e-12,74736,reference,swap
+swap 6,fisher_reach state_weight 0.3,reached,19,0,53,0,0,0,0,none,none,1.955293e-12,86864,reference,swap
+swap 6,fisher_reach state_weight 0.9,reached,27,0,78,0,0,0,0,none,none,1.9552495e-12,107072,reference,swap
+swap 6,fisher_log_precision_reach state_weight 0.003,reached,15,0,46,0,0,0,0,none,none,1.9552975e-12,73200,reference,swap
+swap 6,fisher_log_precision_reach state_weight 0.01,reached,15,0,46,0,0,0,0,none,none,1.9552294e-12,73200,reference,swap
+swap 6,fisher_log_precision_reach state_weight 0.03,reached,16,0,49,0,0,0,0,none,none,1.9552294e-12,75696,reference,swap
+swap 6,fisher_log_precision_reach state_weight 0.1,reached,21,0,60,0,0,0,0,none,none,1.9552294e-12,92144,reference,swap
+swap 6,fisher_log_precision_reach state_weight 0.3,reached,19,0,54,0,0,0,0,none,none,1.9552294e-12,87104,reference,swap
+swap 6,fisher_log_precision_reach state_weight 0.9,reached,23,0,66,0,0,0,0,none,none,1.9552294e-12,97088,reference,swap

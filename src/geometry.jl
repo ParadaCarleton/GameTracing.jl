@@ -29,7 +29,11 @@ The precision's term in `FisherDistance`: `TargetPrecisionTerm` `(Δλ / P)²`, 
 
 The norm a trace steps in: its `StepDistance`, `state_weight`, the gaps' weight against the precision's, and the
 Fisher distance's `PrecisionTerm`. A plain distance takes `TargetPrecisionTerm` only; another throws an
-`ArgumentError`. The default is the Fisher distance at `state_weight = 0.01` with the target's precision term.
+`ArgumentError`. The default is the Fisher distance at `state_weight = 0.1` with the target's precision term.
+
+`state_weight = 0.1` serves both precision terms (`benchmark/results/tune-4dd74d7-summary.txt`, weights 0.003 to 0.9).
+Each term reached every categorical game at 0.1. The target term took its fewest steps there (304); the log term took
+408, against 396 at 0.3. Below 0.03 the log term exhausted at the folding 3x3 game and at `UNFOLDED_PITCHFORK_GAME`.
 """
 struct TraceGeometry{E <: Real}
     distance::StepDistance
@@ -46,7 +50,7 @@ end
 
 function TraceGeometry{E}(;
         distance::StepDistance = FisherDistance,
-        state_weight::Real = 0.01f0,
+        state_weight::Real = 0.1f0,
         precision_term::PrecisionTerm = TargetPrecisionTerm,
     )::TraceGeometry{E} where {E <: Real}
     return TraceGeometry{E}(distance, E(state_weight), precision_term)

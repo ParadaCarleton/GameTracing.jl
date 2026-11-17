@@ -1,7 +1,9 @@
 """
+    Metric
+
 A step or turn metric: a symmetric positive semidefinite operator `M` on displacements of the curve's points, frozen
 at a point. The tracer freezes each metric at its start and again at every accepted point, and the step after a point
-uses `M` frozen there. A metric type defines four functions:
+uses `M` frozen there. A metric type subtypes `Metric` and defines four functions:
 
 - `frozen_metric(metric, point)`: a fresh state of `metric` in `point`'s element type, frozen at `point`.
 - `freeze_metric!(frozen, point)`: freeze that state again at `point`, and return it.
@@ -10,6 +12,9 @@ uses `M` frozen there. A metric type defines four functions:
 
 `FixedWeights` is the constant diagonal metric.
 """
+abstract type Metric end
+
+"""`metric` (`Metric`) in `point`'s element type, frozen at `point`."""
 function frozen_metric end
 
 """`frozen`, a metric's state (`frozen_metric`), frozen again at `point`."""
@@ -26,7 +31,7 @@ function metric_apply! end
 
 The constant diagonal metric `⟨a, b⟩ = Σᵢ wᵢ aᵢ bᵢ`, one positive weight per coordinate of the curve's points.
 """
-struct FixedWeights{V <: AbstractVector{<:Real}}
+struct FixedWeights{V <: AbstractVector{<:Real}} <: Metric
     weights::V
 end
 

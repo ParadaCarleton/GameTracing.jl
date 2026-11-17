@@ -101,7 +101,7 @@ end
 A metric that counts its freezes in `freezes` and weighs each coordinate by `1 + |xᵢ|` at the point `x` it is frozen at:
 a diagonal stand-in for a metric that depends on the point.
 """
-struct CountingMetric
+struct CountingMetric <: PathFollowing.Metric
     freezes::Base.RefValue{Int}
 end
 

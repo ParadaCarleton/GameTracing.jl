@@ -225,6 +225,24 @@ end
     @test GameTracing.noise_confirmed(check)
 end
 
+@testset "a stall far past the noise floor halves the step at once and suspects no noise ($element)" for element in (Float32, widen(Float32))
+    # Corrections of 0.45, as a corrector diverging from a long step on an IRVModel stay game: past its predictor's
+    # move, but 4,500 tolerances, past `noise_limit` floors.
+    diverging = element[0, 0.45f0, 0.9f0]
+    check = fresh_check(element(0.19f0))
+    @test solve_verdicts(check, diverging) == [true, true, false]
+    @test isnothing(check.state[].noise.suspect)
+    # The halved step stalls alike and confirms nothing: halving goes on until the corrector converges.
+    GameTracing.restate!(check; predictor_move = element(0.095f0))
+    @test solve_verdicts(check, diverging) == [true, true, false]
+    @test !GameTracing.noise_confirmed(check)
+    # Over settled corrections of 1e-3 the floor is 1e-3: the same stall lies within the limit, and two are suspected noise.
+    floored = fresh_check(element(0.19f0))
+    GameTracing.restate!(floored; noise = GameTracing.NoiseRecord(element(1.0f-3), nothing))
+    @test solve_verdicts(floored, element[0, 0.45f0, 0.9f0, 1.35f0]) == [true, true, true, false]
+    @test !isnothing(floored.state[].noise.suspect)
+end
+
 @testset "a pure equilibrium traced to λ 1e6 reaches it, its logits settled to their rounding ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     settings = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; distance = FisherLogPrecisionDistance))

@@ -3,7 +3,7 @@ using LinearAlgebra: dot
 using Logging: @debug
 """
     CorrectorSettings{E}(; reach, max_kl, logit_tolerance, settle_ulps, pin_tolerance, contraction_limit,
-                         contraction_offset, noise_ratio, newton_iterations)
+                         contraction_offset, noise_ratio, noise_limit, newton_iterations)
 
 The corrector's controls (`CorrectorReach`); `nothing` switches a limit off. `reach`: a corrector that moves a logit
 further from the predictor than this times the predictor's own largest logit move is refused. `shift_share`: the share
@@ -19,6 +19,8 @@ times `contraction_offset`) fails to contract; BifurcationKit's step growth read
 Suspected noise is confirmed when the halved step's stalled correction is at least `noise_ratio` of the suspect's
 (`corrected!`). Halving keeps noise's corrections alike (ratio 1); it halves those of a predictor off the branch's
 tangent (ratio 1/2) and quarters those of its curvature (1/4). The default, `1/√2`, splits 1/2 from 1.
+A stall counts as noise only within `noise_limit` times the noise floor (`noise_floor`): the larger of `logit_tolerance`
+and the largest settled correction so far. A corrector past it is far from any root, so the step halves at once.
 `newton_iterations`: Newton iterations per corrector (BifurcationKit's default, 25; Gambit's is 100).
 """
 Base.@kwdef struct CorrectorSettings{E <: Real}
@@ -35,6 +37,9 @@ Base.@kwdef struct CorrectorSettings{E <: Real}
     contraction_offset::E = 0.1f0
     # At 1/2 the 3x3x3 benchmark game of seed 5 confirmed noise at a ratio of 0.5007, at λ 3.24 in Float64 too.
     noise_ratio::E = inv(sqrt(2.0f0))
+    # The noisy-gain test (opening_tests.jl) stalls within 200 tolerances. A corrector diverging from a long step on an
+    # 11-logit IRVModel stay game stalled at 4,490 and was confirmed as noise; two more halvings converge there.
+    noise_limit::Union{Nothing, E} = 1.0f3
     newton_iterations::Int = 25
 end
 
@@ -136,8 +141,8 @@ end
 
 The trace's BifurcationKit `callback_newton`, which also decides the corrector's convergence: a `settled` iterate
 ends Newton's method converged (`NewtonConverged`), and a correction that fails to contract stops it (`corrected!`).
-Two such corrections in a row, each larger than the predictor's own move in logits, are suspected rounding noise
-(`noise`), confirmed at the next halved step; the check then refuses every corrector (`noise_confirmed`).
+Two such corrections in a row, each larger than the predictor's own move in logits and within `noise_limit` of the
+noise floor (`noise_floor`), are suspected rounding noise (`noise`), confirmed at the next halved step; the check then refuses every corrector (`noise_confirmed`).
 A non-finite residual stops the corrector,
 and so does any iterate whose logits are further from the predictor's than `settings.reach` times the predictor's own
 largest logit move (`within_reach`); the step then halves. A predictor within `RESOLUTION_ULPS` ulps of each of the
@@ -201,6 +206,14 @@ function unresolved_noise(check::CorrectorReach{C, E})::NoiseRecord{E} where {C,
         return noise
     end
     return NoiseRecord(noise.accuracy, (; reach_failure..., confirmed = true))
+end
+
+"""
+`check`'s noise floor in logits: the larger of `logit_tolerance` and the noise record's `accuracy`, the largest last
+correction of a settled closing point. Rounding or evaluation noise that stalls a corrector starts near it.
+"""
+function noise_floor(check::CorrectorReach{C, E})::E where {C, E <: Real}
+    return max(check.settings.logit_tolerance, check.state[].noise.accuracy)
 end
 
 """Whether `check`'s corrector met rounding noise, confirmed at a halved step (`corrected!`)."""
@@ -337,7 +350,8 @@ end
 is the solve's start and never settles. Each later one is a correction `Δz` from the iterate before: it settles
 (`NewtonConverged`) when `settled` by the part of `Δz` past each logit's `settle_ulps`. A correction past `contraction_limit` times the one before (plus
 `logit_tolerance · contraction_offset`) fails to contract, Gambit's test (path.cc), and stops the corrector, so the
-step halves. Two in a row, each larger than the predictor's own move, are suspected noise (`noise`); the
+step halves. Two in a row, each larger than the predictor's own move and within `noise_limit` of the noise floor
+(`noise_floor`), are suspected noise (`noise`); the
 step still halves. A second such solve before any settles, its correction at least `noise_ratio` of the suspect's,
 confirms it (`noise_confirmed`): halving shrinks the corrections of a predictor past a fold, not noise. Every later
 solve refuses.
@@ -378,8 +392,9 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
         restate!(check; stalls = 0)
         return true
     end
-    if !(check.state[].predictor_move <= correction)
-        @debug "corrector stopped" _group = :trace reason = :contraction correction before
+    # A stall under the predictor's move halves with the step; one far past the noise floor is no rounding noise.
+    if !(check.state[].predictor_move <= correction) || !within_limit(scaled_limit(check.settings.noise_limit, noise_floor(check)), correction)
+        @debug "corrector stopped" _group = :trace reason = :contraction correction before noise_floor = noise_floor(check)
         return false
     end
     if restate!(check; stalls = check.state[].stalls + 1).stalls < 2

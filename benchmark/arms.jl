@@ -85,9 +85,9 @@ variant's reference swaps where its own trace does.
 """
 function case_reference(swap::W, settings::S)::NamedTuple where {W <: SwapCase, S <: BifurcationKitSettings}
     (; case) = swap
-    level = redraw_precision(swap, settings)
-    before = branch_reference(case.reference_pass, case.width, level)
-    return branch_reference(swap.reference_after, case.width, case.precision; start = before.logits, start_precision = level)
+    swap_precision = redraw_precision(swap, settings)
+    before = branch_reference(case.reference_pass, case.width, swap_precision)
+    return branch_reference(swap.reference_after, case.width, case.precision; start = before.logits, start_precision = swap_precision)
 end
 
 """The reference every variant of `case` shares: a fixed map's own, none for a swap, whose reference is per variant."""

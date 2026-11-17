@@ -39,6 +39,29 @@ with work arrays is called as `pass!(work, gain, gain_slope, gain_precision_slop
 """
 pass_workspace(::Any, ::AbstractVector)::Nothing = nothing
 
+"""
+    logit_ranges(pass!)
+
+Each player's range in the stacked logits of `pass!`'s game: the logits of its strategies against its reference
+strategy, one `UnitRange{Int}` per player in a tuple or vector, tiling the logits in order (`checked_ranges`). A player
+with two strategies has one logit. The Fisher metric (`FisherDistance`) and the corrector's KL limit (`max_kl`) read
+it. It has no default: a pass traced under either must define it.
+"""
+function logit_ranges end
+
+"""`ranges` (`logit_ranges`) when they tile the `width` logits in order, one nonempty range per player; else an `ArgumentError`."""
+function checked_ranges(ranges::R, width::Integer)::R where {R}
+    next, tiled = 1, true
+    for range in ranges
+        tiled &= !isempty(range) && first(range) == next
+        next = last(range) + 1
+    end
+    if !(tiled && next == width + 1)
+        throw(ArgumentError("the logit ranges $(collect(ranges)) do not tile the logits 1:$width in order"))
+    end
+    return ranges
+end
+
 """Call `pass!` on its outputs, with its work arrays `work` unless it has none."""
 function run_pass!(
         pass!::Any,

@@ -158,7 +158,7 @@ end
 PALC's `orientation_dot`: the plain product `trace_dot` of two branch vectors `[w; λ]` in `geometry` at
 `target_precision`; `λ` is in the vectors, so the continuation parameters add nothing. Without the bordered
 determinant a new tangent takes the sign that keeps this product with the old one positive; the trace's Fisher
-weights, frozen at a saturated logit, would let `λ` alone decide that sign past a fold and turn the trace back.
+metric, frozen at saturated logits, would let `λ` alone decide that sign past a fold and turn the trace back.
 """
 struct PlainOrientation{E <: Real}
     geometry::TraceGeometry{E}
@@ -177,21 +177,22 @@ function (orientation::PlainOrientation{E})(
 end
 
 """
-BifurcationKit's PALC for `settings` over a trace of `width` logits to precision `target_precision`, its tangent
-oriented by the bordered determinant where `orientation_check` holds (`settings.orientation_check` by default).
+BifurcationKit's PALC for `settings` over a trace of `width` logits of `game` to its target precision, its tangent
+oriented by the bordered determinant where `orientation_check` holds (`settings.orientation_check` by default). A
+Fisher distance reads the game's `logit_ranges` (`palc_geometry`).
 """
 function palc_algorithm(
         settings::BifurcationKitSettings{E},
-        width::Integer,
-        target_precision::Real;
+        game::LogitGame,
+        width::Integer;
         orientation_check::Bool = settings.orientation_check,
     )::BifurcationKit.AbstractContinuationAlgorithm where {E <: Real}
     return palc_with_geometry(
         settings,
         width,
-        palc_geometry(settings.step_metric, width, target_precision),
+        palc_geometry(settings.step_metric, game.pass!, width, game.target_precision),
         orientation_check,
-        PlainOrientation(settings.step_metric, E(target_precision)),
+        PlainOrientation(settings.step_metric, E(game.target_precision)),
     )
 end
 
@@ -294,7 +295,7 @@ function trace_iterator(
     )::BifurcationKit.ContIterable where {E <: Real}
     return continuation_iterator(
         branch_problem(game, start, last(start); record_from_solution = trace_record_point),
-        palc_algorithm(settings, length(start) - 1, game.target_precision),
+        palc_algorithm(settings, game, length(start) - 1),
         continuation_options(
             settings,
             step_length,
@@ -374,7 +375,7 @@ function opening_along(
     )::NamedTuple where {E <: Real}
     algorithm = iterator.alg
     dot, palc_state_weight = algorithm.dotθ, E(algorithm.θ)
-    # A Fisher trace's weights are those of the point it restarts from.
+    # A Fisher trace's metric is frozen at the point it restarts from.
     BifurcationKit.reweight!(dot, BifurcationKit.BorderedArray(start, last(start)))
     length_in_norm = sqrt(palc_product(dot, palc_state_weight, tangent, tangent))
     return (;
@@ -555,6 +556,7 @@ function guarded_trace(
         similar(start),
         similar(start),
         zero(E),
+        kl_ranges(settings.corrector.max_kl, finalise.slot[].game.pass!, length(start) - 1),
     )
     return segment_outcome(
         segment_branch(

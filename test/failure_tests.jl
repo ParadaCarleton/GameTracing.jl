@@ -79,6 +79,7 @@ end
         copy(point),
         copy(point),
         0.0f0,
+        nothing,
     )
     GameTracing.restate!(check; settled_here = true)
     @test !check((; x = point .+ eps.(point), z0 = (; u = point), step = 0, residual = 0.0f0); fromNewton = false)
@@ -183,6 +184,7 @@ end
         zeros(Float32, 3),
         zeros(Float32, 3),
         0.0f0,
+        nothing,
     )
     @test GameTracing.within_reach(check, ones(Float32, 3))
 end
@@ -198,6 +200,7 @@ end
         previous,
         predicted,
         1.0f0,
+        nothing,
     )
     GameTracing.restate!(check; predictor_move = GameTracing.logit_change(previous, predicted))
     @test GameTracing.within_reach(check, predicted .+ Float32[1.0f-8, 0])
@@ -257,13 +260,16 @@ function finalised(
     )::Bool
     # BifurcationKit calls `finalise` before it saves the point to the branch.
     tangent = (; u = zero([point.gaps; point.param]), p = one(point.param))
+    # Only a redraw reads the algorithm, so a flat game of the records' width serves.
+    width = length(point.gaps)
+    flat = LogitGame(LinearGainPass(zeros(typeof(point.param), width, width), zeros(typeof(point.param), width)), TARGET_PRECISION)
     return finalise(
         (; u = [point.gaps; point.param], p = point.param),
         tangent,
         point.step,
         (; branch);
         state = (; ds = one(point.param) / 10),
-        iter = (; alg = GameTracing.palc_algorithm(BifurcationKitSettings{typeof(point.param)}(), length(point.gaps), TARGET_PRECISION)),
+        iter = (; alg = GameTracing.palc_algorithm(BifurcationKitSettings{typeof(point.param)}(), flat, width)),
     )
 end
 

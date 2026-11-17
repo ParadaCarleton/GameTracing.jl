@@ -126,21 +126,14 @@ end
 @testset "every state weight in (0, 1) traces, a one-logit game at the default settings included" begin
     for state_weight in (0.1f0, 0.5f0, 0.9f0), distance in instances(StepDistance)
         geometry = TraceGeometry{Float32}(; distance, state_weight)
-        # PALC's state weight is set by the target: through the precision's plain weight, or for the log-precision distance directly.
-        palc_state_weight = ifelse(
-            distance == FisherLogPrecisionDistance,
-            GameTracing.log_precision_palc_state_weight(2.0f0),
-            GameTracing.plain_palc_state_weight(last(GameTracing.plain_weights(geometry, 1, 2.0f0))),
-        )
-        @test GameTracing.palc_geometry(geometry, 1, 2.0f0).palc_state_weight ==
-            palc_state_weight
+        # PALC's state weight is set by the precision's smallest weight over the trace, at the target.
+        palc_state_weight = 1 - min(1, last(GameTracing.plain_weights(geometry, 1, 2.0f0))) / 2
+        @test GameTracing.palc_geometry(geometry, FOLD_GAME, 1, 2.0f0).palc_state_weight == palc_state_weight
     end
+    @test GameTracing.palc_geometry(TraceGeometry{Float32}(; precision_term = LogPrecisionTerm), FOLD_GAME, 1, 2.0f0).palc_state_weight ==
+        1 - inv(3.0f0)^2 / 2
     for state_weight in (0.0f0, 1.0f0, -0.5f0, NaN32)
-        @test_throws ArgumentError GameTracing.palc_geometry(
-            TraceGeometry{Float32}(; state_weight),
-            1,
-            2.0f0,
-        )
+        @test_throws ArgumentError GameTracing.palc_geometry(TraceGeometry{Float32}(; state_weight), FOLD_GAME, 1, 2.0f0)
     end
     result = trace_endpoint(LogitGame(FOLD_GAME, 2.0f0), 1, BifurcationKitSettings{Float32}())
     @test !is_error(result)
@@ -159,16 +152,16 @@ end
 @testset "an orientation check without a determinant throws; the turn test runs with or without the check" begin
     @test_throws ArgumentError BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve)
     bordering = BifurcationKitSettings{Float32}(bordered_solver = BorderingSolve, orientation_check = false)
-    @test_throws ArgumentError GameTracing.palc_algorithm(bordering, WIDTH, TARGET_PRECISION; orientation_check = true)
+    @test_throws ArgumentError GameTracing.palc_algorithm(bordering, LogitGame(GAME, TARGET_PRECISION), WIDTH; orientation_check = true)
     for (settings, check) in ((BifurcationKitSettings{Float32}(), true), (bordering, false), (BifurcationKitSettings{Float32}(orientation_check = false), false))
-        algorithm = GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION)
+        algorithm = GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH)
         @test algorithm.orientation_check == check
         @test algorithm.step_control.max_turn == 1
     end
 end
 
 @testset "pass-through keywords and the corrector reach BifurcationKit $element" for element in (Float32, float(Int))
-    default = GameTracing.palc_algorithm(BifurcationKitSettings{element}(), WIDTH, TARGET_PRECISION)
+    default = GameTracing.palc_algorithm(BifurcationKitSettings{element}(), LogitGame(GAME, TARGET_PRECISION), WIDTH)
     @test isnothing(default.corrector)
     free = BifurcationKit.FreeParameterNewton()
     settings = BifurcationKitSettings{element}(
@@ -176,7 +169,7 @@ end
         palc_options = (; _bothside = true),
         continuation_options = (; detect_loop = true),
     )
-    algorithm = GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION; orientation_check = true)
+    algorithm = GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH; orientation_check = true)
     @test algorithm.corrector === free
     @test algorithm._bothside && algorithm.orientation_check
     options = GameTracing.continuation_options(settings, settings.first_step, 50, TARGET_PRECISION)
@@ -333,7 +326,7 @@ end
     )
     iterator = GameTracing.BifurcationKit.ContIterable(
         problem,
-        GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION),
+        GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
         GameTracing.continuation_options(
             settings,
             settings.first_step,
@@ -388,7 +381,7 @@ end
     )
     iterator = GameTracing.BifurcationKit.ContIterable(
         problem,
-        GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION),
+        GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
         GameTracing.continuation_options(settings, settings.first_step, settings.max_steps, TARGET_PRECISION);
         verbosity = 0,
     )

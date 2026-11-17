@@ -166,7 +166,7 @@ end
     )
     iter = kit.ContIterable(
         problem,
-        GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION),
+        GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
         GameTracing.continuation_options(
             settings,
             settings.first_step,

@@ -1,4 +1,6 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
+using LinearAlgebra: Diagonal
+using PathFollowing: PathFollowing
 using Random: AbstractRNG, Xoshiro
 
 """The largest difference in any probability between two profiles of mixed strategies."""
@@ -306,23 +308,25 @@ end
     @test largest_gap(last(first(branches)).profile, last(last(branches)).profile) < 1.0f-3
 end
 
-"""The Bernoulli Fisher weight `σ(z)σ(-z)` of a logit `z`."""
-fisher_weight(logit::Real)::Real = exp(-abs(logit)) / (1 + exp(-abs(logit)))^2
-
-@testset "PathFollowing's geometry weighs each payoff gap and the precision ($element)" for element in (Float32, widen(Float32))
-    # Payoff gaps (1, -2) at precision 3, so logits (3, -6).
-    point = element[1, -2, 3]
-    weights = zeros(element, 3)
-    log_precision = TraceGeometry{element}(; distance = FisherLogPrecisionDistance, state_weight = 1 // 2)
-    GameTracing.GeometryWeights(log_precision)(weights, point)
-    @test weights ≈ element[fisher_weight(3) / 2, fisher_weight(-6) / 2, 1 // 16]
-    GameTracing.GeometryWeights(TraceGeometry{element}(; distance = FisherDistance, state_weight = 1 // 2))(weights, point)
-    @test weights[3] == 1
-    GameTracing.GeometryWeights(TraceGeometry{element}(; distance = SummedDistance, state_weight = 1 // 2))(weights, point)
-    @test weights == element[1 // 2, 1 // 2, 1]
-    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
-    solved = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}(; step_metric = log_precision)))
-    @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
+@testset "PathFollowing's metric is the trace geometry's at target precision one ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    gains = NormalFormGains((randn(rng, element, 3, 2), randn(rng, element, 3, 2)))
+    width = logit_count(gains)
+    point = [randn(rng, element, width); 3 * rand(rng, element)]
+    for geometry in every_geometry(element(1 // 2))
+        frozen = PathFollowing.frozen_metric(GameTracing.trace_metric(geometry, gains, width, one(element), one(element)), point)
+        if geometry.distance == FisherDistance
+            precision_weight = geometry.precision_term == LogPrecisionTerm ? inv(1 + last(point))^2 : one(element)
+            expected = fisher_operator(GameTracing.logit_ranges(gains), point, geometry.state_weight, precision_weight)
+        else
+            expected = Diagonal([fill(GameTracing.coordinate_weight(geometry, width), width); GameTracing.precision_weight(geometry)])
+        end
+        @test inner_matrix(frozen, element, width + 1) ≈ expected rtol = sqrt(eps(element))
+    end
+    pennies = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
+    log_precision = TraceGeometry{element}(; precision_term = LogPrecisionTerm, state_weight = 1 // 2)
+    solved = unwrap(logit_solve(pennies; settings = PathFollowingSettings{element}(; step_metric = log_precision)))
+    @test GameTracing.max_regret(pennies, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(pennies)
 end
 
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))

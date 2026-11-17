@@ -1,4 +1,5 @@
-using LinearAlgebra: det, dot, norm, opnorm, pinv
+using LinearAlgebra: Diagonal, I, det, dot, norm, opnorm, pinv
+using PathFollowing: PathFollowing
 using Random: AbstractRNG, RandomDevice, Xoshiro
 
 """A generator on a fresh seed, logged so a failing draw can be replayed with `Xoshiro(seed)`."""
@@ -8,11 +9,57 @@ function fresh_rng()::Xoshiro
     return Xoshiro(seed)
 end
 
+"""
+The dense operator `state_weight JᵀGJ + precision_weight e eᵀ` of the Fisher distance on displacements `[Δw; Δλ]` at
+`point = [w; λ]`. `G` is the Fisher information of the logits `z = λ w`, one block `diag(q) - q qᵀ` per player of
+`ranges`; `J = [λI w]` is the logits' Jacobian; `e` is the precision's unit vector.
+"""
+function fisher_operator(ranges::Any, point::AbstractVector{E}, state_weight::E, precision_weight::E)::Matrix{E} where {E <: Real}
+    width = length(point) - 1
+    gaps = point[1:width]
+    information = zeros(E, width, width)
+    for range in ranges
+        logits = last(point) .* gaps[range]
+        shift = max(zero(E), maximum(logits))
+        weights = exp.(logits .- shift)
+        probabilities = weights ./ (exp(-shift) + sum(weights))
+        information[range, range] .= Diagonal(probabilities) .- probabilities .* probabilities'
+    end
+    jacobian = [last(point) .* Matrix{E}(I, width, width) gaps]
+    operator = state_weight .* (jacobian' * information * jacobian)
+    operator[end, end] += precision_weight
+    return operator
+end
+
+"""Every `TraceGeometry` at state weight `state_weight`: each plain distance, and the Fisher distance with each precision term."""
+function every_geometry(state_weight::E)::Vector{TraceGeometry{E}} where {E <: Real}
+    plain = [TraceGeometry{E}(; distance, state_weight) for distance in (AveragedDistance, SummedDistance)]
+    return [plain; [TraceGeometry{E}(; distance = FisherDistance, state_weight, precision_term) for precision_term in instances(PrecisionTerm)]]
+end
+
+"""`frozen`, a frozen PathFollowing metric over points of `width` coordinates, as a dense matrix of `metric_inner`."""
+function inner_matrix(frozen::Any, ::Type{E}, width::Integer)::Matrix{E} where {E <: Real}
+    units = [setindex!(zeros(E, width), one(E), index) for index in 1:width]
+    return [PathFollowing.metric_inner(frozen, left, right) for left in units, right in units]
+end
+
+"""`frozen` as a dense matrix of `metric_apply!`, one column per unit vector."""
+function applied_matrix(frozen::Any, ::Type{E}, width::Integer)::Matrix{E} where {E <: Real}
+    applied = zeros(E, width, width)
+    for index in 1:width
+        PathFollowing.metric_apply!(@view(applied[:, index]), frozen, setindex!(zeros(E, width), one(E), index))
+    end
+    return applied
+end
+
 """Payoff gains `G = A p + b` with `p = logistic(logits)`, independent of the precision: the logit map `λ (A p + b)`."""
 struct LinearGainPass{E <: Real}
     interaction::Matrix{E}
     stand_alone::Vector{E}
 end
+
+# Each logit is one player's choice between two strategies.
+GameTracing.logit_ranges(pass::LinearGainPass)::Vector{UnitRange{Int}} = UnitRange.(eachindex(pass.stand_alone), eachindex(pass.stand_alone))
 
 function (pass::LinearGainPass)(
         gain::AbstractVector,
@@ -34,6 +81,8 @@ struct ThresholdPass{E <: Real}
     threshold::E
 end
 
+GameTracing.logit_ranges(::ThresholdPass)::Tuple{UnitRange{Int}} = (1:1,)
+
 function (pass::ThresholdPass)(
         gain::AbstractVector,
         gain_slope::AbstractMatrix,
@@ -54,6 +103,8 @@ struct DampedGainPass{E <: Real}
     spread::E
 end
 
+GameTracing.logit_ranges(pass::DampedGainPass)::Vector{UnitRange{Int}} = GameTracing.logit_ranges(pass.pass)
+
 function (pass::DampedGainPass)(
         gain::AbstractVector,
         gain_slope::AbstractMatrix,
@@ -71,6 +122,8 @@ end
 
 """One logit whose gain is the precision itself, `G = λ`: the branch `z = λ²`."""
 struct PrecisionGainPass end
+
+GameTracing.logit_ranges(::PrecisionGainPass)::Tuple{UnitRange{Int}} = (1:1,)
 
 function (::PrecisionGainPass)(
         gain::AbstractVector,
@@ -97,6 +150,8 @@ struct NoisyFlatPass{E <: Real}
     salt::UInt
 end
 
+GameTracing.logit_ranges(::NoisyFlatPass)::Tuple{UnitRange{Int}} = (1:1,)
+
 function (pass::NoisyFlatPass)(
         gain::AbstractVector,
         gain_slope::AbstractMatrix,
@@ -116,6 +171,8 @@ struct PoisonedPass{P, E <: Real}
     pass::P
     poison::E
 end
+
+GameTracing.logit_ranges(pass::PoisonedPass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
 
 function (pass::PoisonedPass)(
         gain::AbstractVector,
@@ -138,6 +195,8 @@ struct NaNSlopePass{P}
     pass::P
 end
 
+GameTracing.logit_ranges(pass::NaNSlopePass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
+
 function (pass::NaNSlopePass)(
         gain::AbstractVector,
         gain_slope::AbstractMatrix,
@@ -154,6 +213,8 @@ end
 struct ThrowingPass{P}
     pass::P
 end
+
+GameTracing.logit_ranges(pass::ThrowingPass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
 
 function (pass::ThrowingPass)(
         gain::AbstractVector,
@@ -213,6 +274,9 @@ each rival `q` playing its first action with probability `logistic(z_q)`. `payof
 struct NormalFormPass{N, A <: AbstractArray{<:Real, N}}
     payoffs::NTuple{N, A}
 end
+
+# Each player has two actions, so one logit.
+GameTracing.logit_ranges(pass::NormalFormPass)::Vector{UnitRange{Int}} = UnitRange.(eachindex(pass.payoffs), eachindex(pass.payoffs))
 
 """The probability that a player whose first action has probability `first_choice` plays `action`."""
 function action_probability(first_choice::E, action::Integer)::E where {E <: Real}
@@ -586,6 +650,8 @@ struct WindowNoisePass{P, E <: Real}
     noise::E
     window::E
 end
+
+GameTracing.logit_ranges(pass::WindowNoisePass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
 
 function (pass::WindowNoisePass)(
         gain::AbstractVector,

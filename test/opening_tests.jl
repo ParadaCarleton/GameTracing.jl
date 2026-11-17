@@ -100,7 +100,7 @@ end
 (stop::StopAtPrecision)(::AbstractVector, precision::Real)::Bool = precision < stop.precision
 
 const FAR_TARGET = 1.0f6
-const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
+const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = TraceGeometry{Float32}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
 
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
     for payoffs in (far_opening_games(Xoshiro(FAR_OPENING_SEED))..., far_opening_games(fresh_rng())...)
@@ -168,7 +168,7 @@ end
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
-    settings_wide = BifurcationKitSettings{wide}(; step_metric = TraceGeometry{wide}(; distance = FisherLogPrecisionDistance))
+    settings_wide = BifurcationKitSettings{wide}(; step_metric = TraceGeometry{wide}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
     reached = unwrap_error(
         trace_endpoint(
             LogitGame(gains_wide, wide(FAR_TARGET)),
@@ -228,6 +228,7 @@ end
         zeros(Float32, 3),
         zeros(Float32, 3),
         zero(Float32),
+        nothing,
     )
     # Gaps near 1 at half the far target: logits near 5e5, a pin offset of 4% and 25% of a target.
     point = Float32[1.0f0, -1.0f0, 0.5f0 * FAR_TARGET]
@@ -258,7 +259,7 @@ end
     # A small logit has no allowance to speak of: twice the tolerance stays past it.
     @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element), one(element))) > tolerance
     # The corrector settles the large logit's rounding at its first correction.
-    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element))
+    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element), nothing)
     GameTracing.restate!(check; predictor_move = one(element))
     verdicts = [GameTracing.corrected!(check, (; x = element[first, 0, 1], res_f = zeros(element, 3), step), true) for (step, first) in ((0, large), (1, rounded))]
     @test last(verdicts) isa GameTracing.BifurcationKit.NewtonConverged
@@ -268,7 +269,7 @@ end
 """A fresh `CorrectorReach` whose current step's predictor moved the logits `predictor_move`."""
 function fresh_check(predictor_move::E)::GameTracing.CorrectorReach{GameTracing.AcceptAll, E} where {E <: Real}
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E),
+        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E), nothing,
     )
     GameTracing.restate!(check; predictor_move = predictor_move)
     return check
@@ -362,7 +363,7 @@ end
 
 @testset "a pure equilibrium traced to λ 1e6 reaches it, its logits settled to their rounding ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    settings = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; distance = FisherLogPrecisionDistance))
+    settings = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
     traced = unwrap(trace_endpoint(LogitGame(gains, element(FAR_TARGET)), GameTracing.logit_count(gains), settings))
     # Defecting gains 1 against a defector, so each logit is λ.
     @test traced.logits ≈ fill(element(FAR_TARGET), 2)
@@ -426,7 +427,7 @@ end
 """The factored bordered tangent of a restart (`restart_tangent`), up to positive scale: the opening tangent's reference."""
 function factored_opening_tangent(game, start, settings)
     width = length(start) - 1
-    palc = GameTracing.palc_geometry(settings.step_metric, width, game.target_precision)
+    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!, width, game.target_precision)
     direction = setindex!(zero(start), one(eltype(start)), lastindex(start))
     border = GameTracing.palc_border(palc.dot, eltype(start)(palc.palc_state_weight), direction)
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))

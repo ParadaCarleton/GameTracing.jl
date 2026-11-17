@@ -84,26 +84,25 @@ function payoff_range(gains::NormalFormGains{N, A})::eltype(A) where {N, A}
 end
 
 """
-    BranchRecorder(gains, target, tolerance)
+    BranchRecorder(gains, tolerance)
 
-A `keep_going` that appends each accepted point of a trace of `gains` to precision `target` to `precisions` and
+A `keep_going` that appends each accepted point of a trace of `gains` to `precisions` and
 `logits`, and stops the trace at the first point whose largest regret (`max_regret!`) is at most `tolerance`.
 """
 struct BranchRecorder{G <: NormalFormGains, E <: Real, W <: NamedTuple}
     gains::G
-    target::E
     tolerance::E
     precisions::Vector{E}
     logits::Vector{Vector{E}}
     work::W
 end
 
-function BranchRecorder(gains::NormalFormGains, target::E, tolerance::E)::BranchRecorder{<:NormalFormGains, E} where {E <: Real}
-    return BranchRecorder(gains, target, tolerance, E[], Vector{E}[], regret_workspace(gains, zeros(E, logit_count(gains))))
+function BranchRecorder(gains::NormalFormGains, tolerance::E)::BranchRecorder{<:NormalFormGains, E} where {E <: Real}
+    return BranchRecorder(gains, tolerance, E[], Vector{E}[], regret_workspace(gains, zeros(E, logit_count(gains))))
 end
 
-function (recorder::BranchRecorder{G, E})(logits::AbstractVector{E}, relative_precision::Real)::Bool where {G, E <: Real}
-    push!(recorder.precisions, relative_precision * recorder.target)
+function (recorder::BranchRecorder{G, E})(logits::AbstractVector{E}, precision::Real)::Bool where {G, E <: Real}
+    push!(recorder.precisions, precision)
     push!(recorder.logits, collect(logits))
     return max_regret!(recorder.work, recorder.gains, logits) > recorder.tolerance
 end
@@ -199,7 +198,7 @@ function engine_points(
         tolerance::E,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    recorder = BranchRecorder(gains, maximum_precision, tolerance)
+    recorder = BranchRecorder(gains, tolerance)
     result = trace_endpoint(LogitGame(gains, maximum_precision), logit_count(gains), settings; keep_going = recorder, context)
     settled = !isempty(recorder.logits) && max_regret!(recorder.work, gains, last(recorder.logits)) <= recorder.tolerance
     if !settled && is_error(result)

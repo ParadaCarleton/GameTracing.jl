@@ -10,8 +10,8 @@ the float type's rounding noise, before the target (`CorrectorReach`); a wider f
     TraceFailure(cause, context)
 
 A trace that did not reach its target: `cause` names why and `context` carries the last accepted `logits`
-and relative precision. A trace that left its start also carries the tangent there in logits (`logit_tangent`,
-`dz = ρ dw + w dρ` in the payoff gaps `w`) and the step it held; a non-finite start has neither.
+and precision. A trace that left its start also carries the tangent there in logits (`logit_tangent`,
+`dz = λ dw + w dλ` in the payoff gaps `w`) and the step it held; a non-finite start has neither.
 """
 struct TraceFailure{C <: NamedTuple}
     cause::TraceCause

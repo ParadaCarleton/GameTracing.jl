@@ -144,9 +144,9 @@ end
 """
     GeometryWeights(geometry)
 
-PathFollowing's `PointWeights` for `geometry` over points `[w; λ]`, at precision `λ` in place of the relative one
+PathFollowing's `PointWeights` for `geometry` over points `[w; λ]`, at target precision one
 (`StepDistance`). Each gap weighs `coordinate_weight`, or for a Fisher distance `state_weight σ(z)σ(-z)` at its logit
-`z = λ w`. The precision weighs `level_weight`, or `1 / (1 + λ)²` for `FisherLogPrecisionDistance`.
+`z = λ w`. The precision weighs `precision_weight`, or `1 / (1 + λ)²` for `FisherLogPrecisionDistance`.
 """
 struct GeometryWeights{E <: Real}
     geometry::TraceGeometry{E}
@@ -160,14 +160,14 @@ function (weighting::GeometryWeights{E})(weights::AbstractVector{E}, point::Abst
     else
         fill!(payoff_gaps(weights), coordinate_weight(weighting.geometry, length(gaps)))
     end
-    weights[end] = ifelse(distance == FisherLogPrecisionDistance, inv(one(E) + abs(precision))^2, level_weight(weighting.geometry))
+    weights[end] = ifelse(distance == FisherLogPrecisionDistance, inv(one(E) + abs(precision))^2, precision_weight(weighting.geometry))
     return weights
 end
 
 """
     QRESystem(game, workspace)
 
-`game`'s branch as PathFollowing's `system!` over points `[w; λ]`: `branch_system!` at target precision one, without
+`game`'s branch as PathFollowing's `system!` over points `[w; λ]`: `branch_system!` without
 its pin row, written into `workspace` first.
 """
 struct QRESystem{G <: LogitGame, W <: BranchWorkspace}
@@ -433,7 +433,7 @@ function engine_points(
         cause = ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
         return Err(TraceFailure(cause, start_context(failure, logit_count(gains), context)))
     end
-    return recorded_points(unwrap(started), BranchRecorder(gains, one(E), tolerance), maximum_precision, settings.max_steps, context)
+    return recorded_points(unwrap(started), BranchRecorder(gains, tolerance), maximum_precision, settings.max_steps, context)
 end
 
 """`engine_points` on a started `tracer`, each accepted point into `recorder`."""

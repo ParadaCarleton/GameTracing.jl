@@ -46,10 +46,11 @@ end
     Tracer
 
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
-the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the metrics' weights at `point`, and work arrays; `row` is the border row of the next bordered system. `init` builds one and `step!`
-advances it. Read its fields; do not write them.
+the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the step and turn metrics
+frozen at `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system. `init`
+builds one and `step!` advances it. Read its fields; do not write them.
 """
-mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
+mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, T}
     const problem::P
     const algorithm::A
     const point::Vector{E}
@@ -57,8 +58,9 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C}
     step_length::E
     steps::Int
     orientation::Int8
-    const weights::Vector{E}
-    const turn_weights::Vector{E}
+    const metric::M
+    const turn_metric::T
+    const scratch::Vector{E}
     const residual::Vector{E}
     const jacobian::Matrix{E}
     const bordered::Matrix{E}
@@ -94,18 +96,17 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zeros(E, size),
-        zeros(E, size), zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size),
-        zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
+        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0),
+        frozen_metric(algorithm.metric, problem.start), frozen_metric(algorithm.turn_metric, problem.start), zeros(E, size),
+        zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
+        zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
     )
     return started(tracer)
 end
 
-"""`tracer` with its weights and unit tangent at its start, or the `StepFailure` there."""
+"""`tracer` with its unit tangent at its start, where `init` froze its metrics, or the `StepFailure` there."""
 function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tracer{E}}
-    (; algorithm, problem) = tracer
-    reweight!(tracer.weights, algorithm.metric, tracer.point)
-    reweight!(tracer.turn_weights, algorithm.turn_metric, tracer.point)
+    (; problem) = tracer
     problem.system!(tracer.residual, tracer.jacobian, tracer.point)
     if !(all(isfinite, tracer.residual) && all(isfinite, tracer.jacobian))
         return Err(StepFailure(NotFiniteStart, NoRefusal, tracer.step_length, 0))
@@ -114,7 +115,7 @@ function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tr
     if is_error(oriented)
         return Err(StepFailure(SingularStart, NoRefusal, tracer.step_length, 0))
     end
-    tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
+    tracer.tangent .= tracer.candidate ./ metric_norm(tracer.metric, tracer.candidate)
     tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
@@ -177,7 +178,7 @@ control's factor and its orientation sign.
 """
 function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
-    tracer.row .= tracer.weights .* tracer.tangent
+    metric_apply!(tracer.row, tracer.metric, tracer.tangent)
     corrected = correct!(tracer)
     if corrected.refusal != NoRefusal
         return corrected
@@ -193,7 +194,7 @@ function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     if is_error(oriented)
         return refused(E, SingularSystem)
     end
-    turn = weighted_angle(tracer.turn_weights, tracer.tangent, tracer.candidate)
+    turn = metric_angle(tracer.turn_metric, tracer.scratch, tracer.tangent, tracer.candidate)
     factor = step_factor(algorithm.step_control, corrected.contraction, corrected.first_correction, turn)
     if factor > algorithm.step_control.refusal_factor
         return refused(E, TooFast, factor)
@@ -278,7 +279,7 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         end
         copyto!(tracer.previous, tracer.iterate)
         tracer.iterate .+= tracer.candidate
-        correction = correction_length(corrector.distance, tracer.weights, tracer.previous, tracer.iterate)
+        correction = correction_length(corrector.distance, tracer, tracer.previous, tracer.iterate)
         if iteration == 1
             first_correction = correction
         elseif iteration == 2
@@ -297,22 +298,22 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
     return refused(E, NotConverged, step_factor(tracer.algorithm.step_control, contraction, first_correction, E(NaN32)))
 end
 
-"""A correction's length from `from` to `to`: the step metric's norm, or the corrector's own `distance`."""
-function correction_length(::MetricDistance, weights::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return weighted_distance(weights, from, to)
+"""A correction's length from `from` to `to`: `tracer`'s step metric norm, or the corrector's own `distance`."""
+function correction_length(::MetricDistance, tracer::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return metric_distance(tracer.metric, tracer.scratch, from, to)
 end
 
-function correction_length(distance::Any, ::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+function correction_length(distance::Any, ::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return E(distance(from, to))
 end
 
 """
 The tangent at the point whose Jacobian `tracer.jacobian` holds, into `tracer.candidate`: the solution of
-`[J; (w ∘ previous)ᵀ] t = [0; 1]` with `w` the turn metric's weights, so `⟨t, previous⟩` is one, positive. The
-orientation sign at that tangent (`orientation_sign!`), or `none` when the solve fails.
+`[J; (M previous)ᵀ] t = [0; 1]` with `M` the turn metric, so `⟨t, previous⟩` is one, positive. The orientation sign
+at that tangent (`orientation_sign!`), or `none` when the solve fails.
 """
 function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Option{Int8} where {E <: Real}
-    tracer.row .= tracer.turn_weights .* previous
+    metric_apply!(tracer.row, tracer.turn_metric, previous)
     border!(tracer)
     fill!(tracer.rhs, zero(E))
     tracer.rhs[end] = one(E)
@@ -376,16 +377,16 @@ function factor_term(target::E, measured::E)::E where {E <: Real}
 end
 
 """
-Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, reweight both metrics there and
-size the next step.
+Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, freeze both metrics there and size
+the next step.
 """
 function accept_point!(tracer::Tracer{E}, attempt::Attempt{E})::Tracer{E} where {E <: Real}
     (; algorithm) = tracer
     copyto!(tracer.point, tracer.iterate)
     tracer.orientation = attempt.orientation
-    reweight!(tracer.weights, algorithm.metric, tracer.point)
-    reweight!(tracer.turn_weights, algorithm.turn_metric, tracer.point)
-    tracer.tangent .= tracer.candidate ./ weighted_norm(tracer.weights, tracer.candidate)
+    freeze_metric!(tracer.metric, tracer.point)
+    freeze_metric!(tracer.turn_metric, tracer.point)
+    tracer.tangent .= tracer.candidate ./ metric_norm(tracer.metric, tracer.candidate)
     (; max_step_growth, max_step) = algorithm.step_control
     tracer.step_length = min(tracer.step_length / max(attempt.factor, inv(max_step_growth)), max_step)
     tracer.steps += 1

@@ -162,8 +162,8 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
 
 - `corrector`: a `Newton`.
 - `step_control`: a `StepControl`.
-- `metric`: the step metric (`FixedWeights` or `PointWeights`). Step lengths, the corrector's hyperplane and the
-  tangent's unit length are in it.
+- `metric`: the step metric (`frozen_metric`), such as `FixedWeights`. Step lengths, the corrector's hyperplane and
+  the tangent's unit length are in it.
 - `turn_metric`: the metric that orients each tangent along the one before and measures their turn.
 - `orientation_check`: a `DeterminantSign`, or `nothing` to orient each tangent by the turn metric alone. Without it, a long
   step near a fold can land where the oriented tangent runs back along the curve.

@@ -16,45 +16,48 @@ using ErrorTypes: is_error, unwrap, unwrap_error
 end
 
 @testset "each distance weighs coordinates and precision as documented, the Fisher distances measuring in the summed norm" begin
-    displacement = Float32[1, 2, 3]
+    # Each coordinate is the old unit `[P w; λ / P]` displacement `[1, 2, 3]` in `(w, λ)`, at target precision 3.
+    target = 3.0f0
+    displacement = Float32[1, 2, 3] .* [inv(target), inv(target), target]
     for (distance, expected) in (
             (AveragedDistance, 0.4f0 * 5 / 2 + 0.6f0 * 9), (SummedDistance, 0.4f0 * 5 + 9), (FisherDistance, 0.4f0 * 5 + 9),
             (FisherLogPrecisionDistance, 0.4f0 * 5 + 9),
         )
         geometry = TraceGeometry{Float32}(; distance, state_weight = 0.4f0)
-        @test GameTracing.arclength_distance(zeros(Float32, 3), displacement, geometry)^2 ≈ expected
+        @test GameTracing.arclength_distance(zeros(Float32, 3), displacement, geometry, target)^2 ≈ expected
     end
 end
 
 @testset "PALC's norm in each distance is the trace's own" begin
-    point = Float32[0.4f0, -1.2f0, 0.3f0]
-    displacement = Float32[0.2f0, -0.1f0, 0.05f0]
+    # In `(w, λ)` at target precision 3: gaps `w / 3` and precision `3 × 0.3` of the point `(0.4, -1.2, 0.3)` and step `(0.2, -0.1, 0.05)`.
+    point = Float32[0.4f0 / 3, -1.2f0 / 3, 0.9f0]
+    displacement = Float32[0.2f0 / 3, -0.1f0 / 3, 0.15f0]
     for distance in instances(StepDistance)
         geometry = TraceGeometry{Float32}(; distance, state_weight = 0.3f0)
         palc = GameTracing.palc_geometry(geometry, 2, 3.0f0)
         GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(point, last(point)))
-        # PALC's pin moves with the relative precision, so it repeats the displacement's last coordinate.
+        # PALC's pin moves with the precision, so it repeats the displacement's last coordinate.
         palc_square = palc.dot(displacement, displacement, last(displacement), last(displacement), palc.palc_state_weight)
         logits = GameTracing.logits_at(point)
         frozen = distance in (FisherDistance, FisherLogPrecisionDistance)
         weights = ifelse(frozen, inv.(1 .+ exp.(-logits)) .* inv.(1 .+ exp.(logits)), ones(Float32, 2))
-        # The log-precision distance measures the payoff gains `w / P`, P = 3.
+        # The log-precision distance measures the payoff gains `w`; the plain norm below weighs each by P² = 9.
         weights = weights ./ ifelse(distance == FisherLogPrecisionDistance, 9.0f0, 1.0f0)
-        # A step in ρ is a step in log(1 + λ), λ = 3ρ, of 3 / (1 + 3ρ) times its length to first order.
-        precision_weight = ifelse(distance == FisherLogPrecisionDistance, 3 / (1 + 3 * last(point)), 1.0f0)
+        # A step in λ is a step in log(1 + λ) of 1 / (1 + λ) times its length to first order; the plain norm divides by P = 3.
+        precision_weight = ifelse(distance == FisherLogPrecisionDistance, 3 / (1 + last(point)), 1.0f0)
         plain = TraceGeometry{Float32}(; distance = ifelse(frozen, SummedDistance, distance), state_weight = 0.3f0)
         weighted = [sqrt.(weights) .* displacement[1:2]; precision_weight * last(displacement)]
-        @test palc_square ≈ GameTracing.arclength_distance(zeros(Float32, 3), weighted, plain)^2 rtol = 1.0f-5
+        @test palc_square ≈ GameTracing.arclength_distance(zeros(Float32, 3), weighted, plain, 3.0f0)^2 rtol = 1.0f-5
     end
 end
 
-@testset "a log-precision trace weighs the relative precision positively over its range, at every target" begin
+@testset "a log-precision trace weighs the precision positively over its range, at every target" begin
     for target_precision in (0.01f0, 0.5f0, 1.0f0, 4.0f0, 100.0f0)
         palc = GameTracing.palc_geometry(TraceGeometry{Float32}(distance = FisherLogPrecisionDistance), 2, target_precision)
         @test 0 < palc.palc_state_weight < 1
-        weighting = GameTracing.FisherLogPrecisionWeights(1.0f0, palc.palc_state_weight, target_precision)
-        for relative_precision in range(0.0f0, 1.0f0; length = 101)
-            @test GameTracing.precision_dot_weight(weighting, relative_precision) > 0
+        weighting = GameTracing.FisherLogPrecisionWeights(1.0f0, palc.palc_state_weight)
+        for precision in range(0.0f0, target_precision; length = 101)
+            @test GameTracing.precision_dot_weight(weighting, precision) > 0
         end
     end
 end
@@ -73,6 +76,7 @@ end
             GameTracing.AcceptAll(),
             corrector,
             geometry,
+            TARGET_PRECISION,
             Float32[0, 0, 0.5f0],
             predicted,
             1.0f0,
@@ -94,7 +98,7 @@ end
     closing = (; x = predicted, res_f = zero(predicted), p = 0.5f0, step = 2, residual = 0.0f0, z0 = (; u = previous, p = 0.5f0), closing = true)
     for (settled, recorded) in ((false, 0.0f0), (true, 0.25f0))
         check = GameTracing.CorrectorReach(
-            GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), previous, predicted, 1.0f0,
+            GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), TARGET_PRECISION, previous, predicted, 1.0f0,
         )
         GameTracing.restate!(check; predictor_move = GameTracing.logit_change(previous, predicted))
         GameTracing.restate!(check; correction = 0.25f0, settled_here = settled)
@@ -107,8 +111,8 @@ end
     game = LogitGame(GAME, TARGET_PRECISION)
     traced = unwrap(trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}()))
     settings = BifurcationKitSettings{Float32}(step_metric = TraceGeometry{Float32}(distance = SummedDistance))
-    projected = branch_projection(game, traced.logits .+ 1.0f-2, 1.0f0, settings)
-    @test residual_norm(GAME, projected.logits, TARGET_PRECISION * projected.relative_precision) < 1.0f-3
+    projected = branch_projection(game, traced.logits .+ 1.0f-2, TARGET_PRECISION, settings)
+    @test residual_norm(GAME, projected.logits, projected.precision) < 1.0f-3
 end
 
 """Whether `settings` traces `payoffs` to the fine Float64 reference at `precision`, or to an equilibrium where the branch folds back."""

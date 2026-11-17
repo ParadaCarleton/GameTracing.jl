@@ -1,4 +1,4 @@
-# The trace-geometry arms in payoff gaps: Fisher gaps beside a step in ρ or in log(1 + λ), with the shipped reach acceptance,
+# The trace-geometry arms in payoff gaps: Fisher gaps beside a step in λ or in log(1 + λ), with the shipped reach acceptance,
 # each at three state weights.
 const ARMS = (
     fisher_reach = (; distance = FisherDistance),

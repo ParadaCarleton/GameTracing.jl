@@ -53,32 +53,31 @@ end
         keep_going = refuse_all,
     )
     @test unwrap_error(result).cause == GameTracing.TraceStuck
-    @test unwrap_error(result).context.relative_precision < 1
+    @test unwrap_error(result).context.precision < TARGET_PRECISION
     @test residual_norm(
         GAME,
         unwrap_error(result).context.logits,
-        TARGET_PRECISION * unwrap_error(result).context.relative_precision,
+        unwrap_error(result).context.precision,
     ) <
         1.0f-4
 end
 
 """A `keep_going` callback that goes on only while the point it sees solves the game's map at its precision."""
-struct OnTheBranch{P, E <: Real}
+struct OnTheBranch{P}
     pass::P
-    target_precision::E
 end
 
-function (probe::OnTheBranch)(logits::AbstractVector, relative_precision::Real)::Bool
-    return residual_norm(probe.pass, logits, probe.target_precision * relative_precision) <
+function (probe::OnTheBranch)(logits::AbstractVector, precision::Real)::Bool
+    return residual_norm(probe.pass, logits, precision) <
         1.0f-4
 end
 
-"""A `keep_going` callback that stops the trace once its relative precision passes `limit`."""
+"""A `keep_going` callback that stops the trace once its precision passes `limit`."""
 struct StopPast{E <: Real}
     limit::E
 end
 
-(stop::StopPast)(::AbstractVector, relative_precision::Real)::Bool = relative_precision <
+(stop::StopPast)(::AbstractVector, precision::Real)::Bool = precision <
     stop.limit
 
 @testset "a failure reports its tangent in logits" begin
@@ -86,10 +85,10 @@ end
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
         BifurcationKitSettings{Float32}();
-        keep_going = StopPast(0.75f0),
+        keep_going = StopPast(0.75f0 * TARGET_PRECISION),
     )
     @test unwrap_error(result).cause == GameTracing.TraceStuck
-    (; logits, logit_tangent, tangent_precision, relative_precision) = unwrap_error(
+    (; logits, logit_tangent, tangent_precision, precision) = unwrap_error(
         result,
     ).context
     # A step `h` along the branch's tangent leaves a residual of order h², far under h ‖dz‖.
@@ -97,7 +96,7 @@ end
     moved = residual_norm(
         GAME,
         logits .+ step .* logit_tangent,
-        TARGET_PRECISION * (relative_precision + step * tangent_precision),
+        precision + step * tangent_precision,
     )
     @test moved < step * maximum(abs, logit_tangent) / 10
 end
@@ -107,7 +106,7 @@ end
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
         BifurcationKitSettings{Float32}();
-        keep_going = OnTheBranch(GAME, TARGET_PRECISION),
+        keep_going = OnTheBranch(GAME),
     )
     @test !is_error(result)
 end
@@ -127,11 +126,11 @@ end
 @testset "every state weight in (0, 1) traces, a one-logit game at the default settings included" begin
     for state_weight in (0.1f0, 0.5f0, 0.9f0), distance in instances(StepDistance)
         geometry = TraceGeometry{Float32}(; distance, state_weight)
-        # A log-precision trace carries its state weight in its dot and runs PALC at a weight set by the target.
+        # PALC's state weight is set by the target: through the precision's plain weight, or for the log-precision distance directly.
         palc_state_weight = ifelse(
             distance == FisherLogPrecisionDistance,
             GameTracing.log_precision_palc_state_weight(2.0f0),
-            state_weight,
+            GameTracing.plain_palc_state_weight(last(GameTracing.plain_weights(geometry, 1, 2.0f0))),
         )
         @test GameTracing.palc_geometry(geometry, 1, 2.0f0).palc_state_weight ==
             palc_state_weight
@@ -152,7 +151,7 @@ end
 @testset "BifurcationKit's smallest step is zero, so its halving ends only at a zero step" begin
     for element in (Float16, Float32, float(Int))
         settings = BifurcationKitSettings{element}()
-        @test GameTracing.continuation_options(settings, settings.first_step, 1).dsmin ==
+        @test GameTracing.continuation_options(settings, settings.first_step, 1, TARGET_PRECISION).dsmin ==
             zero(element)
     end
 end
@@ -181,7 +180,7 @@ end
     @test algorithm.corrector === free
     @test !algorithm.orientation_check
     @test algorithm.θ == one(element) / 4
-    options = GameTracing.continuation_options(settings, settings.first_step, 50)
+    options = GameTracing.continuation_options(settings, settings.first_step, 50, TARGET_PRECISION)
     @test (options.max_steps, options.p_max) == (3, one(element) / 2)
     @test options.p_min == 0
 end
@@ -203,6 +202,7 @@ end
             settings,
             settings.first_step,
             settings.max_steps,
+            TARGET_PRECISION,
         )
         @test (options.ds, options.dsmin, options.dsmax, options.a) ==
             (
@@ -211,7 +211,7 @@ end
             settings.max_step,
             settings.aggressiveness,
         )
-        @test (options.p_min, options.p_max) == (0, 1)
+        @test (options.p_min, options.p_max) == (0, TARGET_PRECISION)
         @test options.max_steps == settings.max_steps
         # Only the corrector's callback converges a corrector short of an exact root.
         @test options.newton_options.tol == 0
@@ -256,7 +256,7 @@ end
     game = LogitGame(pass, 2.0f0)
     start = GameTracing.trace_start(game, zeros(Float32, 1))
     gains = evaluated(pass, zeros(Float32, 1), 1.0f0).precision_slope
-    @test GameTracing.payoff_gaps(start) ≈ 2.0f0 .* gains
+    @test GameTracing.payoff_gaps(start) ≈ gains
     @test last(start) == 0
     residual, jacobian = GameTracing.GameSystem(
         game,
@@ -328,6 +328,7 @@ end
             settings,
             settings.first_step,
             settings.max_steps,
+            TARGET_PRECISION,
         );
         verbosity = 0,
     )
@@ -341,6 +342,7 @@ end
         1.0f0,
         false,
         false,
+        TARGET_PRECISION,
     )
     degenerate = zeros(Float32, WIDTH + 1)
     # A swapped game that was non-finite at the swap point has no factorization (`ShiftedGame`).
@@ -377,12 +379,12 @@ end
     iterator = GameTracing.BifurcationKit.ContIterable(
         problem,
         GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION),
-        GameTracing.continuation_options(settings, settings.first_step, settings.max_steps);
+        GameTracing.continuation_options(settings, settings.first_step, settings.max_steps, TARGET_PRECISION);
         verbosity = 0,
     )
     state = GameTracing.opened_state(iterator, zeros(Float32, WIDTH + 1), Float32[0, 0, 1.0f-3])
     opening = GameTracing.TraceProgress{Float32}(
-        zeros(Float32, WIDTH), 0.0f0, 0, 0.0f0, 0.0f0, zeros(Float32, WIDTH), 1.0f0, false, false,
+        zeros(Float32, WIDTH), 0.0f0, 0, 0.0f0, 0.0f0, zeros(Float32, WIDTH), 1.0f0, false, false, TARGET_PRECISION,
     )
     ended = GameTracing.ended_segment(
         GameTracing.thrown_failure(SingularException(2)),

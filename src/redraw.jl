@@ -8,7 +8,7 @@ struct NoRedraw end
 """
     ShiftedGame(game, point, factorization, shift, shift_move, within)
 
-A candidate `game` at the accepted point `point = [w; ρ]` (`RootShift`): its bordered Jacobian `[∂F/∂x; bᵀ]` there,
+A candidate `game` at the accepted point `point = [w; λ]` (`RootShift`): its bordered Jacobian `[∂F/∂x; bᵀ]` there,
 factored, its root `shift` `δ`, that shift's largest logit move `shift_move`, and whether the move is `within` the
 check's limit. A non-finite map or Jacobian at `point` has no factorization (`nothing`), a NaN shift and is never
 `within`; a restart on it fails as LAPACK's check of a non-finite matrix does, at the swap point.
@@ -84,7 +84,7 @@ end
     RootShift(point, border, limit)
     RootShift(point, step, border, settings)
 
-The check a `redraw` hook receives at the accepted point `point = [w; ρ]`. Called on a candidate game, it returns
+The check a `redraw` hook receives at the accepted point `point = [w; λ]`. Called on a candidate game, it returns
 the `ShiftedGame`: one evaluation of the game's map and Jacobian at `point`, the bordered system under the
 corrector's `border` factored once, and the root shift `δ` from `[∂F/∂x; borderᵀ] δ = [-F(point); 0]`, one Newton
 step of the bordered corrector. The old map's residual at an accepted point is within the corrector's tolerance, so
@@ -129,7 +129,7 @@ end
 The `RedrawSlot` after a `redraw` hook's result `redrawn`, `slot` itself unless it swaps the game: `nothing` and the current game do not; a new game
 swaps as the `ShiftedGame` that `check` (`RootShift`) builds for it, and a `ShiftedGame` the hook returned must come
 from `check`. A swap sets `pending`, the factorization and the root shift the restart reads; a shift beyond the corrector's reach (not `within`) is dropped, so a root out of reach fails stuck at the swap instead of jumping branches. A game of another type, or with another
-target precision, is a caller error: the trace's relative precision would change meaning.
+target precision, is a caller error: the trace's precision would change meaning.
 """
 function swapped(slot::RedrawSlot{G, E}, ::RootShift, ::Nothing)::RedrawSlot{G, E} where {G <: LogitGame, E <: Real}
     return slot

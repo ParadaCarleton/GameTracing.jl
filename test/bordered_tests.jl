@@ -171,6 +171,7 @@ end
             settings,
             settings.first_step,
             settings.max_steps,
+            TARGET_PRECISION,
         );
         verbosity = 0,
     )

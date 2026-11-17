@@ -28,13 +28,12 @@ function exhausted_by_rounding(payoffs::Tuple, failure::TraceFailure)::Bool
     return failure.cause == GameTracing.PrecisionExhausted && correction <= 2 * noise
 end
 
-"""A `keep_going` that stops a trace to `target` at the first accepted point at or past precision `precision`."""
+"""A `keep_going` that stops a trace at the first accepted point at or past precision `precision`."""
 struct StopAtPrecision{E <: Real}
     precision::E
-    target::E
 end
 
-(stop::StopAtPrecision)(::AbstractVector, relative_precision::Real)::Bool = relative_precision * stop.target < stop.precision
+(stop::StopAtPrecision)(::AbstractVector, precision::Real)::Bool = precision < stop.precision
 
 const FAR_TARGET = 1.0f6
 const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
@@ -47,7 +46,7 @@ const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = T
                 LogitGame(gains, FAR_TARGET),
                 GameTracing.logit_count(gains),
                 LOG_PRECISION_SETTINGS;
-                keep_going = StopAtPrecision(zero(Float32), FAR_TARGET),
+                keep_going = StopAtPrecision(zero(Float32)),
             )
         )
         # A first step of length `first_step` in `log(1 + λ)` reaches at most `expm1(first_step)`.
@@ -63,7 +62,7 @@ end
             LogitGame(gains_32, FAR_TARGET),
             GameTracing.logit_count(gains_32),
             LOG_PRECISION_SETTINGS;
-            keep_going = StopAtPrecision(50.0f0, FAR_TARGET),
+            keep_going = StopAtPrecision(50.0f0),
         )
     )
     @test failure.cause == GameTracing.PrecisionExhausted
@@ -78,7 +77,7 @@ end
             LogitGame(gains_wide, wide(FAR_TARGET)),
             GameTracing.logit_count(gains_wide),
             settings_wide;
-            keep_going = StopAtPrecision(wide(50), wide(FAR_TARGET)),
+            keep_going = StopAtPrecision(wide(50)),
         )
     )
     @test reached.context.precision >= 50
@@ -99,7 +98,7 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
                     LogitGame(gains, FAR_TARGET),
                     GameTracing.logit_count(gains),
                     LOG_PRECISION_SETTINGS;
-                    keep_going = StopAtPrecision(50.0f0, FAR_TARGET),
+                    keep_going = StopAtPrecision(50.0f0),
                 )
             )
             (; precision, logits) = failure.context
@@ -114,23 +113,25 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
     end
 end
 
-@testset "the corrector holds the relative precision at its pin, whatever the logit correction" begin
+@testset "the corrector holds the precision at its pin, whatever the logit correction" begin
     check = GameTracing.CorrectorReach(
         GameTracing.AcceptAll(),
         GameTracing.CorrectorSettings{Float32}(),
         TraceGeometry{Float32}(),
+        FAR_TARGET,
         zeros(Float32, 3),
         zeros(Float32, 3),
         zero(Float32),
     )
-    point = Float32[1.0f6, -1.0f6, 0.5f0]
+    # Gaps near 1 at half the far target: logits near 5e5, a pin offset of 4% and 25% of a target.
+    point = Float32[1.0f0, -1.0f0, 0.5f0 * FAR_TARGET]
     # A correction that moved no logit settles only at the pin, in Newton's `fx` or PALC's `res_f`.
-    @test !GameTracing.settled(check, (; x = point, fx = Float32[0, 0, -0.04f0]), 0.0f0)
+    @test !GameTracing.settled(check, (; x = point, fx = Float32[0, 0, -0.04f0 * FAR_TARGET]), 0.0f0)
     # The pin row is the last entry of whichever residual the solver reports.
-    @test GameTracing.pin_residual((; x = point, fx = Float32[0, 0, -0.04f0])) == -0.04f0
-    @test GameTracing.pin_residual((; x = point, res_f = Float32[0, 0, 0.25f0])) == 0.25f0
+    @test GameTracing.pin_residual((; x = point, fx = Float32[0, 0, -0.04f0 * FAR_TARGET])) == -0.04f0 * FAR_TARGET
+    @test GameTracing.pin_residual((; x = point, res_f = Float32[0, 0, 0.25f0 * FAR_TARGET])) == 0.25f0 * FAR_TARGET
     @test GameTracing.settled(check, (; x = point, fx = zeros(Float32, 3)), 0.0f0)
-    @test !GameTracing.settled(check, (; x = point, res_f = Float32[0, 0, -0.04f0]), 0.0f0)
+    @test !GameTracing.settled(check, (; x = point, res_f = Float32[0, 0, -0.04f0 * FAR_TARGET]), 0.0f0)
     tolerance = check.settings.logit_tolerance
     @test GameTracing.settled(check, (; x = point, res_f = zeros(Float32, 3)), tolerance)
     @test !GameTracing.settled(check, (; x = point, res_f = zeros(Float32, 3)), nextfloat(tolerance))
@@ -151,7 +152,7 @@ end
     # A small logit has no allowance to speak of: twice the tolerance stays past it.
     @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element), one(element))) > tolerance
     # The corrector settles the large logit's rounding at its first correction.
-    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), element[large, 0, 1], element[large, 0, 1], one(element))
+    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element))
     GameTracing.restate!(check; predictor_move = one(element))
     verdicts = [GameTracing.corrected!(check, (; x = element[first, 0, 1], res_f = zeros(element, 3), step), true) for (step, first) in ((0, large), (1, rounded))]
     @test last(verdicts) isa GameTracing.BifurcationKit.NewtonConverged
@@ -161,13 +162,13 @@ end
 """A fresh `CorrectorReach` whose current step's predictor moved the logits `predictor_move`."""
 function fresh_check(predictor_move::E)::GameTracing.CorrectorReach{GameTracing.AcceptAll, E} where {E <: Real}
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), zeros(E, 3), zeros(E, 3), one(E),
+        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E),
     )
     GameTracing.restate!(check; predictor_move = predictor_move)
     return check
 end
 
-"""The verdicts of `check` on one solve whose iterates, at relative precision one and at the pin, have first logit `firsts`."""
+"""The verdicts of `check` on one solve whose iterates, at precision one and at the pin, have first logit `firsts`."""
 function solve_verdicts(check::GameTracing.CorrectorReach, firsts::AbstractVector{E})::Vector where {E <: Real}
     return [GameTracing.corrected!(check, (; x = E[first, 0, 1], res_f = zeros(E, 3), step), true) for (step, first) in zip(0:length(firsts), firsts)]
 end
@@ -204,7 +205,7 @@ end
     GameTracing.restate!(noisy; predictor_move = 5.0f-4)
     @test solve_verdicts(noisy, stalled) == [true, true, true, false]
     @test GameTracing.noise_confirmed(noisy)
-    @test noisy.state[].noise.suspect.relative_precision == 1
+    @test noisy.state[].noise.suspect.precision == 1
     @test noisy.state[].noise.suspect.correction ≈ 1.0f-2
     # Every later solve refuses at its start.
     @test solve_verdicts(noisy, Float32[0]) == [false]
@@ -256,7 +257,7 @@ end
 
 @testset "a gain with noise of size η fails PrecisionExhausted where λ η passes the logit tolerance" begin
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
-    # stalled the opening at ρ ≈ 4e-19, whatever η: zero-slope gains whose every evaluation jumps leave no first step.
+    # stalled the opening at λ ≈ 4e-14, whatever η: zero-slope gains whose every evaluation jumps leave no first step.
     pass, target = NoisyFlatPass(1.0f-4, 1.0f-7, 10.0f0), 1.0f5
     settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000)
     tolerance = settings.corrector.logit_tolerance
@@ -273,26 +274,25 @@ end
     @info "precision exhausted" lambda correction predicted = tolerance / pass.noise
 end
 
-"""A `keep_going` that writes each accepted point of a trace to `target` into `precisions` and `logits`, and stops past `ceiling`."""
+"""A `keep_going` that writes each accepted point of a trace into `precisions` and `logits`, and stops past `ceiling`."""
 struct PointLog{E <: Real}
-    target::E
     ceiling::E
     precisions::Vector{E}
     logits::Matrix{E}
 end
 
-function (logbook::PointLog)(logits::AbstractVector, relative_precision::Real)::Bool
+function (logbook::PointLog)(logits::AbstractVector, precision::Real)::Bool
     point = something(findfirst(isnan, logbook.precisions))
-    setindex!(logbook.precisions, relative_precision * logbook.target, point)
+    setindex!(logbook.precisions, precision, point)
     view(logbook.logits, :, point) .= logits
-    return relative_precision * logbook.target < logbook.ceiling
+    return precision < logbook.ceiling
 end
 
 @testset "the target only caps a log-precision trace: each point to 1e6 up to 100 is the endpoint of a trace to its precision" begin
     gains = NormalFormGains(first(far_opening_games(Xoshiro(FAR_OPENING_SEED))))
     width = GameTracing.logit_count(gains)
     steps = LOG_PRECISION_SETTINGS.max_steps + 1
-    logbook = PointLog(FAR_TARGET, 100.0f0, fill(Float32(NaN32), steps), zeros(Float32, width, steps))
+    logbook = PointLog(100.0f0, fill(Float32(NaN32), steps), zeros(Float32, width, steps))
     trace_endpoint(LogitGame(gains, FAR_TARGET), width, LOG_PRECISION_SETTINGS; keep_going = logbook)
     recorded = 1:count(!isnan, logbook.precisions)
     for (precision, logits) in zip(view(logbook.precisions, recorded), eachcol(view(logbook.logits, :, recorded)))

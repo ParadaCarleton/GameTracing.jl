@@ -143,7 +143,7 @@ end
             @test failure.cause in (GameTracing.Singular, GameTracing.PrecisionExhausted) ||
                 (failure.cause == GameTracing.TraceStuck && (failure.context.unmoved || failure.context.unresolved))
             # A trace that broke at its start never reached the pitchfork.
-            @test failure.context.relative_precision > 0
+            @test failure.context.precision > 0
         else
             @test residual_norm(pass, unwrap(result).logits, 4.0f0) < 1.0f-4
         end

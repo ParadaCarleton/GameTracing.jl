@@ -11,7 +11,7 @@ of that reach a redraw's predicted root shift may use (`RootShift`). `max_kl`: a
 the predictor passes this is refused. A step's turn is limited by `StepControl`'s `turn_limit`.
 
 Convergence is scale-free, as in Gambit's tracer (path.cc:372, `c_tol` in log probabilities): a Newton correction that
-moves no logit more than `logit_tolerance`, at a relative precision within the relative `pin_tolerance` of its pin.
+moves no logit more than `logit_tolerance`, at a precision within the relative `pin_tolerance` of its pin.
 Each logit also gets `settle_ulps` ulps of its own size (`logit_corrections`). A Float32 logit near 1e3 rounds by
 1.2e-4, past the default tolerance, so without this allowance a Float32 trace stalls near λ 300 on 20x20 games.
 A correction that moves the logits more than `contraction_limit` times the one before it (plus `logit_tolerance`
@@ -43,7 +43,7 @@ Base.@kwdef struct CorrectorSettings{E <: Real}
     newton_iterations::Int = 25
 end
 
-"""The largest change of a logit from `from` to `to`, two points `[w; ρ]` (`logits_at`), one logit at a time."""
+"""The largest change of a logit from `from` to `to`, two points `[w; λ]` (`logits_at`), one logit at a time."""
 function logit_change(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     largest = zero(E)
     for index in firstindex(to):(lastindex(to) - 1)
@@ -53,7 +53,7 @@ function logit_change(from::AbstractVector{E}, to::AbstractVector{E})::E where {
 end
 
 """
-`(correction, excess)` of a Newton step from `from` to `to`, two points `[w; ρ]`: the largest change of a logit
+`(correction, excess)` of a Newton step from `from` to `to`, two points `[w; λ]`: the largest change of a logit
 (`logit_change`), and the largest change times `scale` past `relative` times that logit's own size, which the settle
 test reads. `scale` turns a change into an estimate of the error it leaves (PathFollowing's `error_estimate`).
 """
@@ -69,16 +69,16 @@ function logit_corrections(from::AbstractVector{E}, to::AbstractVector{E}, relat
 end
 
 """
-A trace callback that always lets the trace go on: `keep_going(logits, relative_precision)` is `true`, and
+A trace callback that always lets the trace go on: `keep_going(logits, precision)` is `true`, and
 `corrected_accepted` accepts every closing point without building its logits.
 """
 struct AcceptAll end
 
 (::AcceptAll)(::AbstractVector, ::Real)::Bool = true
 
-"""Whether `accept_corrected` accepts the closing point `point = [w; ρ]` at relative precision `relative_precision`, from its logits."""
-function corrected_accepted(accept_corrected::Any, point::AbstractVector, relative_precision::Real, converged::Bool)::Bool
-    return accept_corrected(logits_at(point), relative_precision, converged)
+"""Whether `accept_corrected` accepts the closing point `point = [w; λ]` at precision `precision`, from its logits."""
+function corrected_accepted(accept_corrected::Any, point::AbstractVector, precision::Real, converged::Bool)::Bool
+    return accept_corrected(logits_at(point), precision, converged)
 end
 
 corrected_accepted(::AcceptAll, ::AbstractVector, ::Real, ::Bool)::Bool = true
@@ -98,7 +98,7 @@ struct NoiseRecord{E <: Real}
     accuracy::E
     suspect::Union{
         Nothing,
-        @NamedTuple{relative_precision::E, correction::E, confirmed::Bool},
+        @NamedTuple{precision::E, correction::E, confirmed::Bool},
     }
 end
 
@@ -118,7 +118,7 @@ struct CorrectorState{E <: Real}
     settled_here::Bool
     noise::NoiseRecord{E}
     unresolved::Bool
-    reach_failure::@NamedTuple{relative_precision::E, correction::E}
+    reach_failure::@NamedTuple{precision::E, correction::E}
 end
 
 """`state` with the given fields replaced."""
@@ -131,13 +131,13 @@ function restated(
         settled_here::Bool = state.settled_here,
         noise::NoiseRecord{E} = state.noise,
         unresolved::Bool = state.unresolved,
-        reach_failure::@NamedTuple{relative_precision::E, correction::E} = state.reach_failure,
+        reach_failure::@NamedTuple{precision::E, correction::E} = state.reach_failure,
     )::CorrectorState{E} where {E <: Real}
     return CorrectorState{E}(step_length, predictor_move, correction, stalls, settled_here, noise, unresolved, reach_failure)
 end
 
 """
-    CorrectorReach(accept_corrected, settings, geometry, previous, predicted, step_length)
+    CorrectorReach(accept_corrected, settings, geometry, target_precision, previous, predicted, step_length)
 
 The trace's BifurcationKit `callback_newton`, which also decides the corrector's convergence: a `settled` iterate
 ends Newton's method converged (`NewtonConverged`), and a correction that fails to contract stops it (`corrected!`).
@@ -151,14 +151,15 @@ add a point, so the trace ends as `TraceStuck`, or as `PrecisionExhausted` when 
 reach (`unresolved_noise`). On a smooth branch that distance is the branch's curvature
 times `ds² / 2`, so halving brings any step under it, while an iterate that lands on another branch is far from it. A converged closing point is refused the same way past `reach`, past a largest probability KL
 `KL(corrected ‖ predicted)` of `settings.max_kl` (`largest_kl`). A predictor that did not move has no reach to compare.
-`accept_corrected(logits, ρ, converged)` then sees every other closing point. `previous` and `predicted` hold the
+`accept_corrected(logits, λ, converged)` then sees every other closing point. `previous` and `predicted` hold the
 current step's start and predictor, `iterate` the current solve's last iterate, all updated in place; `state`
-(`CorrectorState`) holds the scalars that change between calls.
+(`CorrectorState`) holds the scalars that change between calls. `geometry` measures the step length at `target_precision`.
 """
 struct CorrectorReach{C, E <: Real}
     accept_corrected::C
     settings::CorrectorSettings{E}
     geometry::TraceGeometry{E}
+    target_precision::E
     previous::Vector{E}
     predicted::Vector{E}
     iterate::Vector{E}
@@ -177,7 +178,7 @@ const RESOLUTION_ULPS = 4
 """
 Whether the predictor `predicted` moves no coordinate of `start` by more than `RESOLUTION_ULPS · eps(E)` of its own
 size: the ODE solvers' per-coordinate error test, `|Δz_i| ≤ abstol + reltol |z_i|`, with abstol zero. Coordinates
-of different scales (payoff gaps near 1e6, ρ near 1e-5) each count, and any move of a zero coordinate resolves.
+of different scales (payoff gaps near 1, precision up to 1e6) each count, and any move of a zero coordinate resolves.
 """
 function step_unresolved(start::AbstractVector{E}, predicted::AbstractVector{E})::Bool where {E <: Real}
     for index in eachindex(start, predicted)
@@ -190,8 +191,8 @@ function step_unresolved(start::AbstractVector{E}, predicted::AbstractVector{E})
 end
 
 """A step's reach-failure record before any corrector failed its reach: the correction is NaN, as at a solve's start."""
-function no_reach_failure(::Type{E})::@NamedTuple{relative_precision::E, correction::E} where {E <: Real}
-    return (; relative_precision = zero(E), correction = E(NaN32))
+function no_reach_failure(::Type{E})::@NamedTuple{precision::E, correction::E} where {E <: Real}
+    return (; precision = zero(E), correction = E(NaN32))
 end
 
 """
@@ -225,6 +226,7 @@ function CorrectorReach(
         accept_corrected::C,
         settings::CorrectorSettings{E},
         geometry::TraceGeometry{E},
+        target_precision::E,
         previous::AbstractVector{E},
         predicted::AbstractVector{E},
         step_length::E,
@@ -234,6 +236,7 @@ function CorrectorReach(
         accept_corrected,
         settings,
         geometry,
+        target_precision,
         collect(previous),
         collect(predicted),
         collect(previous),
@@ -290,7 +293,7 @@ function (check::CorrectorReach{C, E})(
     end
     # PALC's closing call, marked `closing`, ends every corrector.
     if !haskey(iterate, :closing)
-        @debug "corrector iterate" _group = :trace step = iterate.step residual = iterate.residual relative_precision = last(
+        @debug "corrector iterate" _group = :trace step = iterate.step residual = iterate.residual precision = last(
             iterate.x,
         )
         if iterate.step == 0
@@ -298,7 +301,7 @@ function (check::CorrectorReach{C, E})(
             copyto!(check.previous, iterate.z0.u)
             restate!(
                 check;
-                step_length = arclength_distance(iterate.z0.u, iterate.x, check.geometry),
+                step_length = arclength_distance(iterate.z0.u, iterate.x, check.geometry, check.target_precision),
                 predictor_move = logit_change(iterate.z0.u, iterate.x),
             )
             # The unresolved test reads the previous step's reach failure, so the record resets only after it.
@@ -318,7 +321,7 @@ function (check::CorrectorReach{C, E})(
         if !reached
             correction = check.state[].correction
             @debug "corrector stopped" _group = :trace reason = :reach correction
-            restate!(check; reach_failure = (; relative_precision = last(iterate.x), correction))
+            restate!(check; reach_failure = (; precision = last(iterate.x), correction))
         end
         return verdict
     end
@@ -346,7 +349,7 @@ end
 """
     corrected!(check, iterate, proceed)
 
-`check`'s verdict on a Newton `iterate` that its other tests let `proceed`, in logits `z = ρ w`. The first iterate
+`check`'s verdict on a Newton `iterate` that its other tests let `proceed`, in logits `z = λ w`. The first iterate
 is the solve's start and never settles. Each later one is a correction `Δz` from the iterate before: it settles
 (`NewtonConverged`) when `settled` by the part of `Δz` past each logit's `settle_ulps`. A correction past `contraction_limit` times the one before (plus
 `logit_tolerance · contraction_offset`) fails to contract, Gambit's test (path.cc), and stops the corrector, so the
@@ -405,12 +408,12 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
     @debug "corrector stopped" _group = :trace reason = :noise confirmed correction predictor_move = check.state[].predictor_move
     restate!(
         check;
-        noise = NoiseRecord(check.state[].noise.accuracy, (; relative_precision = last(iterate.x), correction, confirmed)),
+        noise = NoiseRecord(check.state[].noise.accuracy, (; precision = last(iterate.x), correction, confirmed)),
     )
     return false
 end
 
-"""The pin row `ρ - pin` of a corrector `iterate`'s residual: the last entry of Newton's `fx` or of PALC's `res_f`."""
+"""The pin row `λ - pin` of a corrector `iterate`'s residual: the last entry of Newton's `fx` or of PALC's `res_f`."""
 function pin_residual(iterate::NamedTuple)::eltype(iterate.x)
     if haskey(iterate, :fx)
         return last(iterate.fx)
@@ -421,16 +424,16 @@ end
 """
 Whether `check`'s corrector has settled `iterate`, reached by a Newton step whose largest logit move past that
 logit's `settle_ulps` is `correction` (`logit_corrections`): the step moved no logit more than `logit_tolerance` past
-its rounding, and the relative precision `ρ` is at its pin to the relative `pin_tolerance`. The pin
-needs its own test: a far target's logits barely move with `ρ`, so they would pass a `ρ` that never left its start.
+its rounding, and the precision `λ` is at its pin to the relative `pin_tolerance`. The pin
+needs its own test: a far target's logits barely move with `λ`, so they would pass a `λ` that never left its start.
 """
 function settled(check::CorrectorReach, iterate::I, correction::Real)::Bool where {
         I <:
         NamedTuple,
     }
-    relative_precision = last(iterate.x)
+    precision = last(iterate.x)
     offset = pin_residual(iterate)
-    pin_scale = max(abs(relative_precision), abs(relative_precision - offset))
+    pin_scale = max(abs(precision), abs(precision - offset))
     return correction <= check.settings.logit_tolerance &&
         abs(offset) <= check.settings.pin_tolerance * pin_scale
 end
@@ -438,7 +441,7 @@ end
 """
 Whether `point` moved no logit further from the predictor's than `check.settings.reach` times the predictor's own
 largest logit move (`logit_change`). Logits are target-free, as the convergence test is; a weighted norm can shrink a
-branch jump (frozen Fisher weights) or swell a settled point (gaps `w = P G` at a far target).
+branch jump (frozen Fisher weights) or swell a settled point (the norm's `P²` on the gaps at a far target).
 """
 function within_reach(check::CorrectorReach, point::AbstractVector)::Bool
     if !(check.state[].predictor_move > 0)
@@ -451,16 +454,17 @@ function within_reach(check::CorrectorReach, point::AbstractVector)::Bool
 end
 
 """
-    TraceProgress(gaps, relative_precision, steps, precision_min, precision_max, gap_tangent, tangent_precision, unmoved,
-        looped)
+    TraceProgress(gaps, precision, steps, precision_min, precision_max, gap_tangent, tangent_precision, unmoved,
+        looped, target_precision)
 
-The last accepted point `(gaps, relative_precision)` of a trace, its step count, the range of the relative precision
+The last accepted point `(gaps, precision)` of a trace, its step count, the range of the precision
 over accepted points and the tangent there (both in payoff gaps), read from BifurcationKit's branch (`branch_progress`).
+`target_precision` is the trace's target, which scales the loop test's norm (`looped`).
 `unmoved` marks a trace that stopped on an accepted point bitwise equal to the one before it (`TraceFinalise`), `looped` one that closed a loop of the branch (`looped`).
 """
 struct TraceProgress{E <: Real}
     gaps::Vector{E}
-    relative_precision::E
+    precision::E
     steps::Int
     precision_min::E
     precision_max::E
@@ -468,10 +472,11 @@ struct TraceProgress{E <: Real}
     tangent_precision::E
     unmoved::Bool
     looped::Bool
+    target_precision::E
 end
 
 """
-BifurcationKit's branch record of the trace's `point = [w; ρ]` and the state's tangent: the gaps `w`, their tangent
+BifurcationKit's branch record of the trace's `point = [w; λ]` and the state's tangent: the gaps `w`, their tangent
 and the tangent's precision part. `branch_progress` reads the trace's progress back from these records.
 """
 function trace_record_point(
@@ -487,59 +492,63 @@ function trace_record_point(
     )
 end
 
-"""A branch record's relative precision."""
+"""A branch record's precision."""
 function record_precision(record::R)::fieldtype(R, :param) where {R <: NamedTuple}
     return record.param
 end
 
-"""Whether two branch records hold the same point `(w, ρ)`, bitwise: a step below the point's rounding."""
+"""Whether two branch records hold the same point `(w, λ)`, bitwise: a step below the point's rounding."""
 same_point(record::NamedTuple, other::NamedTuple)::Bool = record.param == other.param &&
     record.gaps == other.gaps
 
 """
-    tangent_turn(left, right)
+    tangent_turn(left, right, target_precision)
 
-The angle in radians between two branch records' tangents `[gap_tangent; tangent_precision]`, in the Euclidean product;
-zero when either is zero.
+The angle in radians between two branch records' tangents `[gap_tangent; tangent_precision]`, in the Euclidean product
+of the units `P w` and `λ / P`, `P` the `target_precision`; zero when either is zero.
 """
-function tangent_turn(left::R, right::R)::fieldtype(R, :param) where {R <: NamedTuple}
-    lengths = sqrt(
-        (dot(left.gap_tangent, left.gap_tangent) + left.tangent_precision^2) *
-            (dot(right.gap_tangent, right.gap_tangent) + right.tangent_precision^2),
-    )
+function tangent_turn(left::R, right::R, target_precision::Real)::fieldtype(R, :param) where {R <: NamedTuple}
+    scale = oftype(left.tangent_precision, target_precision)^2
+    # Two square roots: the product of the squared lengths could overflow at a far target.
+    lengths = sqrt(scale * dot(left.gap_tangent, left.gap_tangent) + left.tangent_precision^2 / scale) *
+        sqrt(scale * dot(right.gap_tangent, right.gap_tangent) + right.tangent_precision^2 / scale)
     if lengths == 0
         return zero(lengths)
     end
-    cosine = (dot(left.gap_tangent, right.gap_tangent) + left.tangent_precision * right.tangent_precision) / lengths
+    cosine = (scale * dot(left.gap_tangent, right.gap_tangent) + left.tangent_precision * right.tangent_precision / scale) / lengths
     return acos(clamp(cosine, -one(cosine), one(cosine)))
 end
 
-"""The squared Euclidean distance between two points with `gaps` and `param`, such as branch records."""
-function squared_distance(left::NamedTuple, right::NamedTuple)::typeof(left.param)
+"""
+The squared Euclidean distance between two points with `gaps` and `param`, such as branch records, in the units `P w`
+and `λ / P`, `P` the `target_precision`.
+"""
+function squared_distance(left::NamedTuple, right::NamedTuple, target_precision::Real)::typeof(left.param)
+    scale = oftype(left.param, target_precision)^2
     total = zero(left.param)
     for index in eachindex(left.gaps, right.gaps)
         total += abs2(left.gaps[index] - right.gaps[index])
     end
-    return total + abs2(left.param - right.param)
+    return scale * total + abs2(left.param - right.param) / scale
 end
 
 """
-    looped(history, current)
+    looped(history, current, target_precision)
 
 Whether `current`, a point with `gaps` and `param` that follows the branch records `history`, closes a loop of the
 branch (an isola). Gates: the precision tangent changes sign between the anchor and `current` (a closed curve returns to its starting precision), and the tangents of `history` have turned through at least 2π in total (`tangent_turn`), as a closed
 curve must (Fenchel's theorem). Then Brent's cycle detection: the anchor is the record at the largest power-of-two index
 not after the last record (indices from 1), and the trace has looped when `current` lies closer to the anchor than the
 last step is long, with the anchor at least two records before `current`. Distances are plain Euclidean on
-`[gaps; param]`, as `TraceFinalise` holds no `TraceGeometry`.
+`[P gaps; param / P]`, `P` the `target_precision`, as `TraceFinalise` holds no `TraceGeometry`.
 """
-function looped(history::AbstractVector{R}, current::NamedTuple)::Bool where {R <: NamedTuple}
+function looped(history::AbstractVector{R}, current::NamedTuple, target_precision::Real)::Bool where {R <: NamedTuple}
     anchor_index = prevpow(2, max(length(history), 1))
     if anchor_index > length(history) - 1
         return false
     end
     anchor = history[firstindex(history) + anchor_index - 1]
-    if !(squared_distance(current, anchor) < squared_distance(current, last(history)))
+    if !(squared_distance(current, anchor, target_precision) < squared_distance(current, last(history), target_precision))
         return false
     end
     # A closed curve returns to its starting precision, so its precision tangent changes sign along the lap.
@@ -547,7 +556,7 @@ function looped(history::AbstractVector{R}, current::NamedTuple)::Bool where {R 
     if !(minimum(precision_tangents) < 0 < maximum(precision_tangents))
         return false
     end
-    turn = sum(tangent_turn.(view(history, firstindex(history):(lastindex(history) - 1)), view(history, (firstindex(history) + 1):lastindex(history))))
+    turn = sum(tangent_turn.(view(history, firstindex(history):(lastindex(history) - 1)), view(history, (firstindex(history) + 1):lastindex(history)), target_precision))
     return turn >= 2 * oftype(turn, pi)
 end
 
@@ -567,7 +576,7 @@ function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::Tra
     end
     record = last(branch)
     unmoved = same_point(record, branch[end - 1])
-    closed = looped(view(branch, firstindex(branch):(lastindex(branch) - 1)), record)
+    closed = looped(view(branch, firstindex(branch):(lastindex(branch) - 1)), record, opening.target_precision)
     return TraceProgress{E}(
         copy(record.gaps),
         record.param,
@@ -578,6 +587,7 @@ function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::Tra
         record.tangent_precision,
         unmoved,
         closed,
+        opening.target_precision,
     )
 end
 
@@ -586,7 +596,7 @@ end
 
 BifurcationKit's `finalise_solution` of one trace segment. An accepted point bitwise equal to the branch's last one (a
 step below the point's rounding) stops the trace, a stall, as does a point that closes a loop of the branch (`looped`). The trace goes on while `keep_going(logits,
-relative_precision)` holds. Then `redraw(logits, relative_precision, shift)` may return a new game, where `shift` is
+precision)` holds. Then `redraw(logits, precision, shift)` may return a new game, where `shift` is
 the point's `RootShift` check under `settings`: `slot`, a `Ref` to the current `RedrawSlot` (the constructor
 wraps the one it is given), takes it and the
 segment stops, for `trace_endpoint` to correct the point onto it and restart. A `redraw` that returns `nothing` or the
@@ -610,7 +620,7 @@ function (finalise::TraceFinalise)(
         # fatou-ignore unused-argument: BifurcationKit passes keyword arguments this callback ignores
         keywords...,
     )::Bool where {P, T, S <: Integer}
-    @debug "trace point" _group = :trace step relative_precision = point.p state = copy(
+    @debug "trace point" _group = :trace step precision = point.p state = copy(
         point.u,
     ) tangent = copy(tangent.u)
     # BifurcationKit saves the point after this call, so the branch's last record is the point before it.
@@ -626,7 +636,7 @@ function (finalise::TraceFinalise)(
         return false
     end
     current = (; param = point.p, gaps = view(point.u, firstindex(point.u):(lastindex(point.u) - 1)))
-    if looped(result.branch, current)
+    if looped(result.branch, current, finalise.slot[].game.target_precision)
         return false
     end
     logits = logits_at(point.u)
@@ -636,7 +646,7 @@ function (finalise::TraceFinalise)(
     slot = restated(finalise.slot[]; step_length = abs(state.ds))
     finalise.slot[] = slot
     # A redraw swaps the map for the steps after this point, and the endpoint has none.
-    if point.p == 1
+    if point.p == finalise.slot[].game.target_precision
         return true
     end
     # The slot is pending only after a swap here: a restart clears it before the segment runs.

@@ -132,7 +132,7 @@ end
 @testset "every arm reaches the reference equilibrium on LogitNash's games, the overshot game and random games" begin
     rng = fresh_rng()
     random_games = [ntuple(_ -> 3 .* randn(rng, ntuple(_ -> 2, players)), players) for players in rand(rng, 2:4, 6)]
-    for (label, settings) in arm_variants()
+    for (label, settings) in arm_variants(ARM_WEIGHTS)
         for (name, payoffs) in pairs(LOGITNASH_GAMES)
             if !(name in PITCHFORK_GAMES)
                 @test reaches_reference(payoffs, 4, settings)
@@ -152,7 +152,7 @@ end
 end
 
 @testset "every arm crosses the fold game's fold" begin
-    for (_, settings) in arm_variants()
+    for (_, settings) in arm_variants(ARM_WEIGHTS)
         result = trace_endpoint(LogitGame(FOLD_GAME, 2.0f0), 1, settings)
         @test !is_error(result)
         if !is_error(result)
@@ -163,7 +163,7 @@ end
 end
 
 @testset "every arm stops short of a non-finite game as a stuck trace" begin
-    for (label, settings) in arm_variants()
+    for (label, settings) in arm_variants(ARM_WEIGHTS)
         result = trace_endpoint(LogitGame(PoisonedPass(GAME, 1.0f0), TARGET_PRECISION), WIDTH, settings)
         @test is_error(result)
         @test unwrap_error(result).cause == GameTracing.TraceStuck

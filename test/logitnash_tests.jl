@@ -182,7 +182,7 @@ end
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
     # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under growth 1.1 this includes
     # fisher_log_precision_reach at state weight 0.01, which before exhausted near λ 0.808 (runs 40803122294, 40806444224).
-    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants()]
+    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants(ARM_WEIGHTS)]
         result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
         @test !is_error(result)
         if !is_error(result)

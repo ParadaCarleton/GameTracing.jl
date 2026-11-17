@@ -43,18 +43,18 @@ end
 
 """
 A game whose map is redrawn mid-trace: `case` holds the map before, `after` and `reference_after` the map after in
-Float32 and Float64, and the trace swaps at its first accepted point at or past relative precision `swap_level`.
+Float32 and Float64, and the trace swaps at its first accepted point at or past precision `swap_precision`.
 """
 struct SwapCase{C <: Case, A, R, E <: Real} <: BenchmarkCase
     case::C
     after::A
     reference_after::R
-    swap_level::E
+    swap_precision::E
 end
 
-"""`swap`'s maps and level as a `SwapCase` named `name`, with `reference_before` and `reference_after` its maps in Float64."""
+"""`swap`'s maps and swap precision as a `SwapCase` named `name`, with `reference_before` and `reference_after` its maps in Float64."""
 function swap_case(name::AbstractString, swap::MapSwap, reference_before::Any, reference_after::Any)::BenchmarkCase
-    return SwapCase(Case(String(name), swap.before, reference_before, swap.width, swap.precision), swap.after, reference_after, swap.swap_level)
+    return SwapCase(Case(String(name), swap.before, reference_before, swap.width, swap.precision), swap.after, reference_after, swap.swap_precision)
 end
 
 """The random swap `seed` (`random_swap`) as a `SwapCase`."""
@@ -69,23 +69,23 @@ end
 case_reference(case::Case)::NamedTuple = branch_reference(case.reference_pass, case.width, case.precision)
 
 """
-The relative precision at which `swap`'s trace under `settings` redraws: its first accepted point at or past the swap
-level, from the same trace stopped there. A trace that fails before the swap level gives its last accepted point.
+The precision at which `swap`'s trace under `settings` redraws: its first accepted point at or past the swap
+precision, from the same trace stopped there. A trace that fails before it gives its last accepted point.
 """
-function swap_precision(swap::SwapCase{C, A, R, E}, settings::S)::E where {C, A, R, E, S <: BifurcationKitSettings}
+function redraw_precision(swap::SwapCase{C, A, R, E}, settings::S)::E where {C, A, R, E, S <: BifurcationKitSettings}
     (; case) = swap
-    stopped = trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; keep_going = StopAt(swap.swap_level))
-    return E(unwrap_error(stopped).context.relative_precision)
+    stopped = trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; keep_going = StopAt(swap.swap_precision))
+    return E(unwrap_error(stopped).context.precision)
 end
 
 """
 A swap's reference under `settings`: the map before's branch to the precision where that trace redraws
-(`swap_precision`), then the map after's branch on from that point. A redraw happens at an accepted point, so each
+(`redraw_precision`), then the map after's branch on from that point. A redraw happens at an accepted point, so each
 variant's reference swaps where its own trace does.
 """
 function case_reference(swap::W, settings::S)::NamedTuple where {W <: SwapCase, S <: BifurcationKitSettings}
     (; case) = swap
-    level = case.precision * swap_precision(swap, settings)
+    level = redraw_precision(swap, settings)
     before = branch_reference(case.reference_pass, case.width, level)
     return branch_reference(swap.reference_after, case.width, case.precision; start = before.logits, start_precision = level)
 end
@@ -160,8 +160,8 @@ end
 
 function (trace_run::TraceRun{C})()::GameTracing.TraceResult{Float32} where {C <: SwapCase}
     (; settings) = trace_run
-    (; case, after, swap_level) = trace_run.case
-    return trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; redraw = SwapAt(LogitGame(after, case.precision), swap_level))
+    (; case, after, swap_precision) = trace_run.case
+    return trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; redraw = SwapAt(LogitGame(after, case.precision), swap_precision))
 end
 
 """First-action probabilities of `logits`."""

@@ -48,7 +48,7 @@ end
     for distance in instances(GameTracing.StepDistance)
         geometry = TraceGeometry{element}(; distance)
         displacement = to .- from
-        @test warm_bytes(arclength_distance, from, to, geometry) == 0
-        @test arclength_distance(from, to, geometry) ≈ sqrt(GameTracing.trace_dot(displacement, displacement, geometry))
+        @test warm_bytes(arclength_distance, from, to, geometry, element(3)) == 0
+        @test arclength_distance(from, to, geometry, element(3)) ≈ sqrt(GameTracing.trace_dot(displacement, displacement, geometry, element(3)))
     end
 end

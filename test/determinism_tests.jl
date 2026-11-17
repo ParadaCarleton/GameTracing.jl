@@ -14,7 +14,7 @@ end
         @test is_error(first_run) == is_error(second_run)
         if is_error(first_run) && is_error(second_run)
             @test unwrap_error(first_run).cause == unwrap_error(second_run).cause
-            @test unwrap_error(first_run).context.relative_precision == unwrap_error(second_run).context.relative_precision
+            @test unwrap_error(first_run).context.precision == unwrap_error(second_run).context.precision
         elseif !is_error(first_run) && !is_error(second_run)
             @test unwrap(first_run).steps == unwrap(second_run).steps
             @test unwrap(first_run).logits == unwrap(second_run).logits

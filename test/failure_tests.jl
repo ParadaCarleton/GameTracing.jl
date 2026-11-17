@@ -12,7 +12,7 @@ const FAILURE_SETTINGS = BifurcationKitSettings{Float32}(first_step = 0.01f0, ma
     )
     @test is_error(result)
     @test unwrap_error(result).cause == GameTracing.TraceStuck
-    @test TARGET_PRECISION * unwrap_error(result).context.relative_precision <= 1.0f0
+    @test unwrap_error(result).context.precision <= 1.0f0
 end
 
 @testset "a non-finite Jacobian is a failure value" begin
@@ -48,21 +48,21 @@ struct RefuseConverged end
     @test unwrap_error(result).cause == GameTracing.TraceStuck
 end
 
-"""An `accept_corrected` that refuses every corrector past relative precision `level`."""
+"""An `accept_corrected` that refuses every corrector past precision `level`."""
 struct RefusePast{E <: Real}
     level::E
 end
 
-(refuse::RefusePast)(::AbstractVector, relative_precision::Real, ::Bool)::Bool = relative_precision <= refuse.level
+(refuse::RefusePast)(::AbstractVector, precision::Real, ::Bool)::Bool = precision <= refuse.level
 
-# Refused from the flat start, where ρ = 0, and mid-branch.
-@testset "halving ends once the predictor cannot move the point ($(typeof(refusal)))" for refusal in (RefuseConverged(), RefusePast(0.25f0))
+# Refused from the flat start, where λ = 0, and mid-branch.
+@testset "halving ends once the predictor cannot move the point ($(typeof(refusal)))" for refusal in (RefuseConverged(), RefusePast(0.25f0 * TARGET_PRECISION))
     logs, result = Test.collect_test_logs(min_level = Logging.Debug) do
         trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, FAILURE_SETTINGS; accept_corrected = refusal)
     end
     messages = [(log.message, get(log.kwargs, :reason, nothing)) for log in logs]
     @test unwrap_error(result).cause == GameTracing.TraceStuck
-    # At ρ = 0 any move of ρ resolves: halving ends at BifurcationKit's zero step, never at an unresolved predictor.
+    # At λ = 0 any move of λ resolves: halving ends at BifurcationKit's zero step, never at an unresolved predictor.
     @test count(==(("corrector stopped", :unresolved)), messages) == ifelse(refusal isa RefuseConverged, 0, 1)
     # Halving 0.05 to Float32's smallest subnormal 2^-149 takes log2(0.05) + 149 ≈ 145 steps (measured: 143 from
     # the flat start, 41 mid-branch); 15 more allow accepted steps before the refusals.
@@ -75,6 +75,7 @@ end
         GameTracing.AcceptAll(),
         CorrectorSettings{Float32}(),
         TraceGeometry{Float32}(),
+        TARGET_PRECISION,
         copy(point),
         copy(point),
         0.0f0,
@@ -87,7 +88,7 @@ end
     @test !GameTracing.step_unresolved(Float32[0, 1], Float32[1.0f-30, 1])
     @test GameTracing.step_unresolved(Float32[0, 1], Float32[0, 1 + eps(1.0f0)])
     # A large coordinate does not hide a small one's move.
-    @test !GameTracing.step_unresolved(Float32[-5.0f6, 1.3f-5], Float32[-5.0f6, 1.4f-5])
+    @test !GameTracing.step_unresolved(Float32[-5.0f0, 13.0f0], Float32[-5.0f0, 14.0f0])
     @test !GameTracing.step_unresolved(point, point .+ Float32[0, 0, 1.0f-3])
 end
 
@@ -103,7 +104,7 @@ end
     # A step that halves to the float type's resolution after reach refusals is labeled PrecisionExhausted
     # (`unresolved_noise`): a refused correction under `logit_tolerance` is rounding noise too. The trace still fails.
     @test unwrap_error(result).cause in (GameTracing.TraceStuck, GameTracing.NoConvergence, GameTracing.PrecisionExhausted)
-    @test isfinite(unwrap_error(result).context.relative_precision)
+    @test isfinite(unwrap_error(result).context.precision)
 end
 
 @testset "exceptions BifurcationKit and LAPACK throw are told apart from a caller's" begin
@@ -158,6 +159,7 @@ end
         GameTracing.AcceptAll(),
         CorrectorSettings{Float32}(),
         TraceGeometry{Float32}(),
+        TARGET_PRECISION,
         zeros(Float32, 3),
         zeros(Float32, 3),
         0.0f0,
@@ -166,19 +168,20 @@ end
 end
 
 @testset "reach measures logits: a far target's gap rounding is within it, a logit jump is not" begin
-    # At ρ = 1e-5 a gap move of 1e-2, a far target's rounding of w = P G, moves the logit 1e-7.
-    previous, predicted = Float32[0, 1.0f-5], Float32[1, 1.0f-5]
+    # At λ = 10 a gap move of 1e-8 moves the logit 1e-7.
+    previous, predicted = Float32[0, 10.0f0], Float32[1.0f-6, 10.0f0]
     check = GameTracing.CorrectorReach(
         GameTracing.AcceptAll(),
         CorrectorSettings{Float32}(),
         TraceGeometry{Float32}(),
+        1.0f6,
         previous,
         predicted,
         1.0f0,
     )
     GameTracing.restate!(check; predictor_move = GameTracing.logit_change(previous, predicted))
-    @test GameTracing.within_reach(check, predicted .+ Float32[1.0f-2, 0])
-    @test !GameTracing.within_reach(check, predicted .+ Float32[3, 0])
+    @test GameTracing.within_reach(check, predicted .+ Float32[1.0f-8, 0])
+    @test !GameTracing.within_reach(check, predicted .+ Float32[3.0f-6, 0])
 end
 
 @testset "a game that is non-finite at every positive precision fails at the first step" begin
@@ -190,7 +193,7 @@ end
     @test is_error(result)
     @test unwrap_error(result).cause == GameTracing.TraceStuck
     # The two-point start counts as BifurcationKit's step 1; no point was accepted off the flat start.
-    @test unwrap_error(result).context.relative_precision == 0
+    @test unwrap_error(result).context.precision == 0
 end
 
 @testset "BifurcationKit's report of an uncorrectable start is a stuck trace" begin
@@ -204,6 +207,7 @@ end
         0.0f0,
         false,
         false,
+        TARGET_PRECISION,
     )
     result = GameTracing.reached_state(
         progress,
@@ -273,12 +277,13 @@ end
         0.0f0,
         false,
         false,
+        TARGET_PRECISION,
     )
     @test GameTracing.branch_progress([start], opening) === opening
     progress = GameTracing.branch_progress([start, moved], opening)
     @test !progress.unmoved
     @test (progress.steps, progress.precision_max) == (1, moved.param)
-    @test progress.gaps == moved.gaps && progress.relative_precision == moved.param
+    @test progress.gaps == moved.gaps && progress.precision == moved.param
     outcome = (; step_length = 0.0f0, accepted_step = 0.0f0, exhausted = nothing, logit_accuracy = 0.0f0, unresolved = false, exception = nothing)
     settings = BifurcationKitSettings{Float32}(; max_steps = 2)
     @test unwrap_error(
@@ -337,37 +342,40 @@ function circle_branch(
     return [circle_record(E(2 * pi * (index - 1) / per_lap), index, turning) for index in 1:(laps * per_lap)]
 end
 
-"""The 1-based index of the first record of `branch` that `looped` flags against the records before it, or `nothing`."""
-function first_loop(branch::AbstractVector)::Union{Nothing, Int}
+"""
+The 1-based index of the first record of `branch` that `looped` flags against the records before it, or `nothing`, at
+`target_precision`: one for the records of a unit circle, whose plane `(w, λ)` then measures as `(P w, λ / P)` does.
+"""
+function first_loop(branch::AbstractVector, target_precision::Real)::Union{Nothing, Int}
     return findfirst(
         [
-            GameTracing.looped(view(branch, firstindex(branch):(index - 1)), branch[index]) for index in eachindex(branch)
+            GameTracing.looped(view(branch, firstindex(branch):(index - 1)), branch[index], target_precision) for index in eachindex(branch)
         ]
     )
 end
 
 @testset "a branch that goes round a closed loop is flagged $element" for element in (Float32, widen(Float32))
     circle = circle_branch(element, 3, 20, true)
-    flagged = first_loop(circle)
+    flagged = first_loop(circle, 1)
     # Fenchel's gate: no flag before the tangents have turned through 2π, which takes 21 records.
     @test !isnothing(flagged) && 21 <= flagged <= 52
     # The gate alone holds back a loop whose tangents never turn; open paths never loop.
-    @test isnothing(first_loop(circle_branch(element, 3, 20, false)))
+    @test isnothing(first_loop(circle_branch(element, 3, 20, false), 1))
     line = [branch_record([element(index) / 10], element(index) / 20, index) for index in 1:60]
-    @test isnothing(first_loop(line))
+    @test isnothing(first_loop(line, 1))
     # A path that comes within a step of its anchor without its precision ever turning back is no loop.
     rising = [(; record..., tangent_precision = abs(record.tangent_precision) + one(element)) for record in circle]
-    @test isnothing(first_loop(rising))
+    @test isnothing(first_loop(rising, 1))
     # A stalled record has no direction, so it turns nothing.
     stalled = (; line[1]..., gap_tangent = [zero(element)], tangent_precision = zero(element))
-    @test GameTracing.tangent_turn(stalled, line[2]) == 0
+    @test GameTracing.tangent_turn(stalled, line[2], 1) == 0
     s_curve = [
         (; branch_record([element(index) / 10], sin(element(index) / 5), index)..., gap_tangent = [one(element)], tangent_precision = cos(element(index) / 5))
             for index in 1:60
     ]
-    @test isnothing(first_loop(s_curve))
+    @test isnothing(first_loop(s_curve, 1))
 
-    game = LogitGame(GAME, TARGET_PRECISION)
+    game = LogitGame(GAME, one(element))
     finalise = GameTracing.TraceFinalise(
         GameTracing.AcceptAll(),
         GameTracing.NoRedraw(),
@@ -377,7 +385,7 @@ end
     @test finalised(finalise, circle[10], circle[1:9])
     @test !finalised(finalise, circle[flagged], circle[1:(flagged - 1)])
 
-    opening = GameTracing.TraceProgress(zeros(element, 1), zero(element), 0, zero(element), zero(element), zeros(element, 1), zero(element), false, false)
+    opening = GameTracing.TraceProgress(zeros(element, 1), zero(element), 0, zero(element), zero(element), zeros(element, 1), zero(element), false, false, one(element))
     @test !GameTracing.branch_progress(circle[1:10], opening).looped
     progress = GameTracing.branch_progress(circle[1:flagged], opening)
     @test progress.looped && !progress.unmoved
@@ -392,4 +400,16 @@ end
     )
     @test failure.cause == GameTracing.TraceStuck
     @test failure.context.looped
+end
+
+@testset "the loop test measures in the units P w and λ / P, so a rescaled branch flags the same record ($element)" for element in (Float32, widen(Float32))
+    circle = circle_branch(element, 3, 20, true)
+    for target in element.((1 // 4, 3, 1000))
+        # The circle's plane is `(P w, λ / P)`: its points in `(w, λ)` divide the gaps by P and multiply the precision.
+        rescaled = [
+            (; record..., gaps = record.gaps ./ target, gap_tangent = record.gap_tangent ./ target, tangent_precision = record.tangent_precision * target, param = record.param * target)
+                for record in circle
+        ]
+        @test first_loop(rescaled, target) == first_loop(circle, 1)
+    end
 end

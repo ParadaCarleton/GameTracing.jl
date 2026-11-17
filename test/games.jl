@@ -422,16 +422,16 @@ function branch_reference(
 end
 
 """
-    MapSwap(before, after, precision, swap_level, width)
+    MapSwap(before, after, precision, swap_precision, width)
 
-A trace over `width` logits to `precision` whose game changes from `before` to `after` once the trace reaches relative
-precision `swap_level`: a redraw of the map at an accepted point.
+A trace over `width` logits to `precision` whose game changes from `before` to `after` once the trace reaches
+precision `swap_precision`: a redraw of the map at an accepted point.
 """
 struct MapSwap{B, A, E <: Real}
     before::B
     after::A
     precision::E
-    swap_level::E
+    swap_precision::E
     width::Int
 end
 
@@ -439,7 +439,7 @@ end
 const NEAR_SWAP = MapSwap(
     LinearGainPass([0 0.8f0; 0.6f0 0], [0.3f0, -0.2f0]),
     LinearGainPass([0 0.8f0; 0.6f0 0], [0.34f0, -0.23f0]),
-    4.0f0, 0.5f0, 2,
+    4.0f0, 2.0f0, 2,
 )
 
 # The swap removes the low branch at precision 1/2: the only root there is the high one, about 3.5 logits away,
@@ -454,7 +454,7 @@ const FOLD_SWAP = MapSwap(ThresholdPass(8.0f0, 4.0f0), ThresholdPass(16.0f0, 2.0
 const PITCHFORK_SWAP = MapSwap(
     LinearGainPass([0 -2.0f0; -2.0f0 0], [0.0f0, 0.0f0]),
     LinearGainPass([0 -8.0f0; -8.0f0 0], [0.0f0, 0.0f0]),
-    4.0f0, 0.5f0, 2,
+    4.0f0, 2.0f0, 2,
 )
 
 """
@@ -501,29 +501,29 @@ function rising_homotopy(before::ThresholdPass, after::ThresholdPass, precision:
 end
 
 """
-    SwapAt(game, swap_level)
+    SwapAt(game, swap_precision)
 
-A `redraw` hook that returns `game` at every accepted point from relative precision `swap_level` on, and `nothing`
+A `redraw` hook that returns `game` at every accepted point from precision `swap_precision` on, and `nothing`
 before: the trace swaps once, since returning its current game swaps nothing.
 """
 struct SwapAt{G, E <: Real}
     game::G
-    swap_level::E
+    swap_precision::E
 end
 
-function (hook::SwapAt{G})(::AbstractVector, relative_precision::Real, ::Any)::Union{Nothing, G} where {G}
-    if relative_precision >= hook.swap_level
+function (hook::SwapAt{G})(::AbstractVector, precision::Real, ::Any)::Union{Nothing, G} where {G}
+    if precision >= hook.swap_precision
         return hook.game
     end
     return nothing
 end
 
-"""A `keep_going` hook that stops the trace at its first accepted point at or past `swap_level`."""
+"""A `keep_going` hook that stops the trace at its first accepted point at or past `swap_precision`."""
 struct StopAt{E <: Real}
-    swap_level::E
+    swap_precision::E
 end
 
-(hook::StopAt)(::AbstractVector, relative_precision::Real)::Bool = relative_precision < hook.swap_level
+(hook::StopAt)(::AbstractVector, precision::Real)::Bool = precision < hook.swap_precision
 
 """`table` in Float32."""
 function single_precision(table::AbstractArray{T, N})::Array{Float32, N} where {T <: Real, N}
@@ -552,13 +552,13 @@ random_payoffs(rng::AbstractRNG, players::Integer)::Tuple = ntuple(RandomTable(r
     random_swap(seed)
 
 `(; swap, reference_before, reference_after)`: a random 3-player game from seed `seed` whose payoffs move by about 0.05
-at relative precision 1/2, as a mid-trace redraw moves a sampled map, and its two maps in Float64.
+at half its target precision, as a mid-trace redraw moves a sampled map, and its two maps in Float64.
 """
 function random_swap(seed::Integer)::NamedTuple
     rng = Xoshiro(1000 + seed)
     before = random_payoffs(rng, 3)
     after = map(PayoffJitter(rng), before)
-    swap = MapSwap(NormalFormPass(map(single_precision, before)), NormalFormPass(map(single_precision, after)), 3.0f0, 0.5f0, 3)
+    swap = MapSwap(NormalFormPass(map(single_precision, before)), NormalFormPass(map(single_precision, after)), 3.0f0, 1.5f0, 3)
     return (; swap, reference_before = NormalFormPass(before), reference_after = NormalFormPass(after))
 end
 

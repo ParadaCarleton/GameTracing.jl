@@ -794,7 +794,7 @@ function reached_state(
         )
     end
     if isnothing(outcome.exception) && progress.precision == E(target_precision)
-        return Ok(Traced(copy(progress.gaps), progress.steps, E(outcome.logit_accuracy)))
+        return Ok(Traced(progress.precision .* progress.gaps, progress.steps, E(outcome.logit_accuracy)))
     end
     # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move, a loop of the branch,
     # spent steps, or else `keep_going` or a refusal (`STOP_CAUSES`).

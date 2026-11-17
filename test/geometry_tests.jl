@@ -64,10 +64,10 @@ end
 
 @testset "a converged corrector past the KL or reach limit is refused, in the default geometry" begin
     geometry = TraceGeometry{Float32}()
-    predicted = Float32[1, 0, 0.5f0]
+    start, predicted = Float32[0, 0, 0.5f0], Float32[1, 0, 0.5f0]
     # The predictor moves the first logit by 0.5; this moves it 0.5 more, twice the reach of 0.5 times that move.
     beyond_reach = predicted .+ Float32[1, 0, 0]
-    @test GameTracing.logit_change(predicted, beyond_reach) ≈ 2 * 0.5f0 * GameTracing.logit_change(Float32[0, 0, 0.5f0], predicted)
+    @test GameTracing.logit_change(predicted, beyond_reach) ≈ 2 * 0.5f0 * GameTracing.logit_change(start, predicted)
     for (corrector, corrected) in (
             (CorrectorSettings{Float32}(reach = nothing, max_kl = 1.0f-3), Float32[3, 0, 0.5f0]),
             (CorrectorSettings{Float32}(reach = 0.5f0), beyond_reach),
@@ -77,11 +77,11 @@ end
             corrector,
             geometry,
             TARGET_PRECISION,
-            Float32[0, 0, 0.5f0],
+            start,
             predicted,
             1.0f0,
         )
-        GameTracing.restate!(check; predictor_move = GameTracing.logit_change(check.previous, predicted))
+        GameTracing.restate!(check; predictor_move = GameTracing.logit_change(start, predicted))
         @test GameTracing.closing_accepted(check, predicted)
         @test !GameTracing.closing_accepted(check, corrected)
         # An exact root that never settled ends BifurcationKit's solve converged, so it meets the same tests.

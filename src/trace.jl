@@ -208,22 +208,26 @@ function palc_with_geometry(
         orientation_check::Bool,
         orientation::PlainOrientation{E},
     )::BifurcationKit.AbstractContinuationAlgorithm where {E <: Real}
-    own = (;
-        tangent = settings.tangent,
-        θ = geometry.palc_state_weight,
-        dotθ = geometry.dot,
-        bls = bordered_linear_solver(settings.bordered_solver, width + 1, E),
-        step_control = corrector_quality(
-            settings.step_control,
-            settings.corrector,
-            settings.step_metric,
-            width,
-        ),
-        orientation_check = checked_orientation(orientation_check, settings.bordered_solver),
-        corrector = settings.palc_corrector,
-        orientation_dot = orientation,
+    # No named local: the tuple's Union-typed solver fields would make it an abstract local.
+    return BifurcationKit.PALC(;
+        merge(
+            (;
+                tangent = settings.tangent,
+                θ = geometry.palc_state_weight,
+                dotθ = geometry.dot,
+                bls = bordered_linear_solver(settings.bordered_solver, width + 1, E),
+                step_control = corrector_quality(
+                    settings.step_control,
+                    settings.corrector,
+                    settings.step_metric,
+                    width,
+                ),
+                orientation_check = checked_orientation(orientation_check, settings.bordered_solver),
+                corrector = settings.palc_corrector,
+                orientation_dot = orientation,
+            ), settings.palc_options
+        )...
     )
-    return BifurcationKit.PALC(; merge(own, settings.palc_options)...)
 end
 
 

@@ -197,7 +197,7 @@ end
     # orientation check, a step of a few ulps rounds above zero and the trace creeps there until `max_steps`.
     reversed = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}()))
     reversed.tangent .*= -1
-    recorder = GameTracing.BranchRecorder(gains, one(element), zero(element))
+    recorder = GameTracing.BranchRecorder(gains, zero(element))
     below = unwrap_error(GameTracing.recorded_points(reversed, recorder, element(100), 10, (;)))
     @test (below.cause, below.context.reason, below.context.steps) == (GameTracing.TraceStuck, :refusals, 0)
     @test below.context.last_refusal == GameTracing.PathFollowing.AcceptRefused

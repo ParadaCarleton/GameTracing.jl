@@ -16,7 +16,7 @@ using LinearSolve: LinearSolve
 using SciMLBase: SciMLBase
 
 export CurveProblem, PseudoArclength, Newton, LastCorrection, ContractionEstimate, StepControl, DeterminantSign, FixedWeights
-export Metric, MetricDistance, frozen_metric, freeze_metric!, metric_inner, metric_apply!
+export Metric, MetricDistance, correction_bound, frozen_metric, freeze_metric!, metric_inner, metric_apply!
 export Tracer, AcceptedStep, StepFailure, FailureCause, Refusal, Bound
 export Unresolved, TooManyRefusals, NotFiniteStart, SingularStart
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor

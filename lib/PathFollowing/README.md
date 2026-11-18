@@ -56,7 +56,8 @@ small to keep steps short where the curve bends.
   `LastCorrection()` settles on the last correction, often one iteration later.
 - `StepControl`: the target contraction, first correction and turn, the largest growth (and the largest after the
   first step) and the largest step. A converged point farther than `reach` predictor lengths from its predictor
-  refuses the step (`FarFromPredictor`): the corrector can land on another branch there.
+  refuses the step (`FarFromPredictor`): the corrector can land on another branch there. A target first correction
+  needs a distance that declares its largest length (`correction_bound`), and its refusal must lie under that length.
 - `metric`, `turn_metric`: the step metric and the turn metric, each a symmetric positive semidefinite operator
   frozen at every accepted point (`frozen_metric`). `FixedWeights` is the constant diagonal one.
 - `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.

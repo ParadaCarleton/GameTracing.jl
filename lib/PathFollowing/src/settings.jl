@@ -19,6 +19,16 @@ A correction's length in the trace's step metric (`PseudoArclength`'s `metric`).
 struct MetricDistance end
 
 """
+    correction_bound(distance)
+
+The largest length the corrector's `distance` measures, `Inf` for an unbounded one. Each distance that step control
+targets defines it: `PseudoArclength` checks that its first-correction refusal can fire.
+"""
+function correction_bound end
+
+correction_bound(::MetricDistance)::Real = Inf32
+
+"""
     LastCorrection()
 
 `Newton`'s `error_estimate` that settles on the last correction itself: `converged` sees `scale = 1`. That correction
@@ -55,7 +65,8 @@ step metric.
 - `contraction_limit`: a correction longer than this times the one before it is refused as diverging.
 - `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)`.
 - `distance(from, to)`: a correction's length, for the contraction test, the error estimate and step control.
-  `MetricDistance()` is the step metric's norm.
+  `MetricDistance()` is the step metric's norm. A distance with a target first correction declares the largest length
+  it measures (`correction_bound`).
 """
 struct Newton{C, E <: Real, R <: Union{LastCorrection, ContractionEstimate{E}}, D}
     max_iterations::Int
@@ -195,6 +206,20 @@ struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, 
     max_refusals::Int
 end
 
+"""
+Throw unless `control`'s first-correction term can refuse a step: `target_correction refusal_factor²`, the first
+correction past which it refuses, must lie under `correction_bound(distance)`.
+"""
+function refusable_correction(control::StepControl, distance::Any)::Nothing
+    (; target_correction, refusal_factor) = control
+    isnothing(target_correction) && return nothing
+    limit, bound = target_correction * refusal_factor^2, correction_bound(distance)
+    limit < bound || throw(
+        ArgumentError("step control refuses first corrections past $limit, but the corrector's distance measures at most $bound")
+    )
+    return nothing
+end
+
 """A `PseudoArclength` `accept` that keeps every converged point."""
 struct AcceptAll end
 
@@ -205,6 +230,7 @@ function PseudoArclength(;
         accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
     )::PseudoArclength{C, S, M, T, O, L, A} where {C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}
     min_step_ulps >= 0 || throw(ArgumentError("min_step_ulps must be non-negative; got $min_step_ulps"))
+    refusable_correction(step_control, corrector.distance)
     max_refusals >= 0 || throw(ArgumentError("max_refusals must be non-negative; got $max_refusals"))
     return PseudoArclength{C, S, M, T, O, L, A}(
         corrector, step_control, metric, turn_metric, orientation_check, linear_solver, accept, Int(min_step_ulps),

@@ -200,6 +200,10 @@ end
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
+    # The refusal factor 2 refuses a first correction past 4 times its target, which must lie under the distance's bound.
+    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.8f0)))
+    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.78f0))))
+    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = LogitDistance{element}(; target_correction = 100))))
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
     # A distance in another element type is refused.
     @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
@@ -252,6 +256,10 @@ end
     # The same strategy at twice the precision and half the gap.
     @test one_player(element[0, 1], element[log(element(3)) / 2, 2]) ≈ element(π) / 6
     @test isnan(one_player(element[NaN32, 1], element[0, 1]))
+    # Between opposite pure strategies the distance nears π, its largest (`correction_bound`); a logit move has none.
+    @test one_player(element[-100, 1], element[100, 1]) ≈ element(π)
+    @test GameTracing.PathFollowing.correction_bound(one_player) == π
+    @test GameTracing.PathFollowing.correction_bound(GameTracing.logit_change) == Inf32
     two_players = GameTracing.FisherRaoChange((1:2, 3:3))
     @test two_players(element[0, 0, 0, 1], element[0, 0, log(element(3)), 1]) ≈ element(π) / 6
     # A strategy outside the support moves 500 logits, but no probability.

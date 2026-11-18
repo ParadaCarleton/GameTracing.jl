@@ -95,6 +95,22 @@ function (flaky::Flaky)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}
     return nothing
 end
 
+"""A correction's length as the largest move of any coordinate, unbounded."""
+struct LargestMove end
+
+function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return maximum(abs.(to .- from))
+end
+PathFollowing.correction_bound(::LargestMove)::Real = Inf32
+
+"""`LargestMove` capped at one, as a distance between probabilities is."""
+struct CappedMove end
+
+function (::CappedMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return min(LargestMove()(from, to), one(E))
+end
+PathFollowing.correction_bound(::CappedMove)::Real = 1
+
 """A `converged` that never holds."""
 never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
 
@@ -425,8 +441,7 @@ end
     end
 
     @testset "a custom distance measures corrections" begin
-        largest = (from, to) -> maximum(abs.(to .- from))
-        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = largest))
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = LargestMove()))
         step = unwrap(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10)) |> step!)
         @test step.first_correction > 0
     end
@@ -442,6 +457,18 @@ end
         @test (step.refusals, step.step_length) == (1, E(3) / 8)
         failure = unwrap_error(step!(unwrap(init(problem, algorithm(E; step_control = control, max_refusals = 0); first_step = E(3) / 4))))
         @test (failure.cause, failure.last_refusal) == (TooManyRefusals, FarFromPredictor)
+    end
+
+    @testset "a first-correction refusal past the distance's largest length cannot fire, and throws" begin
+        capped(target) = algorithm(
+            E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = CappedMove()),
+            step_control = StepControl(; target_contraction = nothing, target_correction = target, target_turn = nothing, max_step_growth = E(2), max_step = one(E)),
+        )
+        # The refusal factor 2 refuses a first correction past 4 times the target.
+        @test_throws ArgumentError capped(one(E) / 4)
+        @test capped(one(E) / 5).step_control.target_correction == one(E) / 5
+        @test capped(nothing).step_control.target_correction === nothing
+        @test correction_bound(MetricDistance()) == Inf32
     end
 
     @testset "a predictor that reaches the bound is cut there and lands with the value exact" begin

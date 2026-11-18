@@ -1,44 +1,72 @@
 using BifurcationKit: BifurcationKit
+using LogExpFunctions: log1pmx
 using PathFollowing: PathFollowing
-"""
-The log normalizer `log(1 + Σ exp(z))` of a player's logits `z = λ w[range]` at a point `[w; λ]`, in two parts: the
-largest logit or zero, and the log of the sum shifted by it. Their sum rounds away the gaps between large logits.
-"""
-function log_normalizer(point::AbstractVector{E}, range::UnitRange{Int})::NTuple{2, E} where {E <: Real}
-    shift = zero(E)
-    for index in range
-        shift = max(shift, last(point) * point[index])
-    end
-    total = exp(-shift)
-    for index in range
-        total += exp(last(point) * point[index] - shift)
-    end
-    return (shift, log(total))
+"""The gap of strategy `index` at a point `[w; λ]`: `w[index]`, or zero for the reference strategy, `index = 0`."""
+function strategy_gap(point::AbstractVector{E}, index::Integer)::E where {E <: Real}
+    return iszero(index) ? zero(E) : point[index]
 end
 
-"""The log probability of a strategy with logit `logit`, its player's `log_normalizer` `normalizer`."""
-function log_probability(logit::E, normalizer::NTuple{2, E})::E where {E <: Real}
-    return (logit - first(normalizer)) - last(normalizer)
+"""The logit of strategy `index` (0 for the reference) at a point `[w; λ]`, less its player's pivot's: `λ (wᵢ - w_pivot)`."""
+function centered_logit(point::AbstractVector{E}, index::Integer, pivot::Integer)::E where {E <: Real}
+    return last(point) * (strategy_gap(point, index) - strategy_gap(point, pivot))
 end
 
 """
-`KL(π_from ‖ π_to)` of one player's mixed strategy, its logits `z = λ w[range]` at two points `[w; λ]`:
-`Σ π_from (z_from - z_to) + A(z_to) - A(z_from)`, `A` the `log_normalizer`. It stays finite where a probability rounds
-to 0, and one logit gives the Bernoulli KL.
+A player's pivot and log normalizer at a point `[w; λ]`, its logits `z = λ w[range]` against its reference. The pivot is
+its most probable strategy: the index of its largest positive logit, or 0 for its reference. The normalizer is
+`log Σ exp(zᵢ - z_pivot)` over its strategies and its reference (`centered_logit`). Each logit enters as `λ (wᵢ - w_pivot)`,
+which keeps its relative accuracy at a large common logit.
+"""
+function log_normalizer(point::AbstractVector{E}, range::UnitRange{Int})::Tuple{Int, E} where {E <: Real}
+    pivot, largest = 0, zero(E)
+    for index in range
+        if last(point) * point[index] > largest
+            pivot, largest = index, last(point) * point[index]
+        end
+    end
+    total = iszero(pivot) ? zero(E) : exp(centered_logit(point, 0, pivot))
+    for index in range
+        total += index == pivot ? zero(E) : exp(centered_logit(point, index, pivot))
+    end
+    return (pivot, log(one(E) + total))
+end
+
+"""The log probability of strategy `index` (0 for the reference) at a point `[w; λ]`, its player's `log_normalizer` `normalizer`."""
+function log_probability(point::AbstractVector{E}, index::Integer, normalizer::Tuple{Int, E})::E where {E <: Real}
+    return centered_logit(point, index, first(normalizer)) - last(normalizer)
+end
+
+"""
+One strategy's share `π_from (eᵈ - 1 - d)` of a player's KL, `d = log π_to - log π_from`, from the log probabilities
+`from` and `to`. The shares sum to the KL as both distributions sum to one. Each share is second order in `d`, so the sum
+keeps its relative accuracy at a small KL. Past `|d| = 1/2`, where `log1pmx` loses nothing to cancellation, the share is
+`π_to - π_from (1 + d)`, which stays finite where `eᵈ` overflows.
+"""
+function kl_share(from::E, to::E)::E where {E <: Real}
+    gap = to - from
+    if abs(gap) <= one(E) / 2
+        return -exp(from) * log1pmx(expm1(gap))
+    end
+    return exp(to) - exp(from) * (one(E) + gap)
+end
+
+"""
+`KL(π_from ‖ π_to)` of one player's mixed strategy, its logits `z = λ w[range]` at two points `[w; λ]`: the sum of each
+strategy's `kl_share`, its reference's included, from log probabilities centered on each point's pivot (`log_normalizer`).
+It keeps its relative accuracy at large common logits and stays finite where a probability rounds to 0.
 """
 function player_kl(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)
-    total = (first(to_normalizer) - first(from_normalizer)) + (last(to_normalizer) - last(from_normalizer))
+    total = kl_share(log_probability(from, 0, from_normalizer), log_probability(to, 0, to_normalizer))
     for index in range
-        logit = last(from) * from[index]
-        total += exp(log_probability(logit, from_normalizer)) * (logit - last(to) * to[index])
+        total += kl_share(log_probability(from, index, from_normalizer), log_probability(to, index, to_normalizer))
     end
     return total
 end
 
 """The largest `player_kl` from `from` to `to`, two points `[w; λ]`, over the players of `ranges` (`logit_ranges`)."""
 function largest_kl(ranges::Any, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    # Rounding can make a KL slightly negative, so the search starts below every value.
+    # The search starts below every value, so a game of no players passes every limit.
     largest = typemin(E)
     for range in ranges
         largest = max(largest, player_kl(from, to, range))
@@ -96,15 +124,11 @@ function PathFollowing.freeze_metric!(frozen::F, point::AbstractVector{E})::F wh
     copyto!(frozen.point, point)
     for (player, range) in enumerate(frozen.metric.ranges)
         normalizer = log_normalizer(point, range)
-        frozen.references[player] = exp(log_probability(zero(E), normalizer))
-        pivot, largest = 0, frozen.references[player]
+        frozen.pivots[player] = first(normalizer)
+        frozen.references[player] = exp(log_probability(point, 0, normalizer))
         for index in range
-            frozen.probabilities[index] = exp(log_probability(last(point) * point[index], normalizer))
-            if frozen.probabilities[index] > largest
-                pivot, largest = index, frozen.probabilities[index]
-            end
+            frozen.probabilities[index] = exp(log_probability(point, index, normalizer))
         end
-        frozen.pivots[player] = pivot
     end
     return frozen
 end

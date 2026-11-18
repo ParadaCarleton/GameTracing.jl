@@ -111,6 +111,24 @@ end
     @test all(range -> isfinite(player_kl(saturated, flipped, range)), ranges)
 end
 
+@testset "player_kl keeps its accuracy at large common logits, against BigFloat ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    ranges = (1:1, 2:3, 4:6)
+    for shift in element[0, 30, 100], step in element[1 // 1000, 1 // 100, 1 // 10], _ in 1:5
+        precision, gaps = (1 + rand(rng, element)) / 2, 4 .* randn(rng, element, 6)
+        from, to = [gaps .+ shift; precision], [gaps .+ step .* randn(rng, element, 6) .+ shift; precision]
+        for range in ranges
+            exact = direct_kl(last(from) .* big.(from[range]), last(to) .* big.(to[range]))
+            # A log probability rounds by `eps`, which moves each second-order share by `eps |d|`: `eps √KL` in all.
+            @test abs(player_kl(from, to, range) - exact) <= 8 * eps(element) * (sqrt(exact) + exact)
+        end
+    end
+    # Logits 30 and 30.5 against 130 and 130.501: differencing the raw logits left `-3.8e-6` in Float32.
+    from, to = element[30, 61 // 2, 1], element[130, 130501 // 1000, 1]
+    exact = direct_kl(big.(from[1:2]), big.(to[1:2]))
+    @test abs(player_kl(from, to, 1:2) - exact) <= 8 * eps(element) * (sqrt(exact) + exact)
+end
+
 @testset "a Fisher trace or KL limit refuses a pass without logit ranges; a plain trace needs none" begin
     @test_throws MethodError GameTracing.palc_geometry(TraceGeometry{Float32}(), RangelessPass(), 1, 2.0f0)
     @test_throws MethodError GameTracing.kl_ranges(1.0f-3, RangelessPass(), 1)

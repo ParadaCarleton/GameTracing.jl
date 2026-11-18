@@ -217,9 +217,9 @@ function (change::FisherRaoChange)(from::AbstractVector{E}, to::AbstractVector{E
     return largest
 end
 
-"""The square root of the probability of a strategy with logit `logit`, its player's `log_normalizer` `normalizer`."""
-function root_probability(logit::E, normalizer::NTuple{2, E})::E where {E <: Real}
-    return exp(log_probability(logit, normalizer) / 2)
+"""The square root of strategy `index`'s probability at `point` (`log_probability`), its player's `log_normalizer` `normalizer`."""
+function root_probability(point::AbstractVector{E}, index::Integer, normalizer::Tuple{Int, E})::E where {E <: Real}
+    return exp(log_probability(point, index, normalizer) / 2)
 end
 
 """
@@ -231,12 +231,12 @@ square `√(Σ π z²)` of the logits `z = λ w[range]` at `to` under their own 
 function fisher_rao_spread(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::NTuple{2, E} where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)
     # The first strategy's logit is zero, so it adds nothing to the spread.
-    squared = (root_probability(zero(E), to_normalizer) - root_probability(zero(E), from_normalizer))^2
+    squared = (root_probability(to, 0, to_normalizer) - root_probability(from, 0, from_normalizer))^2
     spread = zero(E)
     for index in range
         logit = last(to) * to[index]
-        root = root_probability(logit, to_normalizer)
-        squared += (root - root_probability(last(from) * from[index], from_normalizer))^2
+        root = root_probability(to, index, to_normalizer)
+        squared += (root - root_probability(from, index, from_normalizer))^2
         # `√π z` stays finite where `π` underflows and `z²` overflows.
         spread += (root * logit)^2
     end

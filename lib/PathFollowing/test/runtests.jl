@@ -124,6 +124,30 @@ function (::Overshoot)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E},
     return nothing
 end
 
+"""
+The parabola `x = y²/2` and the line `x = -1/5`: `H = (x - y²/2)(x + 1/5)`. Up from the origin, a step of 1 corrects
+onto the line at `(-1/5, 1)`. Its half steps keep the parabola and reach `(1/2, 1)`.
+"""
+struct ParabolaAndLine end
+
+function (::ParabolaAndLine)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    parabola, line = point[1] - point[2]^2 / 2, point[1] + one(E) / 5
+    residual[1] = parabola * line
+    jacobian[1, 1] = parabola + line
+    jacobian[1, 2] = -point[2] * line
+    return nothing
+end
+
+"""The line `x = 0`, its residual NaN for `y` in `(1/4, 3/4)`: a step of 1 up from the origin sees only `y = 1`."""
+struct BandedLine end
+
+function (::BandedLine)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    residual[1] = one(E) / 4 < point[2] < 3 * one(E) / 4 ? E(NaN32) : point[1]
+    jacobian[1, 1] = one(E)
+    jacobian[1, 2] = zero(E)
+    return nothing
+end
+
 """A `converged` that ignores its contract and settles where `scale` is infinite."""
 settles_at_infinite_scale(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool = isinf(scale)
 
@@ -192,6 +216,7 @@ function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::Pse
         ),
         metric = FixedWeights(ones(E, 2)),
         orientation_check = DeterminantSign(),
+        split_check = nothing,
         linear_solver = LUFactorization(),
         max_refusals = 60,
     )
@@ -500,6 +525,33 @@ end
         @test PathFollowing.settled_scale(zero(E)) == 0
     end
 
+    @testset "a step that corrects onto another branch is refused by its half steps, and its retry keeps the branch" begin
+        # Without the check the step lands on the line; f is 0 with no targets, so a trigger of 0 runs the check.
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        for (split_check, point, refusals) in ((check, E[1 // 8, 1 // 2], 1), (nothing, E[-1 // 5, 1], 0))
+            tracer = untargeted(ParabolaAndLine(), E[0, 0], E[0, 1]; first_step = 1, orientation_check = nothing, split_check)
+            accepted = unwrap(step!(tracer))
+            @test tracer.point ≈ point atol = 100 * tolerance
+            @test accepted.refusals == refusals
+        end
+    end
+
+    @testset "a half step that fails refuses the step as SplitMismatch" begin
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        failure = unwrap_error(step!(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, split_check = check, max_refusals = 0)))
+        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, SplitMismatch)
+        @test unwrap(step!(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, max_refusals = 0))).step_length == 1
+    end
+
+    @testset "half steps of a landing end on the bound, and the step lands" begin
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; split_check = check); first_step = E(1) / 10))
+        bound = Bound(2, E(1) / 20)
+        @test unwrap(step!(tracer, bound)).refusals == 0
+        @test tracer.point[2] == bound.value
+        @test tracer.point[1] ≈ sqrt(1 - bound.value^2) atol = 100 * tolerance
+    end
+
     @testset "the settle error is measured in the step metric frozen at the accepted point" begin
         # `CountingMetric` weighs each coordinate by 1 + |xᵢ|, so the metric frozen at the start measures another length.
         problem = CurveProblem(Circle(one(E)), E[1, 0], E[0, 1])
@@ -679,6 +731,21 @@ end
             target_contraction = nothing, target_correction = nothing, target_turn = -one(E), max_step_growth = one(E),
             max_step = one(E),
         )
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = -1, tolerance = one(E))
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = NaN32, tolerance = one(E))
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = Inf32, tolerance = one(E))
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = one(E), tolerance = 0)
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = one(E), tolerance = NaN32)
+        # Numbers finite in a wider type can round to zero or to Inf in `E`.
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = one(E), tolerance = nextfloat(zero(widen(E))))
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = one(E), tolerance = floatmax(widen(E)))
+        @test_throws ArgumentError HalfStepCheck{E}(; trigger = floatmax(widen(E)), tolerance = one(E))
+        @test HalfStepCheck{E}(; trigger = 0, tolerance = 1 // 3).tolerance === E(1 // 3)
+        # A step past the refusal factor is refused before the check, so a trigger there never fires.
+        @test_throws ArgumentError algorithm(E; split_check = HalfStepCheck{E}(; trigger = 2, tolerance = one(E)))
+        @test algorithm(E; split_check = HalfStepCheck{E}(; trigger = prevfloat(E(2)), tolerance = one(E))).split_check.trigger < 2
+        wide_check = HalfStepCheck{widen(E)}(; trigger = 1, tolerance = 1)
+        @test_throws ArgumentError init(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E; split_check = wide_check); first_step = one(E) / 10)
         @test_throws ArgumentError algorithm(E; min_step_ulps = -1)
         @test_throws ArgumentError algorithm(E; max_refusals = -1)
         @test_throws ArgumentError init(CurveProblem(Fold(), E[0, 0], E[1, 0]), algorithm(E); first_step = zero(E))
@@ -700,6 +767,11 @@ end
         bound = Bound(2, E(3) / 20)
         @test warm_bytes(tracer, bound) == 0
         @test tracer.point[2] == bound.value
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        for bound in (nothing, Bound(2, E(3) / 20))
+            tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; split_check = check); first_step = E(1) / 10))
+            @test warm_bytes(tracer, bound) == 0
+        end
     end
 
     @testset "property: random ellipses keep every point on the curve" begin

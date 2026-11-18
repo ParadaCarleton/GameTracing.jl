@@ -33,6 +33,7 @@ algorithm = PseudoArclength(;
     ),
     metric = FixedWeights([1.0, 1.0]),
     orientation_check = DeterminantSign(),
+    split_check = HalfStepCheck{Float64}(; trigger = 1.3, tolerance = 1e-8),
     linear_solver = LUFactorization(),
     max_refusals = 60,
 )
@@ -65,6 +66,10 @@ small to keep steps short where the curve bends.
 - `orientation_check`: `DeterminantSign` refuses a step where `sign det([J; tᵀ])` changes. A long step near a fold can
   land where the oriented tangent runs back along the curve; this check catches it. A persistent change is accepted
   as a bifurcation crossing. `nothing` switches the check off.
+- `split_check`: `HalfStepCheck(; trigger, tolerance)` runs a step with factor at least `trigger` again in two half
+  steps. The second ends on the step's own hyperplane and must reach the corrected point within `tolerance`, or the
+  step is refused (`SplitMismatch`). A corrector can converge on another branch that passes its predictor, with every
+  step measurement in range; the shorter half steps keep the start's branch. `nothing` switches the check off.
 - `accept`: a test on each converged point.
 
 ## Failures

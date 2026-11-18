@@ -9,10 +9,11 @@ one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not fini
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
 was not finite at an iterate (`NotFiniteResidual`), a bordered system was singular (`SingularSystem`), `accept`
 returned `false` (`AcceptRefused`), step control found the step too long (`TooFast`), or the orientation check found
-a changed sign (`OrientationFlip`), the corrected point went past the step's `Bound` (`PastBound`), or it lies
-farther from its predictor than step control's `reach` (`FarFromPredictor`). `NoRefusal` marks an accepted attempt.
+a changed sign (`OrientationFlip`), the corrected point went past the step's `Bound` (`PastBound`), it lies
+farther from its predictor than step control's `reach` (`FarFromPredictor`), or two half steps did not reach it
+(`SplitMismatch`, `HalfStepCheck`). `NoRefusal` marks an accepted attempt.
 """
-@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip PastBound FarFromPredictor
+@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip PastBound FarFromPredictor SplitMismatch
 
 """
     AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
@@ -51,8 +52,9 @@ end
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
 the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), `settle_error`, the
 corrector's bound on the error left at `point` (`settle_error`; zero at the start), the step and turn metrics frozen at
-`point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system. `init` builds one and
-`step!` advances it. Read its fields; do not write them.
+`point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system, and the `split_`
+arrays hold a corrected point, its tangent and its `previous` through the split check. `init` builds one and `step!`
+advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, T}
     const problem::P
@@ -75,6 +77,9 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, 
     const iterate::Vector{E}
     const previous::Vector{E}
     const candidate::Vector{E}
+    const split_point::Vector{E}
+    const split_tangent::Vector{E}
+    const split_previous::Vector{E}
     const oriented::Matrix{E}
     const pivots::Vector{LinearAlgebra.BlasInt}
     const linear::C
@@ -97,6 +102,8 @@ function CommonSolve.init(
     # The step control computes in its own type: a shrink below 1 there can round back to the same step in `E`.
     algorithm.step_control isa StepControl{E} ||
         throw(ArgumentError("the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
+    algorithm.split_check isa Union{Nothing, HalfStepCheck{E}} ||
+        throw(ArgumentError("the split check's element type must be the start's $E; got $(typeof(algorithm.split_check))"))
     size = length(problem.start)
     length(problem.direction) == size || throw(DimensionMismatch("start and direction differ in length"))
     bordered = zeros(E, size, size)
@@ -107,7 +114,8 @@ function CommonSolve.init(
         problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E),
         frozen_metric(algorithm.metric, problem.start), frozen_metric(algorithm.turn_metric, problem.start), zeros(E, size),
         zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
-        zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
+        zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size, size),
+        zeros(LinearAlgebra.BlasInt, size), linear,
     )
     return started(tracer)
 end
@@ -252,8 +260,8 @@ end
 
 """
 Correct `tracer.predicted`, a predictor `taken` long, then test the corrected point: its distance from the predictor,
-`bound`, `accept`, a finite system there, its tangent, step control's factor and its orientation sign. A landing
-(`lands`) holds its row from `cut_predictor!`; any other attempt borders with the tangent.
+`bound`, `accept`, a finite system there, its tangent, step control's factor, its orientation sign and the split
+check. A landing (`lands`) holds its row from `cut_predictor!`; any other attempt borders with the tangent.
 """
 function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E)::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
@@ -289,6 +297,9 @@ function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands
     orientation = unwrap(oriented)
     if flip_refused(algorithm.orientation_check, tracer.orientation, orientation)
         return refused(E, OrientationFlip)
+    end
+    if split_refused(tracer, algorithm.split_check, factor, bound, lands, taken)
+        return refused(E, SplitMismatch)
     end
     return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, corrected.error_scale, turn, factor, orientation)
 end
@@ -337,6 +348,68 @@ function factored_sign(factors::AbstractMatrix{E}, pivots::AbstractVector{<:Inte
         signed *= (Int8(pivot > 0) - Int8(pivot < 0)) * ifelse(pivots[index] == index, Int8(1), Int8(-1))
     end
     return signed
+end
+
+"""
+Whether `check` refuses the step to `tracer.iterate`, `taken` long from `tracer.point` with step factor `factor`: never
+without a check or under its trigger. Else the two half steps (`half_steps!`) must converge and reach the corrected
+point within the check's tolerance, in `Newton`'s `distance`. The corrected point, its tangent in `tracer.candidate` and
+`tracer.previous` come back as they were.
+"""
+split_refused(::Tracer, ::Nothing, ::Real, ::Any, ::Bool, ::Real)::Bool = false
+function split_refused(tracer::Tracer{E}, check::HalfStepCheck{E}, factor::E, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E)::Bool where {E <: Real}
+    factor >= check.trigger || return false
+    copyto!(tracer.split_point, tracer.iterate)
+    copyto!(tracer.split_tangent, tracer.candidate)
+    copyto!(tracer.split_previous, tracer.previous)
+    # Negated so a NaN distance refuses.
+    refuses = !(
+        half_steps!(tracer, lands ? bound : nothing, taken) &&
+            correction_length(tracer.algorithm.corrector.distance, tracer, tracer.iterate, tracer.split_point) <= check.tolerance
+    )
+    copyto!(tracer.iterate, tracer.split_point)
+    copyto!(tracer.candidate, tracer.split_tangent)
+    copyto!(tracer.previous, tracer.split_previous)
+    return refuses
+end
+
+"""
+Two half steps from `tracer.point` along its tangent, the second ending on the step's own hyperplane (`to_hyperplane!`):
+the first corrects at the half predictor, and the second predicts along that point's tangent to the hyperplane and
+corrects there. Whether both converged, the second's point in `tracer.iterate`. `landing` is the step's `Bound` when it
+lands there.
+"""
+function half_steps!(tracer::Tracer{E}, landing::Union{Nothing, Bound{E}}, taken::E)::Bool where {E <: Real}
+    tracer.predicted .= tracer.point .+ (taken / 2) .* tracer.tangent
+    metric_apply!(tracer.row, tracer.metric, tracer.tangent)
+    correct!(tracer).refusal == NoRefusal || return false
+    tracer.problem.system!(tracer.residual, tracer.jacobian, tracer.iterate)
+    all(isfinite, tracer.residual) && all(isfinite, tracer.jacobian) || return false
+    is_error(tangent_solve!(tracer, tracer.tangent)) && return false
+    to_hyperplane!(tracer, landing, taken)
+    return correct!(tracer).refusal == NoRefusal
+end
+
+"""
+Predict along `tracer.candidate` from `tracer.iterate` to a step's hyperplane, and border with its normal: through the
+predictor `taken` long and normal to the tangent, or the coordinate of a `Bound` the step lands on, at its value.
+"""
+function to_hyperplane!(tracer::Tracer{E}, ::Nothing, taken::E)::Tracer{E} where {E <: Real}
+    (; point, tangent, metric) = tracer
+    tracer.scratch .= point .+ taken .* tangent .- tracer.iterate
+    along = metric_inner(metric, tangent, tracer.scratch) / metric_inner(metric, tangent, tracer.candidate)
+    tracer.predicted .= tracer.iterate .+ along .* tracer.candidate
+    metric_apply!(tracer.row, metric, tangent)
+    return tracer
+end
+
+function to_hyperplane!(tracer::Tracer{E}, bound::Bound{E}, ::E)::Tracer{E} where {E <: Real}
+    (; coordinate, value) = bound
+    tracer.predicted .= tracer.iterate .+ ((value - tracer.iterate[coordinate]) / tracer.candidate[coordinate]) .* tracer.candidate
+    tracer.predicted[coordinate] = value
+    fill!(tracer.row, zero(E))
+    tracer.row[coordinate] = one(E)
+    return tracer
 end
 
 """Whether `check` refuses a step whose orientation sign went from `before` to `after`."""

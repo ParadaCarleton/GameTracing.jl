@@ -29,9 +29,10 @@ const BranchResult{E, N} = Result{Vector{QREProfile{E, N}}, TraceFailure}
     gambit_settings(first_step, max_accel)
 
 `BifurcationKitSettings` for pygambit's step arguments: `first_step` is the first arclength step and `max_accel` caps each
-step's growth (`aggressiveness = max_accel - 1`). The trace steps in `FisherDistance` with `LogPrecisionTerm`, the
-step in `log(1 + λ)`, so a trace to a far precision opens at the scale of a near one, at `TraceGeometry`'s default
-state weight.
+step's growth (`StepControl`'s `max_step_growth`, and `aggressiveness = max_accel - 1`). BifurcationKit's growth limit
+must exceed 1, so at `max_accel = 1` step control only refuses steps. Zero aggressiveness then holds an accepted step's
+length, where Gambit also shrinks it after a poor corrector.
+The trace steps in `default_step_metric`, which `PathFollowingSettings` shares.
 """
 function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings{E} where {E <: Real}
     if !(first_step > 0)
@@ -40,10 +41,12 @@ function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings
     if !(max_accel >= 1)
         throw(ArgumentError("max_accel must be at least 1; got $max_accel"))
     end
+    growth = E(max_accel)
     return BifurcationKitSettings{E}(;
         first_step,
-        aggressiveness = E(max_accel) - one(E),
-        step_metric = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm),
+        aggressiveness = growth - one(E),
+        step_metric = default_step_metric(E),
+        step_control = StepControl{E}(; max_step_growth = growth > 1 ? growth : nothing),
     )
 end
 
@@ -131,7 +134,7 @@ function logit_solve_lambda(
         gains::NormalFormGains{N},
         lam::AbstractVector{<:Real};
         first_step::Real = 0.03f0,
-        max_accel::Real = 1.1f0,
+        max_accel::Real = GAMBIT_MAX_ACCEL,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
     )::BranchResult{E, N} where {N, E <: Real}
     require_payoff_type(gains, settings)
@@ -181,7 +184,7 @@ The accepted points of `logit_solve_branch`'s trace of `gains`, as precisions an
 function settled_points(
         gains::NormalFormGains;
         first_step::Real = 0.03f0,
-        max_accel::Real = 1.1f0,
+        max_accel::Real = GAMBIT_MAX_ACCEL,
         maximum_precision::Real = 1.0f6,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
         maxregret::Real = sqrt(eps(element_type(settings))),

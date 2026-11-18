@@ -84,7 +84,7 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
 - `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`trace_metric`) at target precision
-  one, frozen at each accepted point.
+  one, frozen at each accepted point. The default, `default_step_metric`, is `gambit_settings`' too.
 - `max_step`: the largest step in that norm; `Inf` sets none. The first step comes from the game (`opening_step`).
 - `max_steps`: accepted steps before the trace fails as `NoConvergence`.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
@@ -101,17 +101,15 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   the check off.
 - `split_check`: PathFollowing's `HalfStepCheck{E}`, or `nothing` to switch it off. A step with factor at least
   `trigger` runs again in two half steps, which must reach its point within `tolerance` in `distance`. The default
-  trigger is 1, every step at or past a step-control target (`default_split_check`), and the tolerance 10 times
-  `distance`'s settle tolerance. A zero settle tolerance has no default: pass `split_check`. Without the check, about 1
-  random two-action game in 5000 left its principal branch on a step that passed every other test.
-  Evidence, with `StrategyDistance` in Float32 and Float64. A sweep with the reach on and off: 203 seeds of 20
-  two-action games, and battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs, 300 draws per scale. The half steps
-  flagged all 22 jumps and 148 of 196,594 steps that kept the branch (0.075%). Kept steps reached their point within
-  2.5e-5 at the 99.99th percentile. Each jump failed or landed at least 0.27 away. So the 5e-4 tolerance lies 20 times
-  above that percentile and 550 times under the nearest jump. A hunt over 20,000 more two-action games found 4 jumps,
-  at `f` from 1.23 to 1.44, and the half steps refused each. A trigger of 1 fires on 9.8% of the hunt's kept steps and
-  refuses 0.06% of them. With the reach off, the check keeps three of the four unfolded pitchforks that the reach
-  keeps. At the fourth, both half steps jump with the step.
+  trigger is 1.3 (`default_split_check`), and the tolerance 10 times `distance`'s settle tolerance. A zero settle
+  tolerance has no default: pass `split_check`. Without the check, at the default step control, 4 of 20,000 random
+  two-action games and 3 of 1200 unfolded pitchforks left the principal branch on a step that passed every other test.
+  Tolerance evidence, at growth 2 and the summed metric, with `StrategyDistance` in Float32 and Float64. A sweep with
+  the reach on and off: 203 seeds of 20 two-action games, and battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs,
+  300 draws per scale. The half steps flagged all 22 jumps and 148 of 196,594 steps that kept the branch (0.075%).
+  Kept steps reached their point within 2.5e-5 at the 99.99th percentile. Each jump failed or landed at least 0.27
+  away. So the 5e-4 tolerance lies 20 times above that percentile and 550 times under the nearest jump. At the default
+  step control, trigger 1.3 refused 21 of 565,078 kept steps in the hunt (0.004%).
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -148,17 +146,17 @@ function PathFollowingSettings{E}(;
         target_contraction::Union{Nothing, Real} = 0.25f0,
         # On hard_games.jl's 543 games, 0.3 left no endpoint off its branch to 1 rad's 3, at 15-62% more steps.
         target_turn::Union{Nothing, Real} = 1.0f0,
-        # Growth 4 left 8 endpoints off their branch to growth 2's 3. Results: benchmark/results/hard-b5a6b4d-summary.txt.
-        max_step_growth::Real = 2.0f0,
+        # Both engines' default. Without the split check, all 10 random jump games of logitnash_tests.jl leave their
+        # branch at growth 2 with the summed metric, and none at 1.1.
+        max_step_growth::Real = GAMBIT_MAX_ACCEL,
         # On unfolded pitchforks a step that jumped branches moved 4.2 or more of its lengths, one that kept it 1.86 at most.
         reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = default_split_check(distance),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
-        # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
-        # on two-action games and 37% fewer on categorical ones, but stalls at battle of the sexes' exact pitchfork.
-        step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
+        # Both engines' default. At growth 1.1 it took 35-68% fewer hard_games steps than the summed metric.
+        step_metric::TraceGeometry{E} = default_step_metric(E),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
@@ -169,10 +167,12 @@ function PathFollowingSettings{E}(;
 end
 
 """
-`PathFollowingSettings`' default split check: trigger 1 and tolerance 10 times `distance`'s settle tolerance. A step
-with `f ≥ 1` meets or passes one of step control's targets, so the check verifies every such step. A trigger above 1
-fits the smallest jump seen, and more draws found smaller ones: a sweep's smallest `f` was 1.52, and a 20,000-game hunt
-and a suite draw jumped at 1.23 and between 1.1 and 1.2. A zero settle tolerance gives the tolerance no scale, so it
+`PathFollowingSettings`' default split check: trigger 1.3 and tolerance 10 times `distance`'s settle tolerance. At
+growth 1.1 a step held by a step-control target rides at `f` near 1. So trigger 1 fired on up to 67% of
+logitnash_speed's steps and cost up to 33% per game (median). Trigger 1.3 fired on 0.4-2.7% of them and cost at most
+2%. A hunt over 20,000 two-action games and 1200 unfolded pitchforks found the same 7 jumps in Float32 and Float64.
+Trigger 1.3 fired on and refused each; the smallest jump `f` was 1.41. At growth 2 with the summed metric, jumps came
+as low as `f` 1.1: a looser step control needs trigger 1. A zero settle tolerance gives the tolerance no scale, so it
 throws an `ArgumentError` that asks for an explicit `split_check`.
 """
 function default_split_check(distance::CorrectorDistance{E})::PathFollowing.HalfStepCheck{E} where {E <: Real}
@@ -182,7 +182,7 @@ function default_split_check(distance::CorrectorDistance{E})::PathFollowing.Half
                 "HalfStepCheck{$E}(; trigger, tolerance), with a tolerance above the corrector's settled error, or nothing",
         ),
     )
-    return PathFollowing.HalfStepCheck{E}(; trigger = 1, tolerance = 10 * distance.tolerance)
+    return PathFollowing.HalfStepCheck{E}(; trigger = 13 // 10, tolerance = 10 * distance.tolerance)
 end
 
 """`estimate` with its numbers in `E`."""

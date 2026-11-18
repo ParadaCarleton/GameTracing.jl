@@ -29,7 +29,8 @@ The precision's term in `FisherDistance`: `TargetPrecisionTerm` `(Δλ / P)²`, 
 
 The norm a trace steps in: its `StepDistance`, `state_weight`, the gaps' weight against the precision's, and the
 Fisher distance's `PrecisionTerm`. A plain distance takes `TargetPrecisionTerm` only; another throws an
-`ArgumentError`. The default is the Fisher distance at `state_weight = 0.1` with the target's precision term.
+`ArgumentError`. The default is both engines' (`default_step_metric`): the Fisher distance at `state_weight = 0.1`
+with `LogPrecisionTerm`. A plain distance defaults to `TargetPrecisionTerm`, its only term.
 
 `state_weight = 0.1` serves both precision terms (`benchmark/results/tune-4dd74d7-summary.txt`, weights 0.003 to 0.9).
 Each term reached every categorical game at 0.1. The target term took its fewest steps there (304); the log term took
@@ -51,10 +52,27 @@ end
 function TraceGeometry{E}(;
         distance::StepDistance = FisherDistance,
         state_weight::Real = 0.1f0,
-        precision_term::PrecisionTerm = TargetPrecisionTerm,
+        precision_term::PrecisionTerm = distance == FisherDistance ? LogPrecisionTerm : TargetPrecisionTerm,
     )::TraceGeometry{E} where {E <: Real}
     return TraceGeometry{E}(distance, E(state_weight), precision_term)
 end
+
+"""
+    default_step_metric(E)
+
+The step metric of both engines' defaults (`BifurcationKitSettings`, `gambit_settings`, `PathFollowingSettings`):
+`TraceGeometry`'s defaults, defined once so the engines cannot drift. `FisherDistance` with `LogPrecisionTerm` steps
+in `log(1 + λ)`, so a trace to a far precision opens at the scale of a near one.
+"""
+function default_step_metric(::Type{E})::TraceGeometry{E} where {E <: Real}
+    return TraceGeometry{E}()
+end
+
+"""
+Gambit's largest step growth, `max_accel`: the default growth of both engines (`logit_solve`'s `max_accel`,
+BifurcationKit's `StepControl`, `PathFollowingSettings`), defined once so they cannot drift.
+"""
+const GAMBIT_MAX_ACCEL = 1.1f0
 
 """The weight of each `Δwᵢ²` in `geometry`'s norm over `width` gaps, before the target's `P²` (`StepDistance`)."""
 function coordinate_weight(geometry::TraceGeometry{E}, width::Integer)::E where {E <: Real}

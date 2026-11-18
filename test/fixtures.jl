@@ -52,8 +52,8 @@ const GAMBIT_LEAVES_GAME = (
 const UNFOLDED_PITCHFORK_GAME = ([30000726 -37; 757 20000821] .// 10^7, [19999477 -283; 919 29999523] .// 10^7)
 
 # The (3, 3, 2) game of `3 .* randn(Xoshiro(152), Float32, (3, 3, 2))` per player. A long early PathFollowing step lands
-# where its oriented tangent runs back along the branch; without the orientation and split checks the trace ends at
-# another equilibrium, 0.9995 away in probability from Gambit's pure one at λ ≈ 3.8.
+# where its oriented tangent runs back along the branch; without the orientation check the trace ends at another
+# equilibrium, 0.9995 away in probability from Gambit's pure one at λ ≈ 3.8.
 const REVERSAL_GAME = (
     cat(
         Float32[-0.5337934f0 -3.4574738f0 -0.31516188f0; 1.2419287f0 0.6020585f0 -0.45870376f0; 1.6466057f0 -1.8631278f0 -0.5691585f0],

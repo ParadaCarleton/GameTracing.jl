@@ -252,19 +252,34 @@ end
     end
 end
 
-# Unfolded pitchforks where PathFollowing's corrector jumped to the other component of the branch: draw 12 of a CI run's
-# seed, and the 1e-1 draws of seeds 84, 185 and 260. Each pairs with whether the split check keeps it without the reach
-# refusal: at seed 185 both half steps jump with the step, so they agree.
+"""
+The step control where the jump tests' games below left their branch: growth 2 and the summed metric at state weight 1,
+with the split check at trigger 1. The default growth of 1.1 keeps those games' branch without any check.
+"""
+function growth_two(element::Type)::NamedTuple
+    tolerance = PathFollowingSettings{element}().split_check.tolerance
+    return (;
+        max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1),
+        split_check = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 1, tolerance),
+    )
+end
+
+# Unfolded pitchforks where PathFollowing's corrector jumped to the other component of the branch at `growth_two`: draw
+# 12 of a CI run's seed, and the 1e-1 draws of seeds 84, 185 and 260. Each pairs with whether the split check keeps it
+# without the reach refusal: at seed 185 both half steps jump with the step, so they agree.
 const JUMPED_PITCHFORKS = [
     (unfolded_pitchforks(Xoshiro(0x0035b4b3c0a0f1ba))[12], true); [(unfolded_pitchfork(Xoshiro(seed), inv(float(10))), seed != 185) for seed in (84, 185, 260)]
 ]
 
-@testset "PathFollowing keeps the unfolded pitchforks' principal branch where it jumped; without its reach refusal and split check it jumps ($element)" for element in (Float32, widen(Float32))
+@testset "PathFollowing keeps the unfolded pitchforks' principal branch where it jumped; at growth 2 without its reach refusal and split check it jumps ($element)" for element in (Float32, widen(Float32))
     for (payoffs, split_keeps) in JUMPED_PITCHFORKS
         reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
         @test reference.reached
         gains = NormalFormGains(map(table -> element.(table), payoffs))
-        arms = (((;), true), ((; split_check = nothing), true), ((; reach = Inf32), split_keeps), ((; reach = Inf32, split_check = nothing), false))
+        checks = ((;), (; split_check = nothing), (; reach = Inf32), (; reach = Inf32, split_check = nothing))
+        # The default step control keeps each branch with any of the checks off.
+        arms = [((; overrides...), true) for overrides in checks]
+        append!(arms, zip([(; growth_two(element)..., overrides...) for overrides in checks], (true, true, split_keeps, false)))
         for (overrides, kept) in arms
             landed = only(unwrap(logit_solve_lambda(gains, element(4); settings = PathFollowingSettings{element}(; overrides...))))
             @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
@@ -277,22 +292,28 @@ function same_noise_pitchfork(seed::Integer, scale::Real)::Tuple
     return map(table -> table .+ scale .* randn(Xoshiro(seed), 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
 end
 
-@testset "PathFollowing's split check keeps an unfolded pitchfork's principal branch without the reach refusal; without both it jumps ($element)" for element in (Float32, widen(Float32))
+@testset "PathFollowing's split check keeps an unfolded pitchfork's principal branch without the reach refusal; at growth 2 without both it jumps ($element)" for element in (Float32, widen(Float32))
     payoffs = same_noise_pitchfork(21, inv(float(10)))
     reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
     gains = NormalFormGains(map(table -> element.(table), payoffs))
-    for (overrides, kept) in (((; reach = Inf32), true), ((; reach = Inf32, split_check = nothing), false))
+    arms = (
+        ((; reach = Inf32), true), ((; reach = Inf32, split_check = nothing), true),
+        ((; growth_two(element)..., reach = Inf32), true), ((; growth_two(element)..., reach = Inf32, split_check = nothing), false),
+    )
+    for (overrides, kept) in arms
         landed = only(unwrap(logit_solve_lambda(gains, element(4); settings = PathFollowingSettings{element}(; overrides...))))
         @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
     end
 end
 
-# The second step keeps the branch, but its half steps end 1.25 Fisher–Rao from its point, so the split check refuses it.
+# At `growth_two`, the second step keeps the branch, but its half steps end 1.25 Fisher–Rao from its point, so the split
+# check refuses it.
 @testset "PathFollowing keeps the branch where its split check refuses a step that kept it ($element)" for element in (Float32, widen(Float32))
     payoffs = same_noise_pitchfork(213, inv(float(10)))
     reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
     gains = NormalFormGains(map(table -> element.(table), payoffs))
-    for (settings, refusals) in ((PathFollowingSettings{element}(), 1), (PathFollowingSettings{element}(; split_check = nothing), 0))
+    arms = ((PathFollowingSettings{element}(; growth_two(element)...), 1), (PathFollowingSettings{element}(; growth_two(element)..., split_check = nothing), 0))
+    for (settings, refusals) in arms
         tracer = unwrap(GameTracing.path_init(gains, settings))
         second = last([unwrap(GameTracing.path_step!(tracer, element(4), settings.max_steps, (;))) for _ in 1:2])
         @test second.refusals == refusals
@@ -391,8 +412,8 @@ end
     @info "Gambit comparisons skipped where its branch folds before the target" skipped
 end
 
-# Random games where PathFollowing's corrector jumped branches without its split check: draws of four suite runs' fresh
-# seeds, two of a 200-seed sweep and four of a 1000-seed hunt.
+# Random games where PathFollowing's corrector jumped branches at `growth_two` without its split check: draws of four
+# suite runs' fresh seeds, two of a 200-seed sweep and four of a 1000-seed hunt.
 const JUMPED_TWO_ACTION_GAMES = [
     two_action_games(Xoshiro(seed))[draw]
         for (seed, draw) in (
@@ -402,9 +423,30 @@ const JUMPED_TWO_ACTION_GAMES = [
         )
 ]
 
-@testset "PathFollowing keeps the random games' principal branch where it jumped; without its split check it jumps ($element)" for element in (Float32, widen(Float32))
+@testset "PathFollowing keeps the random games' principal branch where it jumped; at growth 2 without its split check it jumps ($element)" for element in (Float32, widen(Float32))
     for payoffs in JUMPED_TWO_ACTION_GAMES
         precision = logitnash_equilibrium(payoffs, 3).precision
+        reference = branch_reference(NormalFormPass(map(float, payoffs)), length(payoffs), precision)
+        @test reference.reached
+        gains = NormalFormGains(map(table -> element.(table), payoffs))
+        arms = (((;), true), ((; split_check = nothing), true), (growth_two(element), true), ((; growth_two(element)..., split_check = nothing), false))
+        for (overrides, kept) in arms
+            landed = only(unwrap(logit_solve_lambda(gains, element(precision); settings = PathFollowingSettings{element}(; overrides...))))
+            @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
+        end
+    end
+end
+
+# Games where PathFollowing jumped branches at its default step control without the split check: draws of a hunt over
+# 1000 fresh seeds of 20 random two-action games, and of the same-noise pitchforks at 300 seeds per scale.
+const DEFAULT_JUMPS = [
+    [(two_action_games(Xoshiro(seed))[draw], nothing) for (seed, draw) in ((0x0db119e74ded1c3e, 2), (0x0fd92e270e7a0a26, 11), (0x2981f81ebefd5d7e, 3), (0x585f8d66c83d6b7a, 15))];
+    [(same_noise_pitchfork(seed, scale), 4) for (seed, scale) in ((277, inv(float(100))), (218, inv(float(10))), (223, inv(float(10))))]
+]
+
+@testset "PathFollowing keeps the principal branch where its default step control jumped; without its split check it jumps ($element)" for element in (Float32, widen(Float32))
+    for (payoffs, fixed) in DEFAULT_JUMPS
+        precision = fixed === nothing ? logitnash_equilibrium(payoffs, 3).precision : fixed
         reference = branch_reference(NormalFormPass(map(float, payoffs)), length(payoffs), precision)
         @test reference.reached
         gains = NormalFormGains(map(table -> element.(table), payoffs))

@@ -7,7 +7,7 @@ const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
 """Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and PathFollowing's."""
 function engine_settings(::Type{E})::Vector{Pair{String, EngineSettings{E}}} where {E <: Real}
-    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), 1.1f0), "PathFollowing" => PathFollowingSettings{E}()]
+    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), GameTracing.GAMBIT_MAX_ACCEL), "PathFollowing" => PathFollowingSettings{E}()]
 end
 
 @testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision ($engine)" for (engine, settings) in engine_settings(Float32)
@@ -258,18 +258,44 @@ end
     @test GameTracing.opening_step(poisoned, element) == 1
 end
 
+@testset "both engines default to one step metric and Gambit's step growth ($element)" for element in (Float32, widen(Float32))
+    metric = GameTracing.default_step_metric(element)
+    @test (metric.distance, metric.precision_term) == (FisherDistance, LogPrecisionTerm)
+    @test TraceGeometry{element}(; state_weight = 3 // 10).precision_term == LogPrecisionTerm
+    gambit, bare = GameTracing.gambit_settings(element(3 // 100), GameTracing.GAMBIT_MAX_ACCEL), BifurcationKitSettings{element}()
+    @test gambit.step_metric == bare.step_metric == PathFollowingSettings{element}().step_metric == metric
+    @test (gambit.aggressiveness, gambit.step_control) == (bare.aggressiveness, bare.step_control)
+    @test PathFollowingSettings{element}().max_step_growth == element(GameTracing.GAMBIT_MAX_ACCEL) == StepControl{element}().max_step_growth
+end
+
+@testset "Gambit's max_accel sets the growth limit ($element)" for element in (Float32, widen(Float32))
+    faster = GameTracing.gambit_settings(element(3 // 100), 2)
+    @test (faster.step_control.max_step_growth, faster.aggressiveness) == (2, 1)
+    # BifurcationKit's growth limit must exceed 1: at 1 the step control only refuses.
+    held = GameTracing.gambit_settings(element(3 // 100), 1)
+    @test isnothing(held.step_control.max_step_growth) && iszero(held.aggressiveness)
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
+    steps = Dict(accel => length(unwrap(logit_solve_branch(gains; maxregret = 1.0f-4, max_accel = accel))) for accel in (1, 2))
+    @test steps[1] > steps[2]
+end
+
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), REVERSAL_GAME))
     checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
-    # The split check at trigger 1 refuses the long step too, so each check alone keeps the branch.
-    for alone in ((; orientation_check = nothing), (; split_check = nothing))
-        @test largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; alone...))).profile, checked.profile) < 1 // 1000
-    end
-    # The control: the same trace without either check ends elsewhere.
-    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing, split_check = nothing)))
-    @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
+    gap_to_checked(overrides) = largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; overrides...))).profile, checked.profile)
+    # The orientation check alone keeps the branch. The split check alone misses the long step, as its half steps run
+    # back too, and the trace ends elsewhere, as it does without either check.
+    @test gap_to_checked((; split_check = nothing)) < 1 // 1000
+    @test gap_to_checked((; orientation_check = nothing)) > 1 // 2
+    @test gap_to_checked((; orientation_check = nothing, split_check = nothing)) > 1 // 2
+    # At growth 2 with the summed metric and trigger 1, the split check alone refuses the long step too; without either
+    # check the trace ends elsewhere there as well.
+    summed = (; max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1))
+    trigger_one = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 1, tolerance = PathFollowingSettings{element}().split_check.tolerance)
+    @test gap_to_checked((; summed..., orientation_check = nothing, split_check = trigger_one)) < 1 // 1000
+    @test gap_to_checked((; summed..., orientation_check = nothing, split_check = nothing)) > 1 // 2
 end
 
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
@@ -320,9 +346,13 @@ end
     payoffs = ntuple(_ -> randn(rng, (20, 20)), 2)
     wide = widen(Float32)
     @test !is_error(logit_solve(NormalFormGains(payoffs); maxregret = 1.0f-4, settings = PathFollowingSettings{wide}()))
-    # The turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there, and the trace stops loudly at the fold.
+    # The default Fisher metric turns it in Float32 too.
     narrow = NormalFormGains(map(table -> Float32.(table), payoffs))
-    failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
+    @test !is_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
+    # In the summed metric the turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there, and the trace stops
+    # loudly at the fold.
+    summed = TraceGeometry{Float32}(; distance = SummedDistance, state_weight = 1)
+    failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}(; step_metric = summed)))
     @test failure.cause == GameTracing.TraceStuck
     @test abs(failure.context.precision - 315.68f0) < 1
 end
@@ -412,8 +442,8 @@ end
 
 @testset "a zero precision gives the flat start, with no step and no log ($element)" for element in (Float32, widen(Float32))
     payoffs = map(table -> element.(table), LOGITNASH_GAMES.stag_hunt)
-    for distance in instances(StepDistance)
-        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
+    for step_metric in every_geometry(element(1 // 10))
+        settings = BifurcationKitSettings{element}(; step_metric)
         traced = unwrap(@test_logs trace_endpoint(LogitGame(NormalFormPass(payoffs), zero(element)), 2, settings))
         @test traced.logits == zeros(element, 2) && traced.steps == 0 && traced.logit_accuracy == 0
     end
@@ -431,7 +461,7 @@ end
     pass = NormalFormPass(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
     tiny, huge = sqrt(nextfloat(zero(element))), sqrt(floatmax(element)) * 2
     for distance in (AveragedDistance, SummedDistance, FisherDistance), target in (tiny, huge)
-        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
+        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance, precision_term = TargetPrecisionTerm))
         @test_throws ArgumentError trace_endpoint(LogitGame(pass, target), 2, settings)
     end
     settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherDistance, precision_term = LogPrecisionTerm))

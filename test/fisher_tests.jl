@@ -156,10 +156,13 @@ end
     @test_throws MethodError GameTracing.kl_ranges(1.0f-3, RangelessPass(), 1)
     plain = TraceGeometry{Float32}(; distance = SummedDistance, state_weight = 1 // 2)
     @test !is_error(trace_endpoint(LogitGame(RangelessPass(), 2.0f0), 1, BifurcationKitSettings{Float32}(; step_metric = plain)))
-    for (ranges, width) in (((1:1, 3:3), 3), ((1:2,), 3), ((1:0, 1:2), 2), ((2:3, 1:1), 3), ((1:2, 2:3), 3))
+    for (ranges, width) in (((1:1, 3:3), 3), ((1:2,), 3), ((1:0, 2:3), 3), ((2:3, 1:1), 3), ((1:2, 2:3), 3))
         @test_throws ArgumentError checked_ranges(ranges, width)
     end
     @test checked_ranges((1:1, 2:3), 3) == (1:1, 2:3)
+    # A player of one strategy has no logits: its empty range starts where the next one does.
+    @test checked_ranges((1:0, 1:2), 2) == (1:0, 1:2)
+    @test checked_ranges((1:1, 2:1, 2:2), 2) == (1:1, 2:1, 2:2)
     for distance in (AveragedDistance, SummedDistance)
         @test_throws ArgumentError TraceGeometry{Float32}(; distance, precision_term = LogPrecisionTerm)
     end

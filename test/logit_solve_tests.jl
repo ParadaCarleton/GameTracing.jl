@@ -151,6 +151,21 @@ end
     end
 end
 
+@testset "a game with a player of one strategy traces under the default and each engine's settings ($element)" for element in (Float32, widen(Float32))
+    # A 1x2 game and a 2x1x2 game: the lone strategy's player has an empty logit range.
+    games = ((element[1 2], element[3 4]), map(table -> element.(table), ([1; 2;;; 3; 4], [5; 6;;; 7; 8], [2; 1;;; 4; 3])))
+    for payoffs in games, (engine, settings) in ["default" => BifurcationKitSettings{element}(); engine_settings(element)]
+        gains = NormalFormGains(payoffs)
+        result = logit_solve(gains; settings)
+        @test !is_error(result)
+        if !is_error(result)
+            solved = unwrap(result)
+            @test all(strategy -> length(strategy) > 1 || strategy == [1], solved.profile)
+            @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
+        end
+    end
+end
+
 @testset "logit_solve_branch fails NoConvergence when maximum_precision comes before maxregret ($engine)" for (engine, settings) in engine_settings(Float32)
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
     failure = unwrap_error(logit_solve_branch(gains; maximum_precision = 1, settings))

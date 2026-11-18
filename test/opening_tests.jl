@@ -9,6 +9,8 @@ const MIXED_STALL_SEED = 0x233ce38d667063a1
 # The seed whose (3, 3) game's corrector made two zero-length Newton steps at λ ≈ 34: with tolerance 0 the step control's
 # contraction rate was 0 / 0, so the step length went NaN and the step halved forever.
 const ZERO_STEP_SEED = 0x4e6997513e7cba6d
+# The seed whose (3, 3) game folds at λ ≈ 18.02, where the per-logit Bernoulli weights exhausted Float32.
+const FAR_FOLD_SEED = 0xe291aba5864127e0
 # Game 1 has logits near -27 at λ ≈ 9: Float32 rounding exceeds `logit_tolerance`, so only double precision reaches 50.
 const ROUNDING_EXHAUSTED_SEED = 0x4c03385ca80ab207
 
@@ -196,6 +198,7 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
             far_opening_games(Xoshiro(FAR_OPENING_SEED))...,
             last(far_opening_games(Xoshiro(MIXED_STALL_SEED))),
             first(far_opening_games(Xoshiro(ZERO_STEP_SEED))),
+            first(far_opening_games(Xoshiro(FAR_FOLD_SEED))),
         )
         for payoffs in (seeded..., far_opening_games(fresh_rng())...)
             gains = NormalFormGains(payoffs)

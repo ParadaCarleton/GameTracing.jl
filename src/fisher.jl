@@ -90,14 +90,16 @@ end
 `FisherDistance` as an operator `M` on displacements `[Δw; Δλ]` at a point `[w; λ]`, the logits `z = λ w` of each
 player in its range of `ranges` (`logit_ranges`), at PALC state weight `θ = palc_state_weight`:
 
-`ΔxᵀMΔx = (state_weight Σₚ Δzₚᵀ Gₚ Δzₚ + (c(λ) - (1 - θ)) Δλ²) / θ`, with `Δz = λ Δw + w Δλ`, up to the target
-(`precision_dot_weight` past it).
+`ΔxᵀMΔx = (state_weight Σₚ Δzₚᵀ Gₚ Δzₚ + (ω(λ) - (1 - θ)) Δλ²) / θ`, with `Δz = λ Δw + w Δλ`.
 
 `Gₚ = diag(qₚ) - qₚqₚᵀ` is the Fisher information of player `p`'s mixed strategy in its logits, `qₚ` the probabilities
 of its strategies past the reference: the Hessian of `log(1 + Σ exp zₚ)`. A player with one logit has `σ(z)σ(-z)`.
-`c(λ)` is `precision_term`'s weight toward `target_precision` (`precision_term_weight`). PALC adds `(1 - θ) Δλ²` itself,
-so its norm is the distance's; PathFollowing passes `θ = 1`. `PathFollowing.frozen_metric` freezes `M` at a point
-(`FrozenFisher`).
+PALC adds `(1 - θ) Δλ²` itself, so its norm gives `Δλ²` the weight `ω(λ)`. `c(λ)` is `precision_term`'s weight toward
+`target_precision` `P` (`precision_term_root`), and `ω(λ)` is `c(λ)` while `c(λ) ≥ c(P)`, up to `P` for the log term.
+Past `P` the log term's `c(λ) - (1 - θ)` can turn negative, so `ω(λ)` is `c(λ) + (1 - θ) (1 - c(λ) / c(P))`
+(`precision_dot_root`). The trace ends at `P`, so only its last point is past it. PathFollowing passes `θ = 1`, which
+gives `ω = c`. `1 - θ` must lie under `c(P)`, or the constructor throws an `ArgumentError`.
+`PathFollowing.frozen_metric` freezes `M` at a point (`FrozenFisher`).
 """
 struct FisherMetric{R, E <: Real} <: PathFollowing.Metric
     ranges::R
@@ -105,6 +107,20 @@ struct FisherMetric{R, E <: Real} <: PathFollowing.Metric
     precision_term::PrecisionTerm
     target_precision::E
     palc_state_weight::E
+
+    function FisherMetric(
+            ranges::R,
+            state_weight::E,
+            precision_term::PrecisionTerm,
+            target_precision::E,
+            palc_state_weight::E,
+        )::FisherMetric{R, E} where {R, E <: Real}
+        smallest = precision_term_root(precision_term, target_precision, target_precision)
+        if !(zero(E) < palc_state_weight <= one(E) && share_ratio(palc_state_weight, smallest) < one(E))
+            throw(ArgumentError("PALC's state weight $palc_state_weight lies outside (1 - c(P), 1] for √c(P) = $smallest"))
+        end
+        return new{R, E}(ranges, state_weight, precision_term, target_precision, palc_state_weight)
+    end
 end
 
 """
@@ -145,26 +161,33 @@ function PathFollowing.freeze_metric!(frozen::F, point::AbstractVector{E})::F wh
 end
 
 """
-The weight of `Δλ²` that `precision_term` gives at precision `precision` toward `target_precision`:
-`TargetPrecisionTerm` `1 / P²`, `LogPrecisionTerm` `1 / (1 + |λ|)²`. Over `λ ∈ [0, P]` both are smallest at `λ = P`.
+The root `√c(λ)` of the weight of `Δλ²` that `precision_term` gives at precision `precision` toward
+`target_precision`: `TargetPrecisionTerm` `1 / P`, `LogPrecisionTerm` `1 / (1 + |λ|)`. Over `λ ∈ [0, P]` both are
+smallest at `λ = P`. The root is positive for every finite `λ`; `c` itself underflows past `1 / √floatmin`.
 """
-function precision_term_weight(precision_term::PrecisionTerm, precision::E, target_precision::E)::E where {E <: Real}
+function precision_term_root(precision_term::PrecisionTerm, precision::E, target_precision::E)::E where {E <: Real}
     if precision_term == LogPrecisionTerm
-        return inv(one(E) + abs(precision))^2
+        return inv(one(E) + abs(precision))
     end
-    return inv(target_precision)^2
+    return inv(target_precision)
+end
+
+"""PALC's share `1 - θ`, `θ = palc_state_weight`, over the weight `c = root²`: divided by `root` twice, as `c` can underflow."""
+function share_ratio(palc_state_weight::E, root::E)::E where {E <: Real}
+    return ((one(E) - palc_state_weight) / root) / root
 end
 
 """
-The weight of `Δλ²` in `frozen`'s dot, before PALC's `θ` divides it: `c(λ) - (1 - θ)` (`FisherMetric`). PALC's `θ`
-keeps `1 - θ` within half of `c(P)` (`palc_state_weight_under`), but past `P` the log term's `c(λ)` falls further.
-There PALC's share shrinks with it, to `(1 - θ) c(λ) / c(P)`, so the weight stays about `c(λ) / 2`, never negative.
+The root `√(ω(λ) - (1 - θ))` of the weight of `Δλ²` in `frozen`'s dot, before PALC's `θ` divides it (`FisherMetric`).
+While `c(λ) ≥ c(P)` the weight is `c(λ) - (1 - θ)`. Past `P` PALC's share shrinks with the log term, to
+`(1 - θ) c(λ) / c(P)`. Both are `c(λ) (1 - (1 - θ) / max(c(λ), c(P)))`, whose root `√c(λ) √(1 - …)` is positive for
+every finite `λ`, as `1 - θ < c(P)`. The products apply the root to each side, so only a product too small to hold underflows.
 """
-function precision_dot_weight(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
+function precision_dot_root(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
     (; precision_term, target_precision, palc_state_weight) = frozen.metric
-    weight = precision_term_weight(precision_term, last(frozen.point), target_precision)
-    smallest = precision_term_weight(precision_term, target_precision, target_precision)
-    return weight - (one(E) - palc_state_weight) * min(one(E), weight / smallest)
+    root = precision_term_root(precision_term, last(frozen.point), target_precision)
+    smallest = precision_term_root(precision_term, target_precision, target_precision)
+    return root * sqrt(one(E) - share_ratio(palc_state_weight, max(root, smallest)))
 end
 
 """The logit move `Δzᵢ = λ Δwᵢ + wᵢ Δλ` of the displacement `vector = [Δw; Δλ]` at `frozen`'s point."""
@@ -224,7 +247,8 @@ function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, lef
         total += player_inner(frozen, left, right, player, range)
     end
     (; state_weight, palc_state_weight) = frozen.metric
-    return (state_weight * total + precision_dot_weight(frozen) * last(left) * last(right)) / palc_state_weight
+    root = precision_dot_root(frozen)
+    return (state_weight * total + (root * last(left)) * (root * last(right))) / palc_state_weight
 end
 
 """
@@ -264,7 +288,7 @@ function player_apply!(
     return pulled
 end
 
-# `M v = (state_weight Jᵀ G J v + (c - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, one block per player (`player_apply!`).
+# `M v = (state_weight Jᵀ G J v + (ω - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, one block per player (`player_apply!`).
 function PathFollowing.metric_apply!(
         out::AbstractVector{E},
         frozen::FrozenFisher{<:FisherMetric, E},
@@ -276,7 +300,8 @@ function PathFollowing.metric_apply!(
     for (player, range) in enumerate(frozen.metric.ranges)
         pulled += player_apply!(out, frozen, vector, player, range, gap_scale)
     end
-    out[end] = (state_weight * pulled + precision_dot_weight(frozen) * last(vector)) / palc_state_weight
+    root = precision_dot_root(frozen)
+    out[end] = (state_weight * pulled + root * (root * last(vector))) / palc_state_weight
     return out
 end
 

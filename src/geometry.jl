@@ -129,7 +129,7 @@ end
 """The smallest weight `geometry`'s norm gives `Δλ²` over the precisions `[0, P]`, over `width` gaps at target precision `P`."""
 function smallest_precision_weight(geometry::TraceGeometry{E}, width::Integer, target_precision::E)::E where {E <: Real}
     if geometry.distance == FisherDistance
-        return precision_term_weight(geometry.precision_term, target_precision, target_precision)
+        return precision_term_root(geometry.precision_term, target_precision, target_precision)^2
     end
     return last(plain_weights(geometry, width, target_precision))
 end
@@ -158,9 +158,9 @@ end
 """
 `(; palc_state_weight, dot)`: PALC's `θ` and `dotθ` for `geometry` over a trace of `width` gaps of `pass!`'s game to
 precision `target_precision`. PALC's norm of `[Δx; Δλ]`, `x = [w; λ]`, is `θ ⟨Δx, Δx⟩ + (1 - θ) Δλ²`, which `dotθ`
-(`trace_metric`) makes the trace's norm. `θ` comes from the norm's smallest precision weight
-(`palc_state_weight_under`). Every `state_weight` in (0, 1) is valid, at every width; another throws an
-`ArgumentError`. A Fisher distance reads the game's `logit_ranges`.
+(`trace_metric`) makes the trace's norm up to the target (`FisherMetric` past it). `θ` comes from the norm's smallest
+precision weight (`palc_state_weight_under`). Every `state_weight` in (0, 1) is valid, at every width; another throws
+an `ArgumentError`. A Fisher distance reads the game's `logit_ranges`.
 """
 function palc_geometry(geometry::TraceGeometry{E}, pass::Any, width::Integer, target_precision::Real)::NamedTuple where {E <: Real}
     (; state_weight) = geometry

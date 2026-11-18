@@ -17,6 +17,15 @@ function direct_kl(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <
 end
 
 """
+PALC's weight `ω(λ)` of `Δλ²` as `FisherMetric` documents it, at `precision` toward `target` under PALC state weight
+`palc_state_weight`: `c(λ)` while `c(λ) ≥ c(P)`, and `c(λ) + (1 - θ) (1 - c(λ) / c(P))` past it.
+"""
+function documented_precision_weight(precision_term::PrecisionTerm, precision::E, target::E, palc_state_weight::E)::E where {E <: Real}
+    current, smallest = precision_term == LogPrecisionTerm ? (inv(1 + abs(precision))^2, inv(1 + target)^2) : (inv(target)^2, inv(target)^2)
+    return current >= smallest ? current : current + (1 - palc_state_weight) * (1 - current / smallest)
+end
+
+"""
 `player_apply!`'s bound on the rounding of player `player`'s block sum of `applied = M vector`, in `applied`'s element
 type, from the exact frozen metric `exact`: `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))`.
 """
@@ -76,22 +85,25 @@ end
     end
 end
 
-@testset "the Fisher metric is the information pulled back through z = λw, past PALC's own term ($element)" for element in (Float32, widen(Float32))
+@testset "PALC's norm is the information pulled back through z = λw plus the documented ω(λ) Δλ² ($element)" for element in (Float32, widen(Float32))
     rng = fresh_rng()
     ranges = (1:2, 3:3, 4:6)
     for precision_term in instances(PrecisionTerm), _ in 1:10
-        point = [3 .* randn(rng, element, 6); 2 * rand(rng, element)]
-        state_weight, target, palc_state_weight = rand(rng, element), 1 + 3 * rand(rng, element), (1 + rand(rng, element)) / 2
-        metric = FisherMetric(ranges, state_weight, precision_term, target, palc_state_weight)
-        frozen = PathFollowing.frozen_metric(metric, point)
-        precision_weight, smallest = (precision_term == LogPrecisionTerm ? inv(1 + level)^2 : inv(target)^2 for level in (last(point), target))
-        # PALC adds `(1 - θ) Δλ²` to `θ ⟨Δx, Δx⟩`, so `θ M + (1 - θ) e eᵀ` is the distance's operator.
-        operator = fisher_operator(ranges, point, state_weight, precision_weight)
-        # Past the target PALC's share shrinks with the log term (`precision_dot_weight`).
-        operator[end, end] -= (1 - palc_state_weight) * min(1, precision_weight / smallest)
-        operator ./= palc_state_weight
-        @test inner_matrix(frozen, element, 7) ≈ operator rtol = sqrt(eps(element))
-        @test applied_matrix(frozen, element, 7) ≈ operator rtol = sqrt(eps(element))
+        state_weight, target = rand(rng, element), 1 + 3 * rand(rng, element)
+        # About half the points lie past the target.
+        point = [3 .* randn(rng, element, 6); 2 * target * rand(rng, element)]
+        smallest = precision_term == LogPrecisionTerm ? inv(1 + target)^2 : inv(target)^2
+        palc_state_weight = 1 - 9 * rand(rng, element) * smallest / 10
+        frozen = PathFollowing.frozen_metric(FisherMetric(ranges, state_weight, precision_term, target, palc_state_weight), point)
+        weight = documented_precision_weight(precision_term, last(point), target, palc_state_weight)
+        operator = fisher_operator(ranges, point, state_weight, weight)
+        # PALC adds `(1 - θ) Δλ²` to `θ ⟨Δx, M Δx⟩`.
+        for matrix in (inner_matrix(frozen, element, 7), applied_matrix(frozen, element, 7))
+            palc_norm = palc_state_weight .* matrix
+            palc_norm[end, end] += 1 - palc_state_weight
+            @test palc_norm ≈ operator rtol = sqrt(eps(element))
+            @test palc_norm[end, end] ≈ operator[end, end] rtol = sqrt(eps(element))
+        end
     end
 end
 
@@ -213,22 +225,41 @@ end
     @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
 end
 
-@testset "PALC's precision weight stays positive past the target; PathFollowing's is the log term's ($element)" for element in (Float32, widen(Float32))
-    for target in element[1 // 2, 10, 1000]
-        smallest = GameTracing.precision_term_weight(LogPrecisionTerm, target, target)
-        palc_state_weight = GameTracing.palc_state_weight_under(smallest)
+@testset "PALC weighs Δλ² by the documented ω(λ), positive at every finite λ; PathFollowing by the log term ($element)" for element in (Float32, widen(Float32))
+    unit = element[0, 1]
+    for target in element[1 // 2, 1, 10, 1000]
+        palc_state_weight = GameTracing.palc_state_weight_under(GameTracing.precision_term_root(LogPrecisionTerm, target, target)^2)
         palc, path = (FisherMetric((1:1,), one(element), LogPrecisionTerm, target, weight) for weight in (palc_state_weight, one(element)))
         # Past `√2 (1 + P) - 1`, `c(λ) - (1 - θ)` would turn negative and PALC's dot indefinite.
         for precision in element[0, target / 2, target, sqrt(element(2)) * (1 + target), 10 * target, 10^6 * target]
-            weight = GameTracing.precision_term_weight(LogPrecisionTerm, precision, target)
-            palc_weight = GameTracing.precision_dot_weight(PathFollowing.frozen_metric(palc, element[1, precision]))
-            @test palc_weight > 0
-            if precision <= target
-                @test palc_weight == weight - (1 - palc_state_weight)
-            end
-            @test GameTracing.precision_dot_weight(PathFollowing.frozen_metric(path, element[1, precision])) == weight
+            @test GameTracing.precision_dot_root(PathFollowing.frozen_metric(palc, element[1, precision])) > 0
+            # At a zero gap `Δz = 0`, so PALC's norm of a unit `Δλ` is its weight of `Δλ²`.
+            palc_norm = GameTracing.palc_product(GameTracing.metric_dot(palc, element[0, precision]), palc_state_weight, unit, unit)
+            @test palc_norm ≈ documented_precision_weight(LogPrecisionTerm, precision, target, palc_state_weight) rtol = 8 * eps(element)
+            root = GameTracing.precision_term_root(LogPrecisionTerm, precision, target)
+            @test GameTracing.precision_dot_root(PathFollowing.frozen_metric(path, element[1, precision])) == root
         end
     end
+    # P = 1, θ = 7/8, λ = 3: ω = 1/16 + (1/8) (1 - (1/16) / (1/4)) = 5/32.
+    palc = FisherMetric((1:1,), one(element), LogPrecisionTerm, one(element), element(7 // 8))
+    @test GameTracing.palc_product(GameTracing.metric_dot(palc, element[0, 3]), element(7 // 8), unit, unit) ≈ 5 // 32 rtol = 8 * eps(element)
+    # Past `1 / √nextfloat(0)`, `1 / (1 + λ)²` underflows to 0: 1.1e23 in Float32, 1.8e162 in Float64. A weight of 0
+    # gave a step `Δλ = λ` there length 0. Past `P = 1` the dot's weight is `c(λ) (1 - (1 - θ) / c(P))`, `c(P) = 1/4`.
+    for precision in (4 / sqrt(nextfloat(zero(element))), floatmax(element)), weight in (one(element), element(7 // 8))
+        frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(element), LogPrecisionTerm, one(element), weight), element[1, precision])
+        @test GameTracing.precision_dot_root(frozen) > 0
+        exact_weight = inv(1 + big(precision))^2 * (1 - 4 * (1 - big(weight)))
+        step = element[0, precision]
+        @test PathFollowing.metric_inner(frozen, step, step) ≈ exact_weight * big(precision)^2 / big(weight) rtol = 8 * eps(element)
+    end
+end
+
+@testset "a Fisher metric refuses a PALC state weight outside (1 - c(P), 1] ($element)" for element in (Float32, widen(Float32))
+    for (term, target, weight) in ((LogPrecisionTerm, 1, 3 // 4), (TargetPrecisionTerm, 10, 49 // 50), (LogPrecisionTerm, 1, 0), (TargetPrecisionTerm, 1, 2))
+        @test_throws ArgumentError FisherMetric((1:1,), one(element), term, element(target), element(weight))
+    end
+    # `θ = 1` serves every target, also where `c(P)` underflows.
+    @test FisherMetric((1:1,), one(element), LogPrecisionTerm, floatmax(element), one(element)).palc_state_weight == 1
 end
 
 @testset "the pivot comes from the gaps, and centered logits stay exact where gaps or products overflow ($element)" for element in (Float32, widen(Float32))

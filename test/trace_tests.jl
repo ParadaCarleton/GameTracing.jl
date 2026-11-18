@@ -180,7 +180,7 @@ end
 @testset "an option that names a keyword the trace sets itself throws ($element)" for element in (Float32, float(Int))
     for palc_options in ((; θ = one(element) / 4), (; orientation_check = false), (; dotθ = BifurcationKit.DotTheta()))
         settings = BifurcationKitSettings{element}(; palc_options)
-        @test_throws ArgumentError GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION)
+        @test_throws ArgumentError GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH)
     end
     for continuation_options in ((; p_max = one(element) / 2), (; max_steps = 3), (; newton_options = BifurcationKit.NewtonPar()))
         settings = BifurcationKitSettings{element}(; continuation_options)

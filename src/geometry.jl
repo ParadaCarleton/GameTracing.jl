@@ -75,7 +75,7 @@ end
 """
 `(gap, precision)`: the weights of `Σ Δwᵢ²` and `Δλ²` in `geometry`'s plain norm over `width` gaps at target precision
 `target_precision` (`coordinate_weight`, `precision_weight`, `StepDistance`). A target whose square leaves `E`'s
-range throws `ArgumentError`; `FisherLogPrecisionDistance` does not square it.
+range throws `ArgumentError`; `FisherDistance` with `LogPrecisionTerm` does not square it.
 """
 @inline function plain_weights(geometry::TraceGeometry{E}, width::Integer, target_precision::Real)::NTuple{2, E} where {E <: Real}
     target = E(target_precision)
@@ -88,7 +88,7 @@ end
 
 """The `ArgumentError` of a target precision whose square leaves `E`'s range; out of line, so inlined `plain_weights` stays small."""
 @noinline function squared_out_of_range(target_precision::Real, ::Type{E})::Union{} where {E <: Real}
-    throw(ArgumentError("target precision $target_precision squares out of range in $E; use FisherLogPrecisionDistance or a wider type"))
+    throw(ArgumentError("target precision $target_precision squares out of range in $E; use FisherDistance with LogPrecisionTerm or a wider type"))
 end
 
 """The plain inner product of two displacements `[Δw; Δλ]` in `geometry` at `target_precision` (`plain_weights`)."""

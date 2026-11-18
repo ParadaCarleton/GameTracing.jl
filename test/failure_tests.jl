@@ -111,7 +111,7 @@ end
 @testset "a reach failure that halves to an unresolved step exhausts the precision at the failed iterate and its step ($element)" for element in (Float32, widen(Float32))
     start, predicted, far = element[1, -2, 1 // 2], element[1, -2, 3 // 4], element[3, -2, 3 // 4]
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element),
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), nothing,
     )
     payload = (; p = element(3 // 4), ds = element(1 // 4), residual = zero(element))
     @test check((; payload..., x = predicted, z0 = (; u = start), step = 0); fromNewton = false)

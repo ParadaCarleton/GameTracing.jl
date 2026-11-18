@@ -82,7 +82,7 @@ end
     quarter, half = element(0.25f0), element(0.5f0)
     start, predicted = zero(element):quarter:half, one(element):(-quarter):half
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element),
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), nothing,
     )
     @test check.predicted == predicted && check.iterate == start
     first_iterate = (; x = collect(predicted), res_f = zeros(element, 3), p = half, step = 0, residual = zero(element), z0 = (; u = collect(start), p = half))

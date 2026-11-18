@@ -422,7 +422,7 @@ end
         settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
         @test_throws ArgumentError trace_endpoint(LogitGame(pass, target), 2, settings)
     end
-    settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherLogPrecisionDistance))
+    settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherDistance, precision_term = LogPrecisionTerm))
     # To first order the logits are the target times the gains at even odds: (8 + 0) / 2 - (7 + 5) / 2 = -2 for each player.
     @test unwrap(trace_endpoint(LogitGame(pass, tiny), 2, settings)).logits ≈ fill(-2 * tiny, 2) rtol = 1.0f-3
 end

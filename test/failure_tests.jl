@@ -107,6 +107,21 @@ end
     @test isfinite(unwrap_error(result).context.precision)
 end
 
+@testset "a reach failure that halves to an unresolved step exhausts the precision at the failed iterate" begin
+    start, predicted, far = Float32[1, -2, 0.5f0], Float32[1, -2, 0.75f0], Float32[3, -2, 0.75f0]
+    check = GameTracing.CorrectorReach(
+        GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), TARGET_PRECISION, start, predicted, 1.0f0,
+    )
+    @test check((; x = predicted, z0 = (; u = start), step = 0, residual = 0.0f0); fromNewton = false)
+    # The predictor moved a logit by 0.5; this iterate moves one 1.5 further, past the reach of twice that.
+    @test !check((; x = far, step = 1, residual = 0.0f0); fromNewton = false)
+    @test check.stalled == far
+    # The halved step's predictor is the start: no smaller step resolves, so the reach failure confirms noise.
+    @test !check((; x = start, z0 = (; u = start), step = 0, residual = 0.0f0); fromNewton = false)
+    @test GameTracing.noise_confirmed(check)
+    @test GameTracing.exhausted_record(check) == (; precision = 0.75f0, correction = 1.5f0, stalled_iterate = far)
+end
+
 @testset "exceptions BifurcationKit and LAPACK throw are told apart from a caller's" begin
     @test GameTracing.uncorrected_start("Stopping continuation.")
     @test GameTracing.uncorrected_start(

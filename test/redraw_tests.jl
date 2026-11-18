@@ -204,12 +204,14 @@ end
     traced = unwrap(trace_endpoint(game, WIDTH, REDRAW_SETTINGS))
     half = TARGET_PRECISION / 2
     progress = GameTracing.TraceProgress(copy(traced.logits), half, 3, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false, false, TARGET_PRECISION)
-    exhausted = (; precision = half, correction = 2.0f-3)
+    exhausted = (; precision = half, correction = 2.0f-3, stalled_iterate = [traced.logits ./ half; half])
     outcome = (; step_length = 0.1f0, accepted_step = 0.2f0, exhausted, logit_accuracy = 3.0f-5, unresolved = false, exception = nothing)
     failure = unwrap_error(GameTracing.reached_state(progress, outcome, game, REDRAW_SETTINGS, (;)))
     @test failure.cause == GameTracing.PrecisionExhausted
     @test failure.context.lambda == exhausted.precision
     @test failure.context.correction == exhausted.correction
+    @test failure.context.stalled_iterate == exhausted.stalled_iterate
+    @test failure.context.gaps == progress.gaps
     @test failure.context.logit_accuracy == outcome.logit_accuracy
     @test failure.context.accepted_step == outcome.accepted_step
     unaccepted = GameTracing.TraceProgress(copy(traced.logits), half, 0, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false, false, TARGET_PRECISION)

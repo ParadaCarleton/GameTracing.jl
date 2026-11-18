@@ -10,8 +10,10 @@ the float type's rounding noise, before the target (`CorrectorReach`); a wider f
     TraceFailure(cause, context)
 
 A trace that did not reach its target: `cause` names why and `context` carries the last accepted `logits`
-and precision. A trace that left its start also carries the tangent there in logits (`logit_tangent`,
-`dz = λ dw + w dλ` in the payoff gaps `w`) and the step it held; a non-finite start has neither.
+and precision. A `trace_endpoint` trace that left its start also carries that point's payoff `gaps` `w`, the tangent
+there in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps (`gap_tangent`, `tangent_precision`), and the
+step it held; a non-finite start has none of these. A `PrecisionExhausted` failure also carries the Newton iterate
+`stalled_iterate = [w; λ]` whose `correction` in logits stalled, at precision `lambda`.
 """
 struct TraceFailure{C <: NamedTuple}
     cause::TraceCause

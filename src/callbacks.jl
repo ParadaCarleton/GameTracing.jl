@@ -152,9 +152,10 @@ reach (`unresolved_noise`). On a smooth branch that distance is the branch's cur
 times `ds² / 2`, so halving brings any step under it, while an iterate that lands on another branch is far from it. A converged closing point is refused the same way past `reach`, past a largest probability KL
 `KL(corrected ‖ predicted)` of `settings.max_kl` (`largest_kl`). A predictor that did not move has no reach to compare.
 `accept_corrected(logits, λ, converged)` then sees every other closing point. `predicted` holds the current step's
-predictor and `iterate` the current solve's last iterate, both updated in place, mutable copies of `predicted` and
-`start` in `similar(predicted)`; `state` (`CorrectorState`) holds the scalars that change between calls. `geometry`
-measures the step length at `target_precision`.
+predictor, `iterate` the current solve's last iterate and `stalled` the iterate of the last stall or reach failure on
+record (`noise`, `reach_failure`), all updated in place, mutable copies of `predicted` and `start` in
+`similar(predicted)`; `state` (`CorrectorState`) holds the scalars that change between calls. `geometry` measures the
+step length at `target_precision`.
 """
 struct CorrectorReach{C, E <: Real, V <: AbstractVector{E}}
     accept_corrected::C
@@ -163,6 +164,7 @@ struct CorrectorReach{C, E <: Real, V <: AbstractVector{E}}
     target_precision::E
     predicted::V
     iterate::V
+    stalled::V
     state::Base.RefValue{CorrectorState{E}}  # lint: ref # lint: non-public-access  by design: callback_newton returns a verdict, and its state between calls is one immutable value here (RefValue is a Ref's concrete type)
 end
 
@@ -199,7 +201,8 @@ end
 `check`'s noise record once its step is unresolved. When the last corrector stopped past its reach, whatever its
 correction (one under `logit_tolerance` also fails to settle once the predictor is below the rounding noise), halving reached the float type's resolution without closing a point: the corrections are
 rounding noise, and the record confirms the precision exhausted there (`PrecisionExhausted`). `reach_failure` holds
-the last reach failure of the current step, with a NaN correction when there was none.
+the last reach failure of the current step, with a NaN correction when there was none; that failure ended the last
+corrector, so `check.stalled` still holds its iterate.
 """
 function unresolved_noise(check::CorrectorReach{C, E})::NoiseRecord{E} where {C, E <: Real}
     (; reach_failure, noise) = check.state[]
@@ -233,6 +236,7 @@ function CorrectorReach(
     )::CorrectorReach{C, E} where {C, E <: Real}
     # `similar` gives mutable storage like `predicted`'s; `copy` keeps a range or static vector immutable.
     predicted_buffer, iterate_buffer = copyto!(similar(predicted), predicted), copyto!(similar(predicted), start)
+    stalled_buffer = copy(iterate_buffer)
     # A plain Newton solve has no predictor move: NaN fails the noise test, so its stalls refuse.
     return CorrectorReach{C, E, typeof(predicted_buffer)}(
         accept_corrected,
@@ -241,6 +245,7 @@ function CorrectorReach(
         target_precision,
         predicted_buffer,
         iterate_buffer,
+        stalled_buffer,
         Ref(CorrectorState{E}(step_length, E(NaN32), E(NaN32), 0, false, NoiseRecord(zero(E), nothing), false, no_reach_failure(E))),  # lint: ref  see `state`
     )
 end
@@ -321,6 +326,7 @@ function (check::CorrectorReach{C, E})(
         if !reached
             correction = check.state[].correction
             @debug "corrector stopped" _group = :trace reason = :reach correction
+            copyto!(check.stalled, iterate.x)
             restate!(check; reach_failure = (; precision = last(iterate.x), correction))
         end
         return verdict
@@ -354,7 +360,7 @@ is the solve's start and never settles. Each later one is a correction `Δz` fro
 (`NewtonConverged`) when `settled` by the part of `Δz` past each logit's `settle_ulps`. A correction past `contraction_limit` times the one before (plus
 `logit_tolerance · contraction_offset`) fails to contract, Gambit's test (path.cc), and stops the corrector, so the
 step halves. Two in a row, each larger than the predictor's own move and within `noise_limit` of the noise floor
-(`noise_floor`), are suspected noise (`noise`); the
+(`noise_floor`), are suspected noise (`noise`), the iterate in `check.stalled`; the
 step still halves. A second such solve before any settles, its correction at least `noise_ratio` of the suspect's,
 confirms it (`noise_confirmed`): halving shrinks the corrections of a predictor past a fold, not noise. Every later
 solve refuses.
@@ -406,6 +412,7 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
     suspect = check.state[].noise.suspect
     confirmed = !isnothing(suspect) && correction >= check.settings.noise_ratio * suspect.correction
     @debug "corrector stopped" _group = :trace reason = :noise confirmed correction predictor_move = check.state[].predictor_move
+    copyto!(check.stalled, iterate.x)
     restate!(
         check;
         noise = NoiseRecord(check.state[].noise.accuracy, (; precision = last(iterate.x), correction, confirmed)),

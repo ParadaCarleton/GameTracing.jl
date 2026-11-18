@@ -532,7 +532,7 @@ end
 game from `start = [w; λ]`, the point of `opening` (the `TraceProgress` before it), for the steps `settings.max_steps`
 leaves: the progress after it (`branch_progress`), the step length its last corrector tried, the step of the last
 accepted point (the slot's, carried from an earlier segment when this one accepted none), the corrector's confirmed stall
-at rounding noise (or `nothing`), the largest last correction of an accepted point, whether its predictor fell below
+at rounding noise (`exhausted_record`, or `nothing`), the largest last correction of an accepted point, whether its predictor fell below
 the float type's resolution (`step_unresolved`), and `nothing` for a segment that
 ran, else the third-party failure it ended on. The segment opens along `restart_tangent`, oriented by `old_tangent`
 (`opening_tangent` from the flat start).
@@ -590,15 +590,25 @@ function segment_outcome(
         ran.progress,
         step_length = ifelse(isnothing(ran.exception), corrector.state[].step_length, zero(E)),
         accepted_step = E(finalise.slot[].step_length),
-        exhausted = ifelse(
-            isnothing(ran.exception) && noise_confirmed(corrector),
-            corrector.state[].noise.suspect,
-            nothing,
-        ),
+        exhausted = isnothing(ran.exception) && noise_confirmed(corrector) ? exhausted_record(corrector) : nothing,
         logit_accuracy = corrector.state[].noise.accuracy,
         unresolved = isnothing(ran.exception) && corrector.state[].unresolved,
         ran.exception,
     )
+end
+
+"""
+The confirmed stall at rounding noise of `corrector` (`noise_confirmed`): the noise record's `precision` and
+`correction`, with its stalled Newton iterate `stalled_iterate = [w; λ]`. A corrector without a confirmed stall throws.
+"""
+function exhausted_record(
+        corrector::CorrectorReach{C, E, V},
+    )::@NamedTuple{precision::E, correction::E, stalled_iterate::V} where {C, E <: Real, V <: AbstractVector{E}}
+    if !noise_confirmed(corrector)
+        throw(ArgumentError("the corrector has no confirmed stall at rounding noise"))
+    end
+    (; precision, correction) = corrector.state[].noise.suspect
+    return (; precision, correction, stalled_iterate = copy(corrector.stalled))
 end
 
 """How a guarded BifurcationKit call ended other than with its result: `Thrown` or `Ended`."""
@@ -783,8 +793,8 @@ end
 
 The `TraceResult` (`Ok(Traced)` or `Err(TraceFailure)`) of a trace whose `progress` holds the last accepted point and
 whose `outcome` (`guarded_trace`) is the last corrector's step length, its `exhausted` record, or the BifurcationKit
-exception that ended it. A corrector at rounding noise fails `PrecisionExhausted`, its context carrying the precision
-`lambda` and the `correction` in logits there.
+exception that ended it. A corrector at rounding noise fails `PrecisionExhausted`. Its context carries the stalled Newton
+iterate `stalled_iterate = [w; λ]`, its precision `lambda` and its last `correction` in logits.
 """
 function reached_state(
         progress::TraceProgress{E},
@@ -795,13 +805,13 @@ function reached_state(
     )::TraceResult{E} where {E <: Real}
     target_precision = game.target_precision
     if !isnothing(outcome.exhausted)
-        (; precision, correction) = outcome.exhausted
+        (; precision, correction, stalled_iterate) = outcome.exhausted
         @debug "trace stopped" _group = :trace reason = :precision_exhausted precision correction
         return Err(
             TraceFailure(
                 PrecisionExhausted,
                 (;
-                    lambda = precision, correction, stopped_context(
+                    lambda = precision, correction, stalled_iterate, stopped_context(
                         progress,
                         outcome,
                         context,
@@ -849,8 +859,9 @@ const STOP_CAUSES = (;
     stopped_context(progress, outcome, context)
 
 The context of a trace that stopped at `progress`'s last accepted point after `outcome`: `context`, the steps, the
-precision and its range, the `unmoved`, `unresolved` and `looped` flags, the logits, the step held, the arclength step of the last accepted point (`accepted_step`,
-zero when no step was accepted), the tangent in logits, the `logit_accuracy` of its accepted points and the exception.
+precision and its range, the `unmoved`, `unresolved` and `looped` flags, the logits and payoff `gaps`, the step held, the arclength step of the last accepted point (`accepted_step`,
+zero when no step was accepted), the tangent in logits and in payoff gaps (`gap_tangent`, `tangent_precision`), the
+`logit_accuracy` of its accepted points and the exception.
 """
 function stopped_context(
         progress::TraceProgress{E},
@@ -862,10 +873,12 @@ function stopped_context(
         progress.precision,
         progress.precision_min, progress.precision_max, progress.unmoved, outcome.unresolved, progress.looped,
         logits = progress.precision .* progress.gaps,
+        progress.gaps,
         step_length = E(outcome.step_length),
         accepted_step = ifelse(progress.steps > 0, E(outcome.accepted_step), zero(E)),
         logit_tangent = progress.precision .* progress.gap_tangent .+
             progress.tangent_precision .* progress.gaps,
+        progress.gap_tangent,
         progress.tangent_precision,
         logit_accuracy = E(outcome.logit_accuracy),
         outcome.exception,

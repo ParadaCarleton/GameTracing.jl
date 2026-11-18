@@ -232,14 +232,41 @@ end
     end
 end
 
+"""Battle of the sexes with `scale` times standard normal payoffs from `rng` added: a pitchfork unfolded at random."""
+function unfolded_pitchfork(rng::AbstractRNG, scale::Real)::Tuple
+    return map(table -> table .+ scale .* randn(rng, 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
+end
+
+"""The unfolded-pitchfork testset's draws from `rng`: three at each scale from 1e-4 to 1e-1, in that order."""
+function unfolded_pitchforks(rng::AbstractRNG)::Vector{Tuple}
+    return [unfolded_pitchfork(rng, scale) for scale in inv.(float.((10^4, 10^3, 10^2, 10))) for _ in 1:3]
+end
+
 @testset "a pitchfork unfolded by a payoff perturbation: the trace turns with the principal branch ($engine)" for (engine, settings) in default_settings()
     # Measured over 40 draws per scale against the arclength reference: the secant tangent followed the principal branch
     # 0/40 at 1e-4, 3/40 at 1e-3, 34/40 at 1e-2 and 39/40 at 1e-1; the bordered tangent 40/40 at every scale.
-    # PathFollowing followed it 40/40 at every scale, in Float32 and Float64 alike, with no failed trace.
-    rng = fresh_rng()
-    for scale in inv.(float.((10^4, 10^3, 10^2, 10))), _ in 1:3
-        payoffs = map(table -> table .+ scale .* randn(rng, 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
+    # PathFollowing, over 300 draws per scale in Float32 and Float64 alike: 300/300 at 1e-4, 1e-3 and 1e-2, and 297/300
+    # at 1e-1 until its corrector's reach refusal; with it, 300/300 at every scale.
+    for payoffs in unfolded_pitchforks(fresh_rng())
         cross_checked!(payoffs, 4, settings)
+    end
+end
+
+# Unfolded pitchforks where PathFollowing's corrector jumped to the other component of the branch: draw 12 of a CI run's
+# seed, and the 1e-1 draws of seeds 84, 185 and 260.
+const JUMPED_PITCHFORKS = [
+    unfolded_pitchforks(Xoshiro(0x0035b4b3c0a0f1ba))[12]; [unfolded_pitchfork(Xoshiro(seed), inv(float(10))) for seed in (84, 185, 260)]
+]
+
+@testset "PathFollowing keeps the unfolded pitchforks' principal branch where it jumped; without its reach refusal it jumps ($element)" for element in (Float32, widen(Float32))
+    for payoffs in JUMPED_PITCHFORKS
+        reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
+        @test reference.reached
+        gains = NormalFormGains(map(table -> element.(table), payoffs))
+        for (overrides, kept) in (((;), true), ((; reach = Inf32), false))
+            landed = only(unwrap(logit_solve_lambda(gains, element(4); settings = PathFollowingSettings{element}(; overrides...))))
+            @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
+        end
     end
 end
 

@@ -19,7 +19,7 @@ export CurveProblem, PseudoArclength, Newton, LastCorrection, ContractionEstimat
 export Metric, MetricDistance, frozen_metric, freeze_metric!, metric_inner, metric_apply!
 export Tracer, AcceptedStep, StepFailure, FailureCause, Refusal, Bound
 export Unresolved, TooManyRefusals, NotFiniteStart, SingularStart
-export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound
+export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor
 
 include("metric.jl")
 include("settings.jl")

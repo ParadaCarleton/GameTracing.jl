@@ -59,7 +59,7 @@ end
 
 """
     PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
-                             target_contraction, target_turn, max_step_growth, orientation_check, max_refusals,
+                             target_contraction, target_turn, max_step_growth, reach, orientation_check, max_refusals,
                              min_step_ulps, step_metric, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
@@ -74,8 +74,9 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
   `distance`. `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the
   settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
-- `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
-  The turn target is in radians under `step_metric`.
+- `target_contraction`, `target_turn`, `max_step_growth`, `reach`: PathFollowing's `StepControl`; `nothing` drops a
+  target. The turn target is in radians under `step_metric`. A converged point farther than `reach` step lengths from
+  its predictor refuses the step, as one that jumped to another branch; `Inf` switches the refusal off.
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
   `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. `nothing` switches
   the check off.
@@ -93,6 +94,7 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     target_contraction::Union{Nothing, E}
     target_turn::Union{Nothing, E}
     max_step_growth::E
+    reach::E
     orientation_check::Union{Nothing, PathFollowing.DeterminantSign}
     max_refusals::Int
     min_step_ulps::Int
@@ -115,6 +117,8 @@ function PathFollowingSettings{E}(;
         target_turn::Union{Nothing, Real} = 1.0f0,
         # Growth 4 left 8 endpoints off their branch to growth 2's 3. Results: benchmark/results/hard-b5a6b4d-summary.txt.
         max_step_growth::Real = 2.0f0,
+        # On unfolded pitchforks a step that jumped branches moved 4.2 or more of its lengths, one that kept it 1.86 at most.
+        reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
@@ -125,7 +129,7 @@ function PathFollowingSettings{E}(;
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
         E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
-        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), orientation_check,
+        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), E(reach), orientation_check,
         Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
 end
@@ -280,7 +284,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
         ),
         step_control = PathFollowing.StepControl(;
             settings.target_contraction, settings.distance.target_correction, settings.target_turn,
-            settings.max_step_growth, settings.max_step,
+            settings.max_step_growth, settings.max_step, settings.reach,
         ),
         # PathFollowing measures the precision at target one, and has no PALC state weight to divide by.
         metric = trace_metric(settings.step_metric, gains, logit_count(gains), one(E), one(E)),

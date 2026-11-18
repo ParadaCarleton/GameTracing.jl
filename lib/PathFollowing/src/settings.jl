@@ -88,7 +88,7 @@ end
 
 """
     StepControl(; target_contraction, target_correction, target_turn, max_step_growth, max_step, refusal_factor = 2,
-                shrink = 1/2)
+                shrink = 1/2, reach = 3)
 
 Step-length adaptation after Allgower and Georg (Numerical Continuation Methods, 1990, §6.1). A converged corrector
 gives `f = max(√(κ / target_contraction), √(δ / target_correction), α / target_turn)`: `κ` the ratio of its second
@@ -99,6 +99,12 @@ The turn is measured in the turn metric, so its target depends on that metric's 
 A step with `f > refusal_factor` is refused; any other step is accepted, and the next one is `1 / max(f, 1 /
 max_step_growth)` times as long as its predictor (cut at a `Bound`), at most `max_step`. A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
 and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shrink`) when it failed earlier.
+
+A converged point farther than `reach` predictor lengths from its predictor, in the step metric, is refused
+(`FarFromPredictor`) and retried at `shrink` times the length. Such a corrector left the curve the predictor followed,
+and its point can lie on another branch. The start's own error moves the corrector too, so the reach adds the
+correction that settled the start. On 300 unfolded pitchforks per scale (battle of the sexes plus `0.1 randn`
+payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3 that jumped moved 4.2 to 5.09.
 """
 struct StepControl{E <: Real}
     target_contraction::Union{Nothing, E}
@@ -108,6 +114,7 @@ struct StepControl{E <: Real}
     max_step::E
     refusal_factor::E
     shrink::E
+    reach::E
 end
 
 function StepControl(;
@@ -118,9 +125,11 @@ function StepControl(;
         max_step::Real,
         refusal_factor::Real = 2,
         shrink::Real = 1 // 2,
+        reach::Real = 3,
     )::StepControl{E} where {E <: Real}
     max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
     refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
+    reach > 0 || throw(ArgumentError("reach must be positive; got $reach"))
     # Checked in `E`, where a shrink near 1 rounds to 1 and a retry would repeat its step.
     zero(E) < E(shrink) < one(E) || throw(ArgumentError("shrink must lie in (0, 1) in $E; got $shrink"))
     max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
@@ -128,7 +137,7 @@ function StepControl(;
     isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
     return StepControl{E}(
         optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn), max_step_growth,
-        E(max_step), E(refusal_factor), E(shrink),
+        E(max_step), E(refusal_factor), E(shrink), E(reach),
     )
 end
 

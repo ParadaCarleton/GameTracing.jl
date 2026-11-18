@@ -9,10 +9,10 @@ one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not fini
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
 was not finite at an iterate (`NotFiniteResidual`), a bordered system was singular (`SingularSystem`), `accept`
 returned `false` (`AcceptRefused`), step control found the step too long (`TooFast`), or the orientation check found
-a changed sign (`OrientationFlip`), or the corrected point went past the step's `Bound` (`PastBound`). `NoRefusal`
-marks an accepted attempt.
+a changed sign (`OrientationFlip`), the corrected point went past the step's `Bound` (`PastBound`), or it lies
+farther from its predictor than step control's `reach` (`FarFromPredictor`). `NoRefusal` marks an accepted attempt.
 """
-@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip PastBound
+@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip PastBound FarFromPredictor
 
 """
     AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
@@ -49,8 +49,9 @@ end
     Tracer
 
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
-the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the step and turn metrics
-frozen at `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system. `init`
+the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), `settle_move`, the step
+metric length of the correction that settled `point` (zero at the start), the step and turn metrics frozen at `point`
+(`frozen_metric`), and work arrays; `row` is the border row of the next bordered system. `init`
 builds one and `step!` advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, T}
@@ -61,6 +62,7 @@ mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, 
     step_length::E
     steps::Int
     orientation::Int8
+    settle_move::E
     const metric::M
     const turn_metric::T
     const scratch::Vector{E}
@@ -102,7 +104,7 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0),
+        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E),
         frozen_metric(algorithm.metric, problem.start), frozen_metric(algorithm.turn_metric, problem.start), zeros(E, size),
         zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
         zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
@@ -167,7 +169,7 @@ function CommonSolve.step!(
         end
         lands = reaches(bound, tracer.point, tracer.predicted)
         taken = lands ? cut_predictor!(tracer, bound) : tracer.step_length
-        attempt = attempt_step!(tracer, bound, lands)
+        attempt = attempt_step!(tracer, bound, lands, taken)
         if attempt.refusal == NoRefusal
             accept_point!(tracer, attempt, taken)
             return Ok(AcceptedStep(taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn))
@@ -189,14 +191,15 @@ function CommonSolve.step!(
 end
 
 """
-One step attempt's verdict and, when accepted, its corrector's figures, its turn, its step factor and the orientation
-sign at its point.
+One step attempt's verdict and, when accepted, its corrector's figures, the step metric length of its last
+correction, its turn, its step factor and the orientation sign at its point.
 """
 struct Attempt{E <: Real}
     refusal::Refusal
     iterations::Int
     contraction::E
     first_correction::E
+    last_move::E
     turn::E
     factor::E
     orientation::Int8
@@ -204,7 +207,7 @@ end
 
 """A refused `Attempt` for `refusal`, with the step `factor` its measurements gave (zero for none)."""
 function refused(::Type{E}, refusal::Refusal, factor::E = zero(E))::Attempt{E} where {E <: Real}
-    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), factor, Int8(0))
+    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), E(NaN32), factor, Int8(0))
 end
 
 """Whether `point` lies on `bound`; never without one."""
@@ -248,11 +251,11 @@ function past_bound!(tracer::Tracer{E}, bound::Bound{E}, lands::Bool)::Bool wher
 end
 
 """
-Correct `tracer.predicted`, then test the corrected point: `bound`, `accept`, a finite system there, its tangent,
-step control's factor and its orientation sign. A landing (`lands`) holds its row from `cut_predictor!`; any other
-attempt borders with the tangent.
+Correct `tracer.predicted`, a predictor `taken` long, then test the corrected point: its distance from the predictor,
+`bound`, `accept`, a finite system there, its tangent, step control's factor and its orientation sign. A landing
+(`lands`) holds its row from `cut_predictor!`; any other attempt borders with the tangent.
 """
-function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands::Bool)::Attempt{E} where {E <: Real}
+function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E)::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
     if !lands
         metric_apply!(tracer.row, tracer.metric, tracer.tangent)
@@ -260,6 +263,10 @@ function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands
     corrected = correct!(tracer)
     if corrected.refusal != NoRefusal
         return corrected
+    end
+    # The start's own error, at most the correction that settled it, moves the corrector too. Negated: NaN is too far.
+    if !(metric_distance(tracer.metric, tracer.scratch, tracer.predicted, tracer.iterate) <= algorithm.step_control.reach * taken + tracer.settle_move)
+        return refused(E, FarFromPredictor)
     end
     if past_bound!(tracer, bound, lands)
         return refused(E, PastBound)
@@ -284,7 +291,7 @@ function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands
     if flip_refused(algorithm.orientation_check, tracer.orientation, orientation)
         return refused(E, OrientationFlip)
     end
-    return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
+    return Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, corrected.last_move, turn, factor, orientation)
 end
 
 """
@@ -373,7 +380,8 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         scale = error_scale(corrector.error_estimate, correction, before)
         before = correction
         if corrector.converged(tracer.previous, tracer.iterate, tracer.residual, scale)
-            return Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32), Int8(0))
+            last_move = metric_distance(tracer.metric, tracer.scratch, tracer.previous, tracer.iterate)
+            return Attempt{E}(NoRefusal, iteration, contraction, first_correction, last_move, E(NaN32), E(NaN32), Int8(0))
         end
     end
     return refused(E, NotConverged, step_factor(tracer.algorithm.step_control, contraction, first_correction, E(NaN32)))
@@ -465,6 +473,7 @@ function accept_point!(tracer::Tracer{E}, attempt::Attempt{E}, taken::E)::Tracer
     (; algorithm) = tracer
     copyto!(tracer.point, tracer.iterate)
     tracer.orientation = attempt.orientation
+    tracer.settle_move = attempt.last_move
     freeze_metric!(tracer.metric, tracer.point)
     freeze_metric!(tracer.turn_metric, tracer.point)
     tracer.tangent .= tracer.candidate ./ metric_norm(tracer.metric, tracer.candidate)

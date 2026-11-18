@@ -200,6 +200,7 @@ end
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
+    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
     # A distance in another element type is refused.
     @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
     # The error estimate's safety converts to the element type.

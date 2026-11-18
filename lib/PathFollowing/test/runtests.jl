@@ -431,6 +431,19 @@ end
         @test step.first_correction > 0
     end
 
+    @testset "a converged point farther than reach predictor lengths from its predictor refuses the step, which retries shorter" begin
+        # On the unit circle a step `h` along the tangent corrects by `1 - √(1 - h²)`: 0.45 of 3/4 and 0.19 of 3/8.
+        control = StepControl(;
+            target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2),
+            max_step = one(E), reach = one(E) / 4,
+        )
+        problem = CurveProblem(Circle(one(E)), E[1, 0], E[0, 1])
+        step = unwrap(step!(unwrap(init(problem, algorithm(E; step_control = control); first_step = E(3) / 4))))
+        @test (step.refusals, step.step_length) == (1, E(3) / 8)
+        failure = unwrap_error(step!(unwrap(init(problem, algorithm(E; step_control = control, max_refusals = 0); first_step = E(3) / 4))))
+        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, FarFromPredictor)
+    end
+
     @testset "a predictor that reaches the bound is cut there and lands with the value exact" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
         bound = Bound(2, E(1) / 20)
@@ -568,6 +581,8 @@ end
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E) / 2, max_step = one(E))
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = zero(E))
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), refusal_factor = 0)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = 0)
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = NaN32)
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1)
         # A shrink an eighth of eps under 1 rounds to 1 in `E`, and each retry repeated its step.
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1 - big(eps(E)) / 8)

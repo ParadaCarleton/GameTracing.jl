@@ -1,5 +1,5 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
-using LinearAlgebra: I, lu, opnorm
+using LinearAlgebra: I, lu
 using Random: AbstractRNG, Xoshiro
 
 # Random normal-form games whose trace to precision 1e6 once opened at λ ≈ 42426 and stalled off the map.
@@ -18,22 +18,67 @@ function far_opening_games(rng::AbstractRNG)::AbstractVector
 end
 
 """
-Whether `failure` is a `PrecisionExhausted` that rounding explains, judged at the last accepted point `(z, λ)`; the
-failed iterate lies within one correction of it. The residual `z - λ G(z)` rounds by up to `eps` times
-`|z| + ‖λ ∂G/∂z‖ |z| + λ (terms + 2) max|payoff|`: the logits, their effect on `G`, and `G`'s sums of payoff terms,
-whose cancellation keeps the payoffs' scale. PALC's Newton step solves the bordered system with `λ` free, so the
-logit block of its inverse, in the wider type, amplifies that noise; the last correction is within twice that.
+`F(x, λ)`, the branch residual `[w - G(λ w); λ - pin]` of `game` at `x = [w; λ]` with its pin at `λ`, evaluated by the
+engine's own `GameResidual` on `Rounded` numbers: each entry carries its first-order rounding (`rounding_bound`).
 """
-function exhausted_by_rounding(gains::NormalFormGains, failure::TraceFailure)::Bool
-    (; correction, logits, precision, logit_tangent, tangent_precision) = failure.context
-    point = evaluated(gains, logits, precision)
-    width = length(logits)
-    # Scaling the border row leaves the logit block of the inverse unchanged.
-    bordered = widen.([I - point.logit_slope -point.precision_slope; logit_tangent' tangent_precision])
-    amplification = opnorm(inv(bordered)[1:width, 1:width], Inf32)
-    largest, terms = maximum(abs, logits), length(first(gains.payoffs))
-    noise = eps(eltype(logits)) * (largest + opnorm(widen.(point.logit_slope), Inf32) * largest + precision * (terms + 2) * maximum(maximum.(abs, gains.payoffs)))
-    return failure.cause == GameTracing.PrecisionExhausted && correction <= 2 * amplification * noise
+function rounded_residual(game::LogitGame, point::AbstractVector{E})::Vector where {E <: AbstractFloat}
+    number = Rounded{E, widen(E)}
+    return GameTracing.GameResidual(game)(number.(point), number(last(point)))
+end
+
+"""
+    rounding_explanation(gains, failure, settings, target_precision)
+
+`(; bound, noise, amplification)` at the stalled corrector of `failure`, a `PrecisionExhausted` trace of `gains` to
+`target_precision` under `settings`. PALC's Newton step at the stalled iterate `x = [w; λ]` solves the bordered system
+`B = [J ∂F/∂pin; θ A τu' (1 - θ) τp]` (`bordered_matrix!`): `J` the Jacobian of the residual `F` (`rounded_residual`),
+`θ` PALC's state weight, and `A` the dot weights and `τ` the tangent at the last accepted point. `noise` bounds the
+rounding of each row of the step's right side: `F` as the engine's pass evaluates it, and the arclength row as
+BifurcationKit's `arc_length_eq` does, at the arclength that zeroes it, as one Newton step leaves it.
+`amplification`, `[λ I  w] B⁻¹` in the wider type, maps the rows to the logit change `Δz = λ Δw + w Δλ`. At noise the
+step's start is one noisy step from the root, so each logit's correction is within `bound`: twice its amplified noise,
+plus `2u |z|` from the corrector's own products `z = λ w`.
+"""
+function rounding_explanation(gains::NormalFormGains, failure::TraceFailure, settings::BifurcationKitSettings, target_precision::Real)::NamedTuple
+    (; stalled_iterate, gaps, precision, gap_tangent, tangent_precision) = failure.context
+    element, width = eltype(stalled_iterate), length(gaps)
+    # Only PALC's corrector runs strictly inside (0, target); a plain Newton solve at a bound has no border row.
+    if !(0 < last(stalled_iterate) < target_precision)
+        throw(ArgumentError("a stall at precision $(last(stalled_iterate)) is no PALC corrector inside (0, $target_precision)"))
+    end
+    game = LogitGame(gains, element(target_precision))
+    jacobian = GameTracing.GameJacobian(game, GameTracing.BranchWorkspace(game, stalled_iterate))(stalled_iterate, last(stalled_iterate))
+    palc = GameTracing.palc_geometry(settings.step_metric, width, target_precision)
+    state_weight, start, tangent = element(palc.palc_state_weight), [gaps; precision], [gap_tangent; tangent_precision]
+    # The step's weights are those of the point it starts from, the last accepted one.
+    GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(start, precision))
+    bordered = GameTracing.bordered_matrix!(
+        similar(jacobian, width + 2, width + 2), jacobian, GameTracing.PinSlope(stalled_iterate).slope, tangent,
+        tangent_precision, state_weight, one(element) - state_weight, palc.dot.apply!,
+    )
+    logit_map = hcat(widen(last(stalled_iterate)) * I(width), widen.(stalled_iterate[1:width]))
+    amplification = logit_map * inv(widen.(bordered))[1:(width + 1), :]
+    number = Rounded{element, widen(element)}
+    pin_offset = last(stalled_iterate) - precision
+    arclength = GameTracing.BifurcationKit.arc_length_eq(palc.dot, stalled_iterate, start, pin_offset, tangent, tangent_precision, state_weight, zero(element))
+    arclength_row = GameTracing.BifurcationKit.arc_length_eq(
+        palc.dot, number.(stalled_iterate), number.(start), number(last(stalled_iterate)) - number(precision),
+        number.(tangent), number(tangent_precision), number(state_weight), number(arclength),
+    )
+    noise = [rounding_bound.(rounded_residual(game, stalled_iterate)); rounding_bound(arclength_row)]
+    bound = 2 .* (abs.(amplification) * noise) .+ eps(element) .* abs.(GameTracing.logits_at(stalled_iterate))
+    return (; bound, noise, amplification)
+end
+
+"""
+Whether `failure` is a `PrecisionExhausted` whose last correction in logits is within the rounding `bound` of
+`rounding_explanation`, on a trace of `gains` to `target_precision` under `settings`.
+"""
+function exhausted_by_rounding(gains::NormalFormGains, failure::TraceFailure, settings::BifurcationKitSettings, target_precision::Real)::Bool
+    if failure.cause != GameTracing.PrecisionExhausted
+        return false
+    end
+    return failure.context.correction <= maximum(rounding_explanation(gains, failure, settings, target_precision).bound)
 end
 
 """A `keep_going` that stops a trace at the first accepted point at or past precision `precision`."""
@@ -75,7 +120,19 @@ end
     )
     @test failure.cause == GameTracing.PrecisionExhausted
     @test failure.context.precision < 50
-    @test exhausted_by_rounding(gains_32, failure)
+    @test exhausted_by_rounding(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
+    # The rounded residual is the engine's Float32 residual, and its bound covers the error measured in BigFloat.
+    (; stalled_iterate, correction) = failure.context
+    game_32 = LogitGame(gains_32, FAR_TARGET)
+    bounded = rounded_residual(game_32, stalled_iterate)
+    computed = GameTracing.GameResidual(game_32)(stalled_iterate, last(stalled_iterate))
+    @test [entry.value for entry in bounded] == computed
+    game_big = LogitGame(NormalFormGains(map(payoff -> big.(payoff), payoffs_32)), big(FAR_TARGET))
+    measured = abs.(big.(computed) .- GameTracing.GameResidual(game_big)(big.(stalled_iterate), big(last(stalled_iterate))))
+    @test all(measured .<= rounding_bound.(bounded))
+    explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
+    roundoff = eps(Float32) / 2
+    @info "rounding explains the stall" correction bound = maximum(explained.bound) ratio = correction / maximum(explained.bound) noise_roundoffs = round.(Tuple(explained.noise ./ roundoff); sigdigits = 3) measured_roundoffs = round.(Tuple(widen(Float32).(measured ./ roundoff)); sigdigits = 3)
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
@@ -110,7 +167,7 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
                 )
             )
             (; precision, logits) = failure.context
-            @test precision >= 50 || exhausted_by_rounding(gains, failure)
+            @test precision >= 50 || exhausted_by_rounding(gains, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
             if precision < 50
                 @info "a far-target trace stopped short" failure.cause failure.context
             end
@@ -215,6 +272,9 @@ end
     @test GameTracing.noise_confirmed(noisy)
     @test noisy.state[].noise.suspect.precision == 1
     @test noisy.state[].noise.suspect.correction ≈ 1.0f-2
+    # The record holds the iterate whose correction confirmed the stall; a corrector without one has no record.
+    @test GameTracing.exhausted_record(noisy).stalled_iterate == Float32[3.0f-2, 0, 1]
+    @test_throws ArgumentError GameTracing.exhausted_record(poor)
     # Every later solve refuses at its start.
     @test solve_verdicts(noisy, Float32[0]) == [false]
 end

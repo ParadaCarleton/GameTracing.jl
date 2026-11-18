@@ -266,18 +266,8 @@ function player_inner(
     return total
 end
 
-"""
-`left' M right` under `frozen`. Vectors of another number type `T` compute in `T`, with `frozen`'s values as exact
-constants: a type that tracks rounding measures the product's own. A `T` that would round those values throws.
-"""
-function PathFollowing.metric_inner(
-        frozen::FrozenFisher{<:FisherMetric, E},
-        left::AbstractVector{T},
-        right::AbstractVector{T},
-    )::T where {E <: Real, T <: Real}
-    if promote_type(E, T) !== T
-        throw(ArgumentError("vectors in $T would round the frozen metric's $E values"))
-    end
+"""`left' M right` under `frozen`, in `frozen`'s values and the vectors' type `T` (`metric_inner`)."""
+function fisher_inner(frozen::FrozenFisher, left::AbstractVector{T}, right::AbstractVector{T})::T where {T <: Real}
     total = zero(T)
     for (player, range) in enumerate(frozen.metric.ranges)
         total += player_inner(frozen, left, right, player, range)
@@ -285,6 +275,30 @@ function PathFollowing.metric_inner(
     (; state_weight, palc_state_weight) = frozen.metric
     root = precision_dot_root(frozen)
     return (state_weight * total + (root * last(left)) * (root * last(right))) / palc_state_weight
+end
+
+"""Whether every value of `frozen` that its inner product reads converts to `T` exactly."""
+function holds_frozen(frozen::FrozenFisher, ::Type{T})::Bool where {T <: Real}
+    (; state_weight, palc_state_weight) = frozen.metric
+    exact = value -> T(value) == value
+    return all(exact, frozen.point) && all(exact, frozen.probabilities) && all(exact, frozen.references) &&
+        exact(state_weight) && exact(palc_state_weight) && exact(precision_dot_root(frozen))
+end
+
+function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
+    return fisher_inner(frozen, left, right)
+end
+
+"""
+`left' M right` under `frozen` for vectors of another number type `T`: it computes in `T`, with `frozen`'s values as
+constants, so a type that tracks rounding measures the product's own. A value that `T` cannot hold exactly throws
+(`holds_frozen`).
+"""
+function PathFollowing.metric_inner(frozen::FrozenFisher, left::AbstractVector{T}, right::AbstractVector{T})::T where {T <: Real}
+    if !holds_frozen(frozen, T)
+        throw(ArgumentError("$T cannot hold every value of the frozen metric exactly"))
+    end
+    return fisher_inner(frozen, left, right)
 end
 
 """

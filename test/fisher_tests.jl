@@ -249,13 +249,20 @@ end
     @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
 end
 
-@testset "the Fisher inner product takes vectors that hold the frozen values; a narrower type throws ($element)" for element in (Float32, widen(Float32))
+@testset "the Fisher inner product takes vectors whose type holds every frozen value exactly; another throws ($element)" for element in (Float32, widen(Float32))
     frozen = PathFollowing.frozen_metric(FisherMetric((1:2,), one(element), TargetPrecisionTerm, one(element), one(element)), element[1, -1, 1])
     left, right = element[1, 2, 3], element[-1, 1, 2]
     wide = PathFollowing.metric_inner(frozen, widen.(left), widen.(right))
     @test wide isa widen(element)
     @test wide ≈ PathFollowing.metric_inner(frozen, left, right) rtol = sqrt(eps(element))
     @test_throws ArgumentError PathFollowing.metric_inner(frozen, Float16.(left), Float16.(right))
+    # An 8-bit BigFloat is a wider type, but it rounds the probabilities at logits 1 and -1.
+    setprecision(BigFloat, 8) do
+        @test_throws ArgumentError PathFollowing.metric_inner(frozen, big.(left), big.(right))
+    end
+    # At logit 0 every frozen value is exact in Float16: 0, 1 and the probabilities 1/2.
+    exact = PathFollowing.frozen_metric(FisherMetric((1:1,), one(element), TargetPrecisionTerm, one(element), one(element)), element[0, 1])
+    @test PathFollowing.metric_inner(exact, Float16[1, 2], Float16[3, 4]) == PathFollowing.metric_inner(exact, element[1, 2], element[3, 4])
 end
 
 @testset "PALC weighs Δλ² by the documented ω(λ), positive at every finite λ; PathFollowing by the log term ($element)" for element in (Float32, widen(Float32))

@@ -216,14 +216,14 @@ function precision_dot_root(frozen::FrozenFisher{<:FisherMetric, E})::E where {E
 end
 
 """The logit move `Δzᵢ = λ Δwᵢ + wᵢ Δλ` of the displacement `vector = [Δw; Δλ]` at `frozen`'s point."""
-function logit_move(frozen::FrozenFisher{<:FisherMetric, E}, vector::AbstractVector{E}, index::Integer)::E where {E <: Real}
+function logit_move(frozen::FrozenFisher, vector::AbstractVector{T}, index::Integer)::T where {T <: Real}
     return last(frozen.point) * vector[index] + frozen.point[index] * last(vector)
 end
 
 """`vector`'s logit move of player `player`'s pivot (`FrozenFisher`), zero for its reference."""
-function pivot_move(frozen::FrozenFisher{<:FisherMetric, E}, vector::AbstractVector{E}, player::Integer)::E where {E <: Real}
+function pivot_move(frozen::FrozenFisher, vector::AbstractVector{T}, player::Integer)::T where {T <: Real}
     pivot = frozen.pivots[player]
-    return iszero(pivot) ? zero(E) : logit_move(frozen, vector, pivot)
+    return iszero(pivot) ? zero(T) : logit_move(frozen, vector, pivot)
 end
 
 """
@@ -231,12 +231,12 @@ Player `player`'s mean logit move under its mixed strategy, less its pivot's mov
 its strategies in `range` and its reference, whose logit does not move.
 """
 function centered_mean(
-        frozen::FrozenFisher{<:FisherMetric, E},
-        vector::AbstractVector{E},
+        frozen::FrozenFisher,
+        vector::AbstractVector{T},
         player::Integer,
         range::UnitRange{Int},
-        pivot::E,
-    )::E where {E <: Real}
+        pivot::T,
+    )::T where {T <: Real}
     total = -frozen.references[player] * pivot
     for index in range
         total += frozen.probabilities[index] * (logit_move(frozen, vector, index) - pivot)
@@ -249,12 +249,12 @@ Player `player`'s `Δz_leftᵀ G Δz_right` in `range`: `Σ πᵢ dᵢ dᵢ'` ov
 logit move less the player's mean move, both measured from its pivot's move (`FrozenFisher`).
 """
 function player_inner(
-        frozen::FrozenFisher{<:FisherMetric, E},
-        left::AbstractVector{E},
-        right::AbstractVector{E},
+        frozen::FrozenFisher,
+        left::AbstractVector{T},
+        right::AbstractVector{T},
         player::Integer,
         range::UnitRange{Int},
-    )::E where {E <: Real}
+    )::T where {T <: Real}
     left_pivot, right_pivot = pivot_move(frozen, left, player), pivot_move(frozen, right, player)
     left_mean, right_mean = centered_mean(frozen, left, player, range, left_pivot), centered_mean(frozen, right, player, range, right_pivot)
     # The reference's move is zero: its deviation is `-(pivot + mean)` on each side.
@@ -266,8 +266,19 @@ function player_inner(
     return total
 end
 
-function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
-    total = zero(E)
+"""
+`left' M right` under `frozen`. Vectors of another number type `T` compute in `T`, with `frozen`'s values as exact
+constants: a type that tracks rounding measures the product's own. A `T` that would round those values throws.
+"""
+function PathFollowing.metric_inner(
+        frozen::FrozenFisher{<:FisherMetric, E},
+        left::AbstractVector{T},
+        right::AbstractVector{T},
+    )::T where {E <: Real, T <: Real}
+    if promote_type(E, T) !== T
+        throw(ArgumentError("vectors in $T would round the frozen metric's $E values"))
+    end
+    total = zero(T)
     for (player, range) in enumerate(frozen.metric.ranges)
         total += player_inner(frozen, left, right, player, range)
     end

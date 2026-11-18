@@ -249,6 +249,15 @@ end
     @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
 end
 
+@testset "the Fisher inner product takes vectors that hold the frozen values; a narrower type throws ($element)" for element in (Float32, widen(Float32))
+    frozen = PathFollowing.frozen_metric(FisherMetric((1:2,), one(element), TargetPrecisionTerm, one(element), one(element)), element[1, -1, 1])
+    left, right = element[1, 2, 3], element[-1, 1, 2]
+    wide = PathFollowing.metric_inner(frozen, widen.(left), widen.(right))
+    @test wide isa widen(element)
+    @test wide ≈ PathFollowing.metric_inner(frozen, left, right) rtol = sqrt(eps(element))
+    @test_throws ArgumentError PathFollowing.metric_inner(frozen, Float16.(left), Float16.(right))
+end
+
 @testset "PALC weighs Δλ² by the documented ω(λ), positive at every finite λ; PathFollowing by the log term ($element)" for element in (Float32, widen(Float32))
     unit = element[0, 1]
     for target in element[1 // 2, 1, 10, 1000]

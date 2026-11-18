@@ -152,9 +152,9 @@ reach (`unresolved_noise`). On a smooth branch that distance is the branch's cur
 times `ds² / 2`, so halving brings any step under it, while an iterate that lands on another branch is far from it. A converged closing point is refused the same way past `reach`, past a largest probability KL
 `KL(corrected ‖ predicted)` of `settings.max_kl` (`largest_kl`). A predictor that did not move has no reach to compare.
 `accept_corrected(logits, λ, converged)` then sees every other closing point. `predicted` holds the current step's
-predictor and `iterate` the current solve's last iterate, both updated in place, copies of `predicted` and `start`;
-`state` (`CorrectorState`) holds the scalars that change between calls. `geometry` measures the step length at
-`target_precision`.
+predictor and `iterate` the current solve's last iterate, both updated in place, mutable copies of `predicted` and
+`start` in `similar(predicted)`; `state` (`CorrectorState`) holds the scalars that change between calls. `geometry`
+measures the step length at `target_precision`.
 """
 struct CorrectorReach{C, E <: Real, V <: AbstractVector{E}}
     accept_corrected::C
@@ -231,7 +231,8 @@ function CorrectorReach(
         predicted::AbstractVector{E},
         step_length::E,
     )::CorrectorReach{C, E} where {C, E <: Real}
-    predicted_buffer = copy(predicted)
+    # `similar` gives mutable storage like `predicted`'s; `copy` keeps a range or static vector immutable.
+    predicted_buffer, iterate_buffer = copyto!(similar(predicted), predicted), copyto!(similar(predicted), start)
     # A plain Newton solve has no predictor move: NaN fails the noise test, so its stalls refuse.
     return CorrectorReach{C, E, typeof(predicted_buffer)}(
         accept_corrected,
@@ -239,7 +240,7 @@ function CorrectorReach(
         geometry,
         target_precision,
         predicted_buffer,
-        copy(start),
+        iterate_buffer,
         Ref(CorrectorState{E}(step_length, E(NaN32), E(NaN32), 0, false, NoiseRecord(zero(E), nothing), false, no_reach_failure(E))),  # lint: ref  see `state`
     )
 end

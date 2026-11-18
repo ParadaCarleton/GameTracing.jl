@@ -92,6 +92,18 @@ end
     end
 end
 
+@testset "a corrector check over an immutable start and predictor writes its own buffers ($element)" for element in (Float32, widen(Float32))
+    quarter, half = element(0.25f0), element(0.5f0)
+    start, predicted = zero(element):quarter:half, one(element):(-quarter):half
+    check = GameTracing.CorrectorReach(
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element),
+    )
+    @test check.predicted == predicted && check.iterate == start
+    first_iterate = (; x = collect(predicted), res_f = zeros(element, 3), p = half, step = 0, residual = zero(element), z0 = (; u = collect(start), p = half))
+    @test check(first_iterate; fromNewton = false) !== false
+    @test check.predicted == predicted
+end
+
 @testset "a point closed at an exact root records a correction of 0, a settled one its last correction" begin
     previous, predicted = Float32[0, 0, 0.5f0], Float32[1, 0, 0.5f0]
     # BifurcationKit gives the closing call the step's start `z0` too; its `closing` marker sets it apart.

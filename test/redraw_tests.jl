@@ -42,7 +42,7 @@ end
         start_precision = swap.precision,
     )
     @test reference.reached
-    @test reference.crossings == 0
+    @test isempty(reference.crossings)
     # Probabilities to 1e-3, as the LogitNash cross-check compares a Float32 trace with its reference.
     @test maximum(abs, inv.(1 .+ exp.(-logits)) .- reference.first_choices) < 1.0f-3
     # The swap moved the branch: the endpoint is not the old map's.
@@ -264,7 +264,7 @@ end
     endpoint = unwrap(result).logits
     reference = branch_reference(reference_after, swap.width, swap.precision; start = logits .* float(1), start_precision = precision)
     @test reference.reached
-    @test reference.crossings == 0
+    @test isempty(reference.crossings)
     @test settled_logits(reference_after, endpoint, swap.precision, REDRAW_SETTINGS)
     # The bound reads the endpoint's own double-precision residual.
     residual = 2 * residual_norm(reference_after, endpoint .* float(1), swap.precision * float(1))

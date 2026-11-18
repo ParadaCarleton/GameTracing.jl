@@ -19,6 +19,16 @@ A correction's length in the trace's step metric (`PseudoArclength`'s `metric`).
 struct MetricDistance end
 
 """
+    correction_bound(distance)
+
+The largest length the corrector's `distance` measures, `Inf` for an unbounded one. Each distance that step control
+targets defines it: `PseudoArclength` checks that its first-correction refusal can fire.
+"""
+function correction_bound end
+
+correction_bound(::MetricDistance)::Real = Inf32
+
+"""
     LastCorrection()
 
 `Newton`'s `error_estimate` that settles on the last correction itself: `converged` sees `scale = 1`. That correction
@@ -51,11 +61,13 @@ step metric.
 
 - `max_iterations`: corrections before the corrector gives up and the step is refused.
 - `converged(previous, iterate, residual, scale)`: whether `iterate`, one correction from `previous`, has converged,
-  the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`.
+  the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`. A `converged`
+  that settles at an infinite or NaN `scale` throws an `ArgumentError`.
 - `contraction_limit`: a correction longer than this times the one before it is refused as diverging.
 - `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)`.
 - `distance(from, to)`: a correction's length, for the contraction test, the error estimate and step control.
-  `MetricDistance()` is the step metric's norm.
+  `MetricDistance()` is the step metric's norm. A distance with a target first correction declares the largest length
+  it measures (`correction_bound`).
 """
 struct Newton{C, E <: Real, R <: Union{LastCorrection, ContractionEstimate{E}}, D}
     max_iterations::Int
@@ -88,7 +100,7 @@ end
 
 """
     StepControl(; target_contraction, target_correction, target_turn, max_step_growth, max_step, refusal_factor = 2,
-                shrink = 1/2)
+                shrink = 1/2, reach = 3)
 
 Step-length adaptation after Allgower and Georg (Numerical Continuation Methods, 1990, §6.1). A converged corrector
 gives `f = max(√(κ / target_contraction), √(δ / target_correction), α / target_turn)`: `κ` the ratio of its second
@@ -97,8 +109,17 @@ tangents in radians. Each target is the value its measurement should take: at `f
 The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term.
 
 A step with `f > refusal_factor` is refused; any other step is accepted, and the next one is `1 / max(f, 1 /
-max_step_growth)` times as long, at most `max_step`. A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
+max_step_growth)` times as long as its predictor (cut at a `Bound`), at most `max_step`. A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
 and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shrink`) when it failed earlier.
+
+A converged point farther than `reach` predictor lengths from its predictor, in the step metric, is refused
+(`FarFromPredictor`) and retried at `shrink` times the length. Such a corrector left the curve the predictor followed,
+and its point can lie on another branch. A move within the corrector's noise passes: in `Newton`'s `distance`, at most
+the error bounds of the start and of the point, each `scale` times its last correction. Each point settles only to its
+tolerance, so at short steps the start's own error moves the corrector past the reach. On 300 unfolded pitchforks per
+scale (battle of the sexes plus `0.1 randn` payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3
+that jumped moved 4.2 to 5.09. `reach = Inf`
+switches the refusal off; any other `reach` must be positive and finite in the step control's type.
 """
 struct StepControl{E <: Real}
     target_contraction::Union{Nothing, E}
@@ -108,6 +129,7 @@ struct StepControl{E <: Real}
     max_step::E
     refusal_factor::E
     shrink::E
+    reach::E
 end
 
 function StepControl(;
@@ -118,17 +140,29 @@ function StepControl(;
         max_step::Real,
         refusal_factor::Real = 2,
         shrink::Real = 1 // 2,
+        reach::Real = 3,
     )::StepControl{E} where {E <: Real}
     max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
     refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
-    0 < shrink < 1 || throw(ArgumentError("shrink must lie in (0, 1); got $shrink"))
+    # Checked in `E`, where a shrink near 1 rounds to 1 and a retry would repeat its step.
+    zero(E) < E(shrink) < one(E) || throw(ArgumentError("shrink must lie in (0, 1) in $E; got $shrink"))
     max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
     # A straight stretch measures f = 0, so the growth bound or the cap must stop the step from going infinite.
     isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
     return StepControl{E}(
         optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn), max_step_growth,
-        E(max_step), E(refusal_factor), E(shrink),
+        E(max_step), E(refusal_factor), E(shrink), reach_in(E, reach),
     )
+end
+
+"""
+`reach` in `E`. It must stay positive and finite there: a tiny reach rounds to zero, which refuses every move, and a
+huge one rounds to Inf. Only an explicit Inf switches the refusal off.
+"""
+function reach_in(::Type{E}, reach::Real)::E where {E <: Real}
+    converted = E(reach)
+    zero(E) < converted && (isfinite(converted) || isinf(reach)) || throw(ArgumentError("reach must be positive and finite in $E, or Inf; got $reach"))
+    return converted
 end
 
 """`limit` in `E`, or `nothing`; a set limit must be positive."""
@@ -155,8 +189,46 @@ second LU factorization, of `[J; tᵀ]`, at each corrected point.
 struct DeterminantSign end
 
 """
-    PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation_check, linear_solver,
-                    accept = AcceptAll(), min_step_ulps = 4, max_refusals)
+    HalfStepCheck{E}(; trigger, tolerance)
+    HalfStepCheck(; trigger, tolerance)
+
+`PseudoArclength`'s check that a step kept its branch. A step whose factor `f` (`StepControl`) is at least `trigger`
+runs again in two half steps. The first corrects at the half predictor. The second predicts along that point's tangent
+to the step's own hyperplane (the bound's at a `Bound`) and corrects there. Near the corrected point that hyperplane
+meets the start's branch once, so on that branch the half steps reach the point. A point further away than
+`tolerance` in `Newton`'s `distance`, or a half step that fails, refuses the step (`SplitMismatch`). The retry is
+`shrink` times as long. A corrector can converge on another branch that passes the predictor closer than its own, with
+every step measurement in range. The shorter half steps often keep the start's branch. Half steps that jump to the
+step's point pass the check.
+
+A trigger of 1 checks every step that meets or passes a step-control target. A higher trigger fits the smallest jump
+seen, and more draws keep finding smaller ones: on random two-action games, `f` 1.52 in one sweep, then 1.23 and 1.1
+to 1.2.
+
+Both numbers convert to `E` and must stay finite there: `trigger` non-negative and `tolerance` positive. Without `E`,
+the check takes the float type of the two numbers promoted. `PseudoArclength` also needs `trigger` at most the step
+control's `refusal_factor`, past which a step is refused first.
+"""
+struct HalfStepCheck{E <: Real}
+    trigger::E
+    tolerance::E
+    function HalfStepCheck{E}(; trigger::Real, tolerance::Real)::HalfStepCheck{E} where {E <: Real}
+        # Checked in `E`, where a tiny tolerance rounds to zero and a huge number to Inf.
+        converted_trigger, converted_tolerance = E(trigger), E(tolerance)
+        zero(E) <= converted_trigger < Inf || throw(ArgumentError("trigger must be non-negative and finite in $E; got $trigger"))
+        zero(E) < converted_tolerance < Inf || throw(ArgumentError("tolerance must be positive and finite in $E; got $tolerance"))
+        return new{E}(converted_trigger, converted_tolerance)
+    end
+end
+
+"""`HalfStepCheck` in the float type of `trigger` and `tolerance` promoted."""
+function HalfStepCheck(; trigger::Real, tolerance::Real)::HalfStepCheck
+    return HalfStepCheck{float(promote_type(typeof(trigger), typeof(tolerance)))}(; trigger, tolerance)
+end
+
+"""
+    PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation_check, split_check,
+                    linear_solver, accept = AcceptAll(), min_step_ulps = 4, max_refusals)
 
 Pseudo-arclength continuation with an Euler predictor along the bordered tangent.
 
@@ -167,22 +239,39 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
 - `turn_metric`: the `Metric` that orients each tangent along the one before and measures their turn.
 - `orientation_check`: a `DeterminantSign`, or `nothing` to orient each tangent by the turn metric alone. Without it, a long
   step near a fold can land where the oriented tangent runs back along the curve.
+- `split_check`: a `HalfStepCheck`, or `nothing` to accept a converged point on another branch that passes every other
+  test.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
 - `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
-  as `Unresolved`; smaller steps cannot add a point.
+  as `Unresolved`; smaller steps cannot add a point. The check judges the step before a `Bound` cuts it.
 - `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
 """
-struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}
+struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, K <: Union{Nothing, HalfStepCheck}, L, A}
     corrector::C
     step_control::S
     metric::M
     turn_metric::T
     orientation_check::O
+    split_check::K
     linear_solver::L
     accept::A
     min_step_ulps::Int
     max_refusals::Int
+end
+
+"""
+Throw unless `control`'s first-correction term can refuse a step: `target_correction refusal_factor²`, the first
+correction past which it refuses, must lie under `correction_bound(distance)`.
+"""
+function refusable_correction(control::StepControl, distance::Any)::Nothing
+    (; target_correction, refusal_factor) = control
+    isnothing(target_correction) && return nothing
+    limit, bound = target_correction * refusal_factor^2, correction_bound(distance)
+    limit < bound || throw(
+        ArgumentError("step control refuses first corrections past $limit, but the corrector's distance measures at most $bound")
+    )
+    return nothing
 end
 
 """A `PseudoArclength` `accept` that keeps every converged point."""
@@ -191,13 +280,23 @@ struct AcceptAll end
 (::AcceptAll)(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = true
 
 function PseudoArclength(;
-        corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation_check::O, linear_solver::L,
-        accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
-    )::PseudoArclength{C, S, M, T, O, L, A} where {C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}
+        corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation_check::O, split_check::K,
+        linear_solver::L, accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
+    )::PseudoArclength{C, S, M, T, O, K, L, A} where {C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, K <: Union{Nothing, HalfStepCheck}, L, A}
     min_step_ulps >= 0 || throw(ArgumentError("min_step_ulps must be non-negative; got $min_step_ulps"))
+    refusable_correction(step_control, corrector.distance)
+    reachable_trigger(step_control, split_check)
     max_refusals >= 0 || throw(ArgumentError("max_refusals must be non-negative; got $max_refusals"))
-    return PseudoArclength{C, S, M, T, O, L, A}(
-        corrector, step_control, metric, turn_metric, orientation_check, linear_solver, accept, Int(min_step_ulps),
-        Int(max_refusals),
+    return PseudoArclength{C, S, M, T, O, K, L, A}(
+        corrector, step_control, metric, turn_metric, orientation_check, split_check, linear_solver, accept,
+        Int(min_step_ulps), Int(max_refusals),
     )
+end
+
+"""Throw unless `check` can fire: its trigger must not pass `control`'s `refusal_factor`, past which steps are refused."""
+reachable_trigger(::StepControl, ::Nothing)::Nothing = nothing
+function reachable_trigger(control::StepControl, check::HalfStepCheck)::Nothing
+    check.trigger <= control.refusal_factor ||
+        throw(ArgumentError("the split check's trigger $(check.trigger) must not pass the refusal factor $(control.refusal_factor)"))
+    return nothing
 end

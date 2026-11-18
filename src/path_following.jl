@@ -17,11 +17,15 @@ Measure a move by the largest Fisher–Rao distance any player's mixed strategy 
 counts by its probability, so one that has left the support stops counting. The corrector settles once a correction
 moves no strategy further than `tolerance` past the distance `settle_ulps` ulps of each logit move it
 (`FisherRaoSettled`). Step control's target first correction is `target_correction`, or `nothing` to drop the term.
+A set target must lie above `tolerance` (`settle_tolerance`).
 """
 struct StrategyDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
     settle_ulps::Int
     target_correction::Union{Nothing, E}
+    function StrategyDistance{E}(tolerance::E, settle_ulps::Int, target_correction::Union{Nothing, E})::StrategyDistance{E} where {E <: Real}
+        return new{E}(settle_tolerance(tolerance, target_correction), settle_ulps, target_correction)
+    end
 end
 
 # Defaults: half the `LogitDistance` defaults, as a logit move at even odds is twice its Fisher–Rao distance.
@@ -40,11 +44,25 @@ Measure a move by the largest change of any logit (`logit_change`). The correcto
 logit more than `tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`). Step control's target first
 correction is `target_correction`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
 support: its logit grows like `λ`, and its corrections, `λ` times the square of the others', hold the steps short.
+A set target must lie above `tolerance` (`settle_tolerance`).
 """
 struct LogitDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
     settle_ulps::Int
     target_correction::Union{Nothing, E}
+    function LogitDistance{E}(tolerance::E, settle_ulps::Int, target_correction::Union{Nothing, E})::LogitDistance{E} where {E <: Real}
+        return new{E}(settle_tolerance(tolerance, target_correction), settle_ulps, target_correction)
+    end
+end
+
+"""
+`tolerance`, which must lie under `target_correction` when one is set. A corrector that settles looser than its
+target first correction leaves step control nothing to measure, and the reach passes any move within its noise.
+"""
+function settle_tolerance(tolerance::E, target_correction::Union{Nothing, E})::E where {E <: Real}
+    isnothing(target_correction) || tolerance < target_correction ||
+        throw(ArgumentError("the settle tolerance $tolerance must lie under the target first correction $target_correction"))
+    return tolerance
 end
 
 # Defaults: the cheapest step control that kept Gambit's branch on ten benchmark games where others left it. A target
@@ -59,8 +77,8 @@ end
 
 """
     PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
-                             target_contraction, target_turn, max_step_growth, orientation_check, max_refusals,
-                             min_step_ulps, step_metric, linear_solver)
+                             target_contraction, target_turn, max_step_growth, reach, orientation_check, split_check,
+                             max_refusals, min_step_ulps, step_metric, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
@@ -74,11 +92,26 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
   `distance`. `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the
   settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
-- `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
-  The turn target is in radians under `step_metric`.
+- `target_contraction`, `target_turn`, `max_step_growth`, `reach`: PathFollowing's `StepControl`; `nothing` drops a
+  target. The turn target is in radians under `step_metric`. A converged point farther than `reach` step lengths from
+  its predictor refuses the step, as one that jumped to another branch, unless `distance` puts the move within the
+  corrector's settle tolerance. `Inf` switches the refusal off.
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
   `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. `nothing` switches
   the check off.
+- `split_check`: PathFollowing's `HalfStepCheck{E}`, or `nothing` to switch it off. A step with factor at least
+  `trigger` runs again in two half steps, which must reach its point within `tolerance` in `distance`. The default
+  trigger is 1, every step at or past a step-control target (`default_split_check`), and the tolerance 10 times
+  `distance`'s settle tolerance. A zero settle tolerance has no default: pass `split_check`. Without the check, about 1
+  random two-action game in 5000 left its principal branch on a step that passed every other test.
+  Evidence, with `StrategyDistance` in Float32 and Float64. A sweep with the reach on and off: 203 seeds of 20
+  two-action games, and battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs, 300 draws per scale. The half steps
+  flagged all 22 jumps and 148 of 196,594 steps that kept the branch (0.075%). Kept steps reached their point within
+  2.5e-5 at the 99.99th percentile. Each jump failed or landed at least 0.27 away. So the 5e-4 tolerance lies 20 times
+  above that percentile and 550 times under the nearest jump. A hunt over 20,000 more two-action games found 4 jumps,
+  at `f` from 1.23 to 1.44, and the half steps refused each. A trigger of 1 fires on 9.8% of the hunt's kept steps and
+  refuses 0.06% of them. With the reach off, the check keeps three of the four unfolded pitchforks that the reach
+  keeps. At the fourth, both half steps jump with the step.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -93,7 +126,9 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     target_contraction::Union{Nothing, E}
     target_turn::Union{Nothing, E}
     max_step_growth::E
+    reach::E
     orientation_check::Union{Nothing, PathFollowing.DeterminantSign}
+    split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}}
     max_refusals::Int
     min_step_ulps::Int
     step_metric::TraceGeometry{E}
@@ -115,7 +150,10 @@ function PathFollowingSettings{E}(;
         target_turn::Union{Nothing, Real} = 1.0f0,
         # Growth 4 left 8 endpoints off their branch to growth 2's 3. Results: benchmark/results/hard-b5a6b4d-summary.txt.
         max_step_growth::Real = 2.0f0,
+        # On unfolded pitchforks a step that jumped branches moved 4.2 or more of its lengths, one that kept it 1.86 at most.
+        reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
+        split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = default_split_check(distance),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
         # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
@@ -125,9 +163,26 @@ function PathFollowingSettings{E}(;
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
         E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
-        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), orientation_check,
-        Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
+        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
+        split_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
+end
+
+"""
+`PathFollowingSettings`' default split check: trigger 1 and tolerance 10 times `distance`'s settle tolerance. A step
+with `f ≥ 1` meets or passes one of step control's targets, so the check verifies every such step. A trigger above 1
+fits the smallest jump seen, and more draws found smaller ones: a sweep's smallest `f` was 1.52, and a 20,000-game hunt
+and a suite draw jumped at 1.23 and between 1.1 and 1.2. A zero settle tolerance gives the tolerance no scale, so it
+throws an `ArgumentError` that asks for an explicit `split_check`.
+"""
+function default_split_check(distance::CorrectorDistance{E})::PathFollowing.HalfStepCheck{E} where {E <: Real}
+    iszero(distance.tolerance) && throw(
+        ArgumentError(
+            "the default split check's tolerance is 10 times the settle tolerance, which is zero here; pass split_check = " *
+                "HalfStepCheck{$E}(; trigger, tolerance), with a tolerance above the corrector's settled error, or nothing",
+        ),
+    )
+    return PathFollowing.HalfStepCheck{E}(; trigger = 1, tolerance = 10 * distance.tolerance)
 end
 
 """`estimate` with its numbers in `E`."""
@@ -250,6 +305,10 @@ function corrector_measure(::StrategyDistance, gains::NormalFormGains{N})::Fishe
     return FisherRaoChange(logit_ranges(gains))
 end
 
+# A Fisher–Rao distance on the simplex is at most π; a logit move has no bound.
+PathFollowing.correction_bound(::FisherRaoChange)::Real = π
+PathFollowing.correction_bound(::typeof(logit_change))::Real = Inf32
+
 """The corrector's settle test under `distance`, whose moves `measure` measures: `LogitSettled` or `FisherRaoSettled`."""
 function settle_test(distance::LogitDistance{E}, ::Any)::LogitSettled{E} where {E <: Real}
     return LogitSettled(distance.tolerance, distance.settle_ulps * eps(E))
@@ -280,11 +339,12 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
         ),
         step_control = PathFollowing.StepControl(;
             settings.target_contraction, settings.distance.target_correction, settings.target_turn,
-            settings.max_step_growth, settings.max_step,
+            settings.max_step_growth, settings.max_step, settings.reach,
         ),
         # PathFollowing measures the precision at target one, and has no PALC state weight to divide by.
         metric = trace_metric(settings.step_metric, gains, logit_count(gains), one(E), one(E)),
         settings.orientation_check,
+        settings.split_check,
         accept = PositivePrecision(),
         settings.linear_solver,
         settings.min_step_ulps,
@@ -348,19 +408,20 @@ function stopped_context(
 end
 
 """
-One accepted step of `tracer` (PathFollowing's `AcceptedStep`), or the `TraceFailure` that ends the trace:
-`NoConvergence` once it has taken `max_steps`, else `TraceStuck` for PathFollowing's `Unresolved` or
-`TooManyRefusals`. `context` rides on the failure.
+One accepted step of `tracer` (PathFollowing's `AcceptedStep`) that stops at precision `precision` (PathFollowing's
+`Bound`), or the `TraceFailure` that ends the trace: `NoConvergence` once it has taken `max_steps`, else `TraceStuck`
+for PathFollowing's `Unresolved` or `TooManyRefusals`. `context` rides on the failure.
 """
 function path_step!(
         tracer::PathFollowing.Tracer{E},
+        precision::E,
         max_steps::Integer,
         context::NamedTuple,
     )::Result{PathFollowing.AcceptedStep{E}, TraceFailure} where {E <: Real}
     if tracer.steps >= max_steps
         return Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
     end
-    stepped = CommonSolve.step!(tracer)
+    stepped = CommonSolve.step!(tracer, PathFollowing.Bound(length(tracer.point), precision))
     if is_error(stepped)
         failure = unwrap_error(stepped)
         reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
@@ -372,21 +433,8 @@ function path_step!(
 end
 
 """
-The point of `tracer`'s branch at precision `precision`, which its last step reached or passed (`land!`), or the
-`TraceStuck` failure of that corrector with `context`.
-"""
-function landed_point(tracer::PathFollowing.Tracer{E}, precision::E, context::NamedTuple)::Result{Vector{E}, TraceFailure} where {E <: Real}
-    landed = PathFollowing.land!(tracer, length(tracer.point), precision)
-    if is_error(landed)
-        details = (; target = precision, refusal = unwrap_error(landed))
-        return Err(TraceFailure(TraceStuck, stopped_context(:landing, tracer.point, tracer.steps, context, details)))
-    end
-    return Ok(unwrap(landed))
-end
-
-"""
 `settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
-at most `tolerance`. A step past `maximum_precision` lands there (`landed_point`), which settles or fails
+at most `tolerance`. The steps stop at `maximum_precision` (`path_step!`), where the trace settles or fails
 `NoConvergence` with reason `:maximum_precision`.
 """
 function engine_points(
@@ -412,43 +460,23 @@ function recorded_points(
         max_steps::Integer,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    stepped = capped_step!(tracer, maximum_precision, max_steps, context)
+    stepped = path_step!(tracer, maximum_precision, max_steps, context)
     while !is_error(stepped)
-        point = unwrap(stepped)
+        point = tracer.point
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
         end
         if last(point) >= maximum_precision
             return Err(TraceFailure(NoConvergence, stopped_context(:maximum_precision, point, tracer.steps, context, (; maximum_precision))))
         end
-        stepped = capped_step!(tracer, maximum_precision, max_steps, context)
+        stepped = path_step!(tracer, maximum_precision, max_steps, context)
     end
     return Err(unwrap_error(stepped))
 end
 
 """
-The point of `tracer`'s next accepted step (`path_step!`), or of its landing at `maximum_precision` once the step
-passes it (`landed_point`), or the failure of either.
-"""
-function capped_step!(
-        tracer::PathFollowing.Tracer{E},
-        maximum_precision::E,
-        max_steps::Integer,
-        context::NamedTuple,
-    )::Result{Vector{E}, TraceFailure} where {E <: Real}
-    stepped = path_step!(tracer, max_steps, context)
-    if is_error(stepped)
-        return Err(unwrap_error(stepped))
-    end
-    if last(tracer.point) < maximum_precision
-        return Ok(tracer.point)
-    end
-    return landed_point(tracer, maximum_precision, context)
-end
-
-"""
 `logit_solve_lambda` on PathFollowing: the logits of `gains`' principal branch at each precision of `precisions`, from
-one trace that lands on each in rising order at its first crossing (`landed_point`), or the first failure.
+one trace whose steps stop at each in rising order (`stepped_landing!`), or the first failure.
 """
 function engine_lambdas(
         gains::NormalFormGains,
@@ -480,14 +508,17 @@ function landed_lambdas(
     return Ok([collect(logits_at(point)) for point in points])
 end
 
-"""The point of `tracer`'s branch at `precision`: steps until one reaches it, then lands there (`landed_point`)."""
+"""
+The point of `tracer`'s branch at `precision`: its steps stop there (`path_step!`), at the first crossing a predictor
+or a corrected point shows.
+"""
 function stepped_landing!(tracer::PathFollowing.Tracer{E}, precision::E, max_steps::Integer)::Result{Vector{E}, TraceFailure} where {E <: Real}
     context = (; lam = precision)
     while last(tracer.point) < precision
-        stepped = path_step!(tracer, max_steps, context)
+        stepped = path_step!(tracer, precision, max_steps, context)
         if is_error(stepped)
             return Err(unwrap_error(stepped))
         end
     end
-    return landed_point(tracer, precision, context)
+    return Ok(copy(tracer.point))
 end

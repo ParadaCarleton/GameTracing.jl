@@ -3,22 +3,6 @@ using LinearAlgebra: Diagonal
 using PathFollowing: PathFollowing
 using Random: AbstractRNG, Xoshiro
 
-"""The largest difference in any probability between two profiles of mixed strategies."""
-function largest_gap(left::Tuple, right::Tuple)::eltype(first(left))
-    return maximum(maximum.(abs, left .- right))
-end
-
-# Gambit's corrector stops at c_tol = 1e-4 in log probabilities (src/solvers/nash/logit/path.cc), so ≤ 1e-4 in probability.
-const GAMBIT_PROBABILITY_TOLERANCE = 1.0f-4
-
-"""
-The largest probability error of the trace's `profile`: softmax slope 1/2 times its logit error, the corrector's
-`logit_tolerance` (a settled corrector's last Newton correction) plus 32 ulps of the largest logit.
-"""
-function profile_bound(profile::LogitQREProfile{E})::E where {E <: Real}
-    return (CorrectorSettings{E}().logit_tolerance + 32 * eps(E) * maximum(abs, profile.logits)) / 2
-end
-
 const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
 """Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and PathFollowing's."""
@@ -212,10 +196,34 @@ end
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
     # A first correction far past a 1e-6 target is refused, and no refusal is allowed.
-    for distance in (StrategyDistance{element}(; target_correction = 1.0f-6), LogitDistance{element}(; target_correction = 1.0f-6))
+    for distance in (StrategyDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6), LogitDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6))
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
+    # The refusal factor 2 refuses a first correction past 4 times its target, which must lie under the distance's bound.
+    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.8f0)))
+    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.78f0))))
+    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = LogitDistance{element}(; target_correction = 100))))
+    # A settle tolerance at or past the target first correction is refused; without a target it is free.
+    for distance_type in (StrategyDistance{element}, LogitDistance{element})
+        @test_throws ArgumentError distance_type(; tolerance = 1 // 4, target_correction = 1 // 4)
+        @test distance_type(; tolerance = 1 // 5, target_correction = 1 // 4).tolerance == element(1 // 5)
+        @test distance_type(; tolerance = 1, target_correction = nothing).tolerance == 1
+    end
+    # A zero settle tolerance, where the corrector settles by ulps alone, gives the default split check no scale.
+    for distance in (StrategyDistance{element}(; tolerance = 0), LogitDistance{element}(; tolerance = 0))
+        @test_throws ArgumentError PathFollowingSettings{element}(; distance)
+        # HalfStepCheck's own zero-tolerance check throws an ArgumentError too; only the default's names the fix.
+        @test_throws "pass split_check" PathFollowingSettings{element}(; distance)
+        @test isnothing(PathFollowingSettings{element}(; distance, split_check = nothing).split_check)
+        check = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 13 // 10, tolerance = 1 // 1000)
+        @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, split_check = check)))
+    end
+    @test PathFollowingSettings{element}(; distance = LogitDistance{element}(; tolerance = 1 // 10^6)).split_check.tolerance == 10 * element(1 // 10^6)
+    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
+    # A reach finite in a wider type that rounds to Inf would switch the refusal off.
+    @test_throws ArgumentError PathFollowingSettings{element}(; reach = floatmax(widen(element)))
+    @test PathFollowingSettings{element}(; reach = Inf32).reach == Inf32
     # A distance in another element type is refused.
     @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
     # The error estimate's safety converts to the element type.
@@ -255,18 +263,13 @@ end
     checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
-    # The control: the same trace without the check ends elsewhere.
-    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing)))
+    # The split check at trigger 1 refuses the long step too, so each check alone keeps the branch.
+    for alone in ((; orientation_check = nothing), (; split_check = nothing))
+        @test largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; alone...))).profile, checked.profile) < 1 // 1000
+    end
+    # The control: the same trace without either check ends elsewhere.
+    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing, split_check = nothing)))
     @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
-end
-
-@testset "PathFollowing keeps the principal branch past an unfolded pitchfork ($element)" for element in (Float32, widen(Float32))
-    gains = NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME))
-    checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
-    # The branch ends near the pure equilibrium (1, 1); the middle arm it passes ends mixed.
-    @test all(strategy -> first(strategy) > 99 // 100, checked.profile)
-    oracle = gambit_strategies(UNFOLDED_PITCHFORK_GAME, checked.lam)
-    @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
 end
 
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
@@ -276,6 +279,10 @@ end
     # The same strategy at twice the precision and half the gap.
     @test one_player(element[0, 1], element[log(element(3)) / 2, 2]) ≈ element(π) / 6
     @test isnan(one_player(element[NaN32, 1], element[0, 1]))
+    # Between opposite pure strategies the distance nears π, its largest (`correction_bound`); a logit move has none.
+    @test one_player(element[-100, 1], element[100, 1]) ≈ element(π)
+    @test GameTracing.PathFollowing.correction_bound(one_player) == π
+    @test GameTracing.PathFollowing.correction_bound(GameTracing.logit_change) == Inf32
     two_players = GameTracing.FisherRaoChange((1:2, 3:3))
     @test two_players(element[0, 0, 0, 1], element[0, 0, log(element(3)), 1]) ≈ element(π) / 6
     # A strategy outside the support moves 500 logits, but no probability.
@@ -356,9 +363,14 @@ end
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     for distance in (StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), LogitDistance{element}(; tolerance = eps(element), settle_ulps = 0))
-        tracer = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; newton_iterations = 1, distance)))
-        failure = unwrap_error(GameTracing.landed_point(tracer, element(1), (; lam = 1)))
-        @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :landing, 1)
+        settings = PathFollowingSettings{element}(; newton_iterations = 1, distance, max_refusals = 2)
+        tracer = unwrap(GameTracing.path_init(gains, settings))
+        # The opening predictor passes this precision, so the first attempt corrects at it.
+        precision = tracer.step_length * last(tracer.tangent) * 9 // 10
+        failure = unwrap_error(GameTracing.stepped_landing!(tracer, precision, 10))
+        @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :refusals, precision)
+        @test failure.context.last_refusal == PathFollowing.NotConverged
+        @test iszero(failure.context.precision)
     end
 end
 

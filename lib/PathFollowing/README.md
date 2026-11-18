@@ -33,6 +33,7 @@ algorithm = PseudoArclength(;
     ),
     metric = FixedWeights([1.0, 1.0]),
     orientation_check = DeterminantSign(),
+    split_check = HalfStepCheck{Float64}(; trigger = 1, tolerance = 1e-8),
     linear_solver = LUFactorization(),
     max_refusals = 60,
 )
@@ -43,8 +44,11 @@ while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
 end
 ```
 
-`land!(tracer, coordinate, value)` corrects onto the curve's point where one coordinate takes `value`, near the last
-point. Use it to stop at an exact parameter value that a step passed.
+`step!(tracer, Bound(coordinate, value))` stops at an exact value of one coordinate. A predictor that reaches the
+value is cut there, and Newton's method corrects at that value. A corrected point past it refuses the step as
+`PastBound`, and a shorter step tries again. So the trace stops at the value's first crossing that a predictor or a
+corrected point shows. A curve that passes the value and comes back within one step goes unseen; keep the turn target
+small to keep steps short where the curve bends.
 
 ## Settings
 
@@ -52,16 +56,24 @@ point. Use it to stop at an exact parameter value that a step passed.
   `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the tolerance;
   `LastCorrection()` settles on the last correction, often one iteration later.
 - `StepControl`: the target contraction, first correction and turn, the largest growth (and the largest after the
-  first step) and the largest step.
+  first step) and the largest step. A converged point farther than `reach` predictor lengths from its predictor
+  refuses the step (`FarFromPredictor`): the corrector can land on another branch there. A move within the
+  corrector's own error bounds, in its `distance`, passes. A target first correction needs a distance that declares
+  its largest length (`correction_bound`), and its refusal must lie under that length.
 - `metric`, `turn_metric`: the step metric and the turn metric, each a symmetric positive semidefinite operator
   frozen at every accepted point (`frozen_metric`). `FixedWeights` is the constant diagonal one.
 - `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.
 - `orientation_check`: `DeterminantSign` refuses a step where `sign det([J; tᵀ])` changes. A long step near a fold can
   land where the oriented tangent runs back along the curve; this check catches it. A persistent change is accepted
   as a bifurcation crossing. `nothing` switches the check off.
+- `split_check`: `HalfStepCheck(; trigger, tolerance)` runs a step with factor at least `trigger` again in two half
+  steps. The second ends on the step's own hyperplane and must reach the corrected point within `tolerance`, or the
+  step is refused (`SplitMismatch`). A corrector can converge on another branch that passes its predictor, with every
+  step measurement in range; the shorter half steps keep the start's branch. `nothing` switches the check off.
 - `accept`: a test on each converged point.
 
 ## Failures
 
 `init` fails `NotFiniteStart` or `SingularStart`. `step!` fails `Unresolved` when the predictor falls below the
-float type's resolution, and `TooManyRefusals` past `max_refusals`. Each failure names the last `Refusal`.
+float type's resolution or a retry rounds back to the refused step, and `TooManyRefusals` past `max_refusals`. Each
+failure names the last `Refusal`.

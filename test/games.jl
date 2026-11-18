@@ -368,7 +368,8 @@ function settled_strategies(gains::NormalFormGains, logits::AbstractVector, prec
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
     corrected = root .- branch_step(gains, logits, precision)
     measure = GameTracing.corrector_measure(distance, gains)
-    return measure([root ./ level; level], [corrected ./ level; level]) <= 2 * distance.tolerance
+    # The measure reads only the logits `z = λ w`, so `[z; 1]` serves at every precision, zero included.
+    return measure([root; one(level)], [corrected; one(level)]) <= 2 * distance.tolerance
 end
 
 """
@@ -377,6 +378,27 @@ of the largest logit, as a step may land on a logit larger than the one it left.
 """
 function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::E where {E <: Real}
     return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * E(maximum(abs, logits))
+end
+
+"""
+The largest Newton correction, in logits, that PathFollowing's corrector leaves settled under `distance` at the logits
+`logits` of `gains`, to first order. A player settles once its strategy moves at most `tolerance` plus `settle_ulps` ulps
+of its logits' spread (`FisherRaoSettled`), doubled as in `settled_strategies`. A Fisher–Rao move `d` with the first
+logit fixed moves logit `j` at most `d √(1/πⱼ + 1/π₀)`, the root of the inverse Fisher matrix's diagonal.
+"""
+function settle_bound(distance::StrategyDistance{E}, gains::NormalFormGains, logits::AbstractVector)::E where {E <: Real}
+    # The probabilities read only the logits `z = λ w`, so `[z; 1]` serves at every precision.
+    point = [float.(collect(logits)) .* float(1); float(1)]
+    largest = zero(last(point))
+    for range in GameTracing.logit_ranges(gains)
+        normalizer = GameTracing.log_normalizer(point, range)
+        move = 2 * (distance.tolerance + distance.settle_ulps * eps(E) * last(GameTracing.fisher_rao_spread(point, point, range)))
+        first_share = exp(-GameTracing.log_probability(point, 0, normalizer))
+        for index in range
+            largest = max(largest, move * sqrt(exp(-GameTracing.log_probability(point, index, normalizer)) + first_share))
+        end
+    end
+    return E(largest)
 end
 
 """Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `settle_bound`."""
@@ -443,8 +465,8 @@ A step of arclength at most `1/100` halves until its corrector settles near the 
 `acos(0.99)`, and `reference_orientation` keeps its sign. A sign change marks a step onto another sheet: on
 `UNFOLDED_PITCHFORK_GAME` the principal branch turns steeply past the middle arm, which a step in λ alone lands on.
 A sign change that persists to a step of `1e-6` is taken as a crossing of a singular point, as at an exact pitchfork;
-`crossings` counts them, and a generic game's branch has none. `reached = false` when the step underflows or `10^6`
-steps do not reach `precision`.
+`crossings` lists the precision of the last point before each, and a generic game's branch has none. `reached = false`
+when the step underflows or `10^6` steps do not reach `precision`.
 """
 function branch_reference(
         pass::Any,
@@ -459,7 +481,7 @@ function branch_reference(
     tangent = reference_tangent(pass, point, [zeros(width); one(target)])
     side = reference_orientation(pass, point, tangent)
     step, largest, singular_step = inv(float(1000)), inv(float(100)), inv(float(10^6))
-    crossings = 0
+    crossings = typeof(target)[]
     for _ in 1:(10^6)
         if !(last(point) < target) || !(step > eps(target))
             break
@@ -469,7 +491,9 @@ function branch_reference(
             next_tangent = reference_tangent(pass, corrected.point, tangent)
             next_side = reference_orientation(pass, corrected.point, next_tangent)
             if dot(next_tangent, tangent) >= 99 // 100 && (next_side == side || step <= singular_step)
-                crossings += next_side != side
+                if next_side != side
+                    push!(crossings, last(point))
+                end
                 if !(last(corrected.point) < target)
                     # The step brackets the target: Newton at the target from the bracket's interpolation.
                     weight = (target - last(point)) / (last(corrected.point) - last(point))

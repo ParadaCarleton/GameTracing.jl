@@ -187,7 +187,7 @@ The row `b` with `b ⋅ τ = palc_product(dot, state_weight, vector, τ)` for ev
 `dot` scales by its point weights, `⟨x, y⟩ = xᵀ A y`, and `palc_options` cannot replace it.
 """
 function palc_border(dot::BifurcationKit.DotTheta, state_weight::E, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    border = state_weight .* dot.apply!(copy(vector))
+    border = state_weight .* dot.apply!(copyto!(similar(vector), vector))
     border[end] += (one(E) - state_weight) * last(vector)
     return border
 end

@@ -86,7 +86,7 @@ end
 
 function PathFollowing.frozen_metric(metric::FisherMetric{R, E}, point::AbstractVector{E})::FrozenFisher{FisherMetric{R, E}, E} where {R, E <: Real}
     players = length(metric.ranges)
-    copied, pivots = copy(point), fill!(similar(point, Int, players), 0)
+    copied, pivots = copyto!(similar(point), point), fill!(similar(point, Int, players), 0)
     probabilities, references = fill!(similar(copied, length(point) - 1), zero(E)), fill!(similar(copied, players), zero(E))
     frozen = FrozenFisher{FisherMetric{R, E}, E, typeof(copied), typeof(pivots)}(metric, copied, probabilities, references, pivots)
     return PathFollowing.freeze_metric!(frozen, point)
@@ -250,6 +250,6 @@ freezes it at its own start (`MetricDot`, `MetricApply`).
 """
 function metric_dot(metric::PathFollowing.Metric, start::AbstractVector{E})::BifurcationKit.DotTheta where {E <: Real}
     frozen = PathFollowing.frozen_metric(metric, start)
-    buffer = copy(start)
+    buffer = copyto!(similar(start), start)
     return BifurcationKit.DotTheta(MetricDot(frozen), MetricApply{typeof(frozen), E, typeof(buffer)}(frozen, buffer))
 end

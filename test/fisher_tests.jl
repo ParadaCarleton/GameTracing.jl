@@ -124,3 +124,14 @@ end
         @test_throws ArgumentError TraceGeometry{Float32}(; distance, precision_term = LogPrecisionTerm)
     end
 end
+
+@testset "a frozen Fisher metric and PALC's dot copy a range point into mutable buffers ($element)" for element in (Float32, widen(Float32))
+    metric = FisherMetric((1:2,), one(element), TargetPrecisionTerm, element(10), one(element))
+    point = range(one(element), element(3); length = 3)
+    collected = PathFollowing.frozen_metric(metric, collect(point))
+    @test inner_matrix(PathFollowing.frozen_metric(metric, point), element, 3) == inner_matrix(collected, element, 3)
+    palc_dot = GameTracing.metric_dot(metric, point)
+    vector = element[1, -1, 2]
+    @test palc_dot.apply!(copy(vector)) == PathFollowing.metric_apply!(similar(vector), collected, vector)
+    @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
+end

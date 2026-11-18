@@ -113,9 +113,11 @@ and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shr
 
 A converged point farther than `reach` predictor lengths from its predictor, in the step metric, is refused
 (`FarFromPredictor`) and retried at `shrink` times the length. Such a corrector left the curve the predictor followed,
-and its point can lie on another branch. The start's own error moves the corrector too, so the reach adds the
-correction that settled the start. On 300 unfolded pitchforks per scale (battle of the sexes plus `0.1 randn`
-payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3 that jumped moved 4.2 to 5.09. `reach = Inf`
+and its point can lie on another branch. A move within the corrector's noise passes: in `Newton`'s `distance`, at most
+the error bounds of the start and of the point, each `scale` times its last correction. Each point settles only to its
+tolerance, so at short steps the start's own error moves the corrector past the reach. On 300 unfolded pitchforks per
+scale (battle of the sexes plus `0.1 randn` payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3
+that jumped moved 4.2 to 5.09. `reach = Inf`
 switches the refusal off; any other `reach` must be positive and finite in the step control's type.
 """
 struct StepControl{E <: Real}

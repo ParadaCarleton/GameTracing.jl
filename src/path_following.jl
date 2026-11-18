@@ -76,7 +76,8 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
 - `target_contraction`, `target_turn`, `max_step_growth`, `reach`: PathFollowing's `StepControl`; `nothing` drops a
   target. The turn target is in radians under `step_metric`. A converged point farther than `reach` step lengths from
-  its predictor refuses the step, as one that jumped to another branch; `Inf` switches the refusal off.
+  its predictor refuses the step, as one that jumped to another branch, unless `distance` puts the move within the
+  corrector's settle tolerance. `Inf` switches the refusal off.
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
   `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. `nothing` switches
   the check off.

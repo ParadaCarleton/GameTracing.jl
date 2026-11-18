@@ -459,7 +459,21 @@ end
         @test (failure.cause, failure.last_refusal) == (TooManyRefusals, FarFromPredictor)
     end
 
-    @testset "the settle move is measured in the step metric frozen at the accepted point" begin
+    @testset "a start settled by a long correction allows no long move: the allowance is the corrector's error bound" begin
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 100))
+        # A step of 1/100 at reach 3, and a converged point 1/2 from its predictor (50 lengths), its last correction zero.
+        tracer.predicted .= E[1, 1 // 100]
+        tracer.iterate .= E[3 // 2, 1 // 100]
+        copyto!(tracer.previous, tracer.iterate)
+        # The start settled by a correction of length 1, at a convergence scale that bounds its error by 1/1000.
+        tracer.settle_error = PathFollowing.settle_error(tracer, E(1) / 1000, E[2, 0], E[1, 0])
+        @test PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
+        # An error bound of 1, as a tolerance of 1 allows, cannot tell that move from the corrector's noise.
+        tracer.settle_error = PathFollowing.settle_error(tracer, one(E), E[2, 0], E[1, 0])
+        @test !PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
+    end
+
+    @testset "the settle error is measured in the step metric frozen at the accepted point" begin
         # `CountingMetric` weighs each coordinate by 1 + |xᵢ|, so the metric frozen at the start measures another length.
         problem = CurveProblem(Circle(one(E)), E[1, 0], E[0, 1])
         tracer = unwrap(init(problem, algorithm(E; tolerance = one(E) / 100, metric = CountingMetric(Ref(0))); first_step = E(1) / 2))
@@ -467,7 +481,7 @@ end
         scratch = similar(tracer.point)
         at_point = PathFollowing.metric_distance(tracer.metric, scratch, tracer.previous, tracer.point)
         at_start = PathFollowing.metric_distance(frozen_metric(CountingMetric(Ref(0)), problem.start), scratch, tracer.previous, tracer.point)
-        @test tracer.settle_move ≈ at_point
+        @test tracer.settle_error ≈ at_point
         @test !(at_point ≈ at_start)
     end
 

@@ -8,12 +8,27 @@ logits scale. `pass!(gain, gain_slope, gain_precision_slope, z, λ)` writes `G(z
 slope `∂G/∂λ` into the three arrays, from one evaluation, and returns `nothing`. The arrays are views into the
 trace's own residual and Jacobian (`BranchWorkspace`), so a pass allocates nothing of its own. A pass that needs work
 arrays of its own gets them from `pass_workspace`. `G` must be finite at `λ = 0`, where the flat logits are the only
-equilibrium. `target_precision` is the precision a trace ends at.
+equilibrium. `target_precision` is the precision a trace ends at, non-negative and finite (`ArgumentError` otherwise).
 """
 struct LogitGame{P, T <: Real}
     pass!::P
     target_precision::T
+    function LogitGame{P, T}(pass!::P, target_precision::Real)::LogitGame{P, T} where {P, T <: Real}
+        stored = convert(T, target_precision)
+        # Both: a conversion can round a negative target to -0 or a huge one to Inf.
+        if !(reachable(target_precision) && reachable(stored))
+            throw(ArgumentError("target_precision must be non-negative and finite in $T; got $target_precision"))
+        end
+        return new{P, T}(pass!, stored)
+    end
 end
+
+function LogitGame(pass!::P, target_precision::T)::LogitGame{P, T} where {P, T <: Real}
+    return LogitGame{P, T}(pass!, target_precision)
+end
+
+"""Whether a trace can reach `precision`: it rises from its start at `λ = 0`, so a non-negative, finite one."""
+reachable(precision::Real)::Bool = precision >= 0 && isfinite(precision)
 
 """
     pass_workspace(pass!, logits)

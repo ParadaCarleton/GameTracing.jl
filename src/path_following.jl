@@ -331,7 +331,7 @@ end
 
 """
 PathFollowing's `init` of the principal branch of `gains` in `[w; λ]`: a `Tracer` from the flat start toward rising
-`λ`, or the `StepFailure` there (`start_context`).
+`λ`, or the `StepFailure` there (`start_cause`, `start_context`).
 """
 function path_init(
         gains::NormalFormGains,
@@ -350,12 +350,18 @@ end
 
 """
 The first step of a trace of `gains`: `1 / payoff_range(gains)` in `λ`, where no logit `z = λ w` has moved by more
-than one. Step control then grows it by up to `max_step_growth` per step. Equal or non-finite payoffs step one; a
-non-finite start fails anyway (`NotFiniteStart`).
+than one. Step control then grows it by up to `max_step_growth` per step, and `max_step` caps it. A range without a
+positive finite inverse (equal, non-finite or subnormal payoffs) steps one; a non-finite start fails anyway
+(`NotFiniteStart`).
 """
 function opening_step(gains::NormalFormGains, ::Type{E})::E where {E <: Real}
-    range = E(payoff_range(gains))
-    return range > 0 && isfinite(range) ? inv(range) : one(E)
+    step = inv(E(payoff_range(gains)))
+    return step > 0 && isfinite(step) ? step : one(E)
+end
+
+"""The `TraceCause` of PathFollowing's start `failure`: `NotFinite` for a non-finite start, `Singular` otherwise."""
+function start_cause(failure::PathFollowing.StepFailure)::TraceCause
+    return ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
 end
 
 """The context of PathFollowing's start `failure` over `width` logits: `context` and the flat start."""
@@ -430,8 +436,7 @@ function engine_points(
     started = path_init(gains, settings)
     if is_error(started)
         failure = unwrap_error(started)
-        cause = ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
-        return Err(TraceFailure(cause, start_context(failure, logit_count(gains), context)))
+        return Err(TraceFailure(start_cause(failure), start_context(failure, logit_count(gains), context)))
     end
     return recorded_points(unwrap(started), BranchRecorder(gains, tolerance), maximum_precision, settings.max_steps, context)
 end
@@ -487,14 +492,10 @@ function engine_lambdas(
         precisions::AbstractVector{E},
         settings::PathFollowingSettings{E},
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
-    if any(<(0), precisions)
-        throw(ArgumentError("precisions must be non-negative; got $(minimum(precisions))"))
-    end
     started = path_init(gains, settings)
     if is_error(started)
         failure = unwrap_error(started)
-        cause = ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
-        return Err(TraceFailure(cause, start_context(failure, logit_count(gains), (;))))
+        return Err(TraceFailure(start_cause(failure), start_context(failure, logit_count(gains), (;))))
     end
     return landed_lambdas(unwrap(started), precisions, settings.max_steps)
 end

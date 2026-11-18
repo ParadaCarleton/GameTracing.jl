@@ -253,20 +253,51 @@ end
 end
 
 # Unfolded pitchforks where PathFollowing's corrector jumped to the other component of the branch: draw 12 of a CI run's
-# seed, and the 1e-1 draws of seeds 84, 185 and 260.
+# seed, and the 1e-1 draws of seeds 84, 185 and 260. Each pairs with whether the split check keeps it without the reach
+# refusal: at seed 185 both half steps jump with the step, so they agree.
 const JUMPED_PITCHFORKS = [
-    unfolded_pitchforks(Xoshiro(0x0035b4b3c0a0f1ba))[12]; [unfolded_pitchfork(Xoshiro(seed), inv(float(10))) for seed in (84, 185, 260)]
+    (unfolded_pitchforks(Xoshiro(0x0035b4b3c0a0f1ba))[12], true); [(unfolded_pitchfork(Xoshiro(seed), inv(float(10))), seed != 185) for seed in (84, 185, 260)]
 ]
 
-@testset "PathFollowing keeps the unfolded pitchforks' principal branch where it jumped; without its reach refusal it jumps ($element)" for element in (Float32, widen(Float32))
-    for payoffs in JUMPED_PITCHFORKS
+@testset "PathFollowing keeps the unfolded pitchforks' principal branch where it jumped; without its reach refusal and split check it jumps ($element)" for element in (Float32, widen(Float32))
+    for (payoffs, split_keeps) in JUMPED_PITCHFORKS
         reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
         @test reference.reached
         gains = NormalFormGains(map(table -> element.(table), payoffs))
-        for (overrides, kept) in (((;), true), ((; reach = Inf32), false))
+        arms = (((;), true), ((; split_check = nothing), true), ((; reach = Inf32), split_keeps), ((; reach = Inf32, split_check = nothing), false))
+        for (overrides, kept) in arms
             landed = only(unwrap(logit_solve_lambda(gains, element(4); settings = PathFollowingSettings{element}(; overrides...))))
             @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
         end
+    end
+end
+
+"""Battle of the sexes with `scale` times one standard normal draw from `Xoshiro(seed)` added to both players' payoffs."""
+function same_noise_pitchfork(seed::Integer, scale::Real)::Tuple
+    return map(table -> table .+ scale .* randn(Xoshiro(seed), 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
+end
+
+@testset "PathFollowing's split check keeps an unfolded pitchfork's principal branch without the reach refusal; without both it jumps ($element)" for element in (Float32, widen(Float32))
+    payoffs = same_noise_pitchfork(21, inv(float(10)))
+    reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
+    gains = NormalFormGains(map(table -> element.(table), payoffs))
+    for (overrides, kept) in (((; reach = Inf32), true), ((; reach = Inf32, split_check = nothing), false))
+        landed = only(unwrap(logit_solve_lambda(gains, element(4); settings = PathFollowingSettings{element}(; overrides...))))
+        @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
+    end
+end
+
+# The second step keeps the branch, but its half steps end 1.25 Fisher–Rao from its point, so the split check refuses it.
+@testset "PathFollowing keeps the branch where its split check refuses a step that kept it ($element)" for element in (Float32, widen(Float32))
+    payoffs = same_noise_pitchfork(213, inv(float(10)))
+    reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, 4)
+    gains = NormalFormGains(map(table -> element.(table), payoffs))
+    for (settings, refusals) in ((PathFollowingSettings{element}(), 1), (PathFollowingSettings{element}(; split_check = nothing), 0))
+        tracer = unwrap(GameTracing.path_init(gains, settings))
+        second = last([unwrap(GameTracing.path_step!(tracer, element(4), settings.max_steps, (;))) for _ in 1:2])
+        @test second.refusals == refusals
+        landed = only(unwrap(logit_solve_lambda(gains, element(4); settings)))
+        @test agreeing(first_choices(-landed.logits), reference.first_choices)
     end
 end
 
@@ -347,15 +378,37 @@ end
     @test settled_endpoint(GAMBIT_LEAVES_GAME, unwrap(traced).logits, oracle.precision, settings)
 end
 
-@testset "random games with two actions each: the trace follows the principal branch ($engine)" for (engine, settings) in default_settings()
-    rng = fresh_rng()
-    skipped = 0
-    for _ in 1:20
+"""The random-games testset's 20 draws from `rng`: two to four players, two actions each, `3 randn` payoffs."""
+function two_action_games(rng::AbstractRNG)::Vector{Tuple}
+    return map(1:20) do _
         players = rand(rng, 2:4)
-        payoffs = ntuple(_ -> 3 .* randn(rng, ntuple(_ -> 2, players)), players)
-        skipped += cross_checked!(payoffs, 3, settings)
+        ntuple(_ -> 3 .* randn(rng, ntuple(_ -> 2, players)), players)
     end
+end
+
+@testset "random games with two actions each: the trace follows the principal branch ($engine)" for (engine, settings) in default_settings()
+    skipped = sum(payoffs -> cross_checked!(payoffs, 3, settings), two_action_games(fresh_rng()))
     @info "Gambit comparisons skipped where its branch folds before the target" skipped
+end
+
+# Random games where PathFollowing's corrector jumped branches without its split check: draws of three suite runs' fresh
+# seeds, then two draws of a 200-seed sweep.
+const JUMPED_TWO_ACTION_GAMES = [
+    two_action_games(Xoshiro(seed))[draw]
+        for (seed, draw) in ((0x0b357a95eb385c17, 4), (0xe3d835fcb88261eb, 12), (0x8ee16446e3ac8acf, 13), (0xb2cb58af5afc41b4, 12), (0xa656d4e67e70d45e, 10))
+]
+
+@testset "PathFollowing keeps the random games' principal branch where it jumped; without its split check it jumps ($element)" for element in (Float32, widen(Float32))
+    for payoffs in JUMPED_TWO_ACTION_GAMES
+        precision = logitnash_equilibrium(payoffs, 3).precision
+        reference = branch_reference(NormalFormPass(map(float, payoffs)), length(payoffs), precision)
+        @test reference.reached
+        gains = NormalFormGains(map(table -> element.(table), payoffs))
+        for (settings, kept) in ((PathFollowingSettings{element}(), true), (PathFollowingSettings{element}(; split_check = nothing), false))
+            landed = only(unwrap(logit_solve_lambda(gains, element(precision); settings)))
+            @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
+        end
+    end
 end
 
 @testset "a branch folds before the target only where its precisions decrease before first reaching it" begin

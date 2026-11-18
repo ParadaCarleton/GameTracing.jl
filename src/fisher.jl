@@ -183,7 +183,7 @@ The root `√(ω(λ) - (1 - θ))` of the weight of `Δλ²` in `frozen`'s dot, b
 While `c(λ) ≥ c(P)` the weight is `c(λ) - (1 - θ)`. Past `P` PALC's share shrinks with the log term, to
 `(1 - θ) c(λ) / c(P)`. Both are `c(λ) (1 - (1 - θ) / max(c(λ), c(P)))`, whose root `√c(λ) √(1 - …)` is positive for
 every finite `λ`, as `1 - θ < c(P)`. The products apply the root to each side, `(root Δλ) (root Δλ')`.
-The dot's precision term keeps its relative accuracy while each side's `root Δλ` exceeds `floatmin`, and underflows below.
+The dot's precision term keeps its relative accuracy while each side's `root Δλ` and their product are normal floats.
 """
 function precision_dot_root(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
     (; precision_term, target_precision, palc_state_weight) = frozen.metric
@@ -259,12 +259,11 @@ and return its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ
 pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
 against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
 
-The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|)) + (2n + 9) (1 + gap_scale) η`
-of `M`'s, for `n` strategies, `L` the largest `|log π|` among them and `η` the smallest subnormal. The first term is the
-entries' rounding, the second the logit moves' and the third their underflow. Under the standard model
-`fl(x ∘ y) = (x ∘ y) (1 + δ) + η`, each product adds at most `η`; the block's products add at most `2n + 9` of them,
-each times `gap_scale` or one. The bound holds for a normal `gap_scale`. Entries of size `s` hold no nonzero sum under
-about `eps s`, so a large differential move can sum to zero.
+The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))` of `M`'s, for `n`
+strategies and `L` the largest `|log π|` among them. The first term is the entries' rounding and the second the logit
+moves'. The bound holds under Higham's standard model `fl(x ∘ y) = (x ∘ y) (1 + δ)`: while every probability, product
+and partial sum is a normal float or zero. Where one underflows, the block stays finite but loses the bound. Entries
+of size `s` hold no nonzero sum under about `eps s`, so a large differential move can sum to zero.
 """
 function player_apply!(
         out::AbstractVector{E},

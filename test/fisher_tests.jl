@@ -164,13 +164,24 @@ end
     exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
     @test abs(sum(big.(applied[1:3])) - exact) <= block_sum_bound(exact_frozen, applied, other, 1, 1:3)
     @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
-    # At precision -1 `gap_scale` is negative: the bound without its absolute value was negative for this zero block.
-    point, vector = element[1, -1], element[1, 1]
+    # Three strategies at logits 30 and 30.5: the product -2.2e-15 lies under the random loop's bound in Float32, but
+    # the pivot keeps its relative accuracy, so a zero product fails.
+    point, other, common = element[60, 61, 1 // 2], element[1, -1, 0], element[1, 1, 0]
+    metric = FisherMetric((1:2,), one(element), TargetPrecisionTerm, one(element), one(element))
+    exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:2,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
+    exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
+    @test abs(PathFollowing.metric_inner(PathFollowing.frozen_metric(metric, point), common, other) - exact) <= 64 * eps(element) * abs(exact)
+    # At precision -1 `gap_scale` is negative. The bound without its absolute value was negative for the zero block of
+    # [1, 1]; [1, 0] moves its logit by -1, so a zero block or a flipped `gap_scale` misses by its sum or twice it.
+    point = element[1, -1]
     metric = FisherMetric((1:1,), one(element), TargetPrecisionTerm, one(element), one(element))
     exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
-    applied = PathFollowing.metric_apply!(similar(vector), PathFollowing.frozen_metric(metric, point), vector)
-    exact = only(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[1:1])
-    @test abs(big(only(applied[1:1])) - exact) <= block_sum_bound(exact_frozen, applied, vector, 1, 1:1)
+    for (vector, moved) in ((element[1, 1], false), (element[1, 0], true))
+        applied = PathFollowing.metric_apply!(similar(vector), PathFollowing.frozen_metric(metric, point), vector)
+        exact = only(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[1:1])
+        @test abs(big(only(applied[1:1])) - exact) <= block_sum_bound(exact_frozen, applied, vector, 1, 1:1)
+        @test !moved || abs(exact) > block_sum_bound(exact_frozen, zero(applied), vector, 1, 1:1)
+    end
 end
 
 @testset "player_kl is each player's categorical KL, zero at equal logits, finite where probabilities round ($element)" for element in (Float32, widen(Float32))

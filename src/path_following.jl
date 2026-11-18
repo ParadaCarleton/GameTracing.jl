@@ -17,11 +17,15 @@ Measure a move by the largest Fisher–Rao distance any player's mixed strategy 
 counts by its probability, so one that has left the support stops counting. The corrector settles once a correction
 moves no strategy further than `tolerance` past the distance `settle_ulps` ulps of each logit move it
 (`FisherRaoSettled`). Step control's target first correction is `target_correction`, or `nothing` to drop the term.
+A set target must lie above `tolerance` (`settle_tolerance`).
 """
 struct StrategyDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
     settle_ulps::Int
     target_correction::Union{Nothing, E}
+    function StrategyDistance{E}(tolerance::E, settle_ulps::Int, target_correction::Union{Nothing, E})::StrategyDistance{E} where {E <: Real}
+        return new{E}(settle_tolerance(tolerance, target_correction), settle_ulps, target_correction)
+    end
 end
 
 # Defaults: half the `LogitDistance` defaults, as a logit move at even odds is twice its Fisher–Rao distance.
@@ -40,11 +44,25 @@ Measure a move by the largest change of any logit (`logit_change`). The correcto
 logit more than `tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`). Step control's target first
 correction is `target_correction`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
 support: its logit grows like `λ`, and its corrections, `λ` times the square of the others', hold the steps short.
+A set target must lie above `tolerance` (`settle_tolerance`).
 """
 struct LogitDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
     settle_ulps::Int
     target_correction::Union{Nothing, E}
+    function LogitDistance{E}(tolerance::E, settle_ulps::Int, target_correction::Union{Nothing, E})::LogitDistance{E} where {E <: Real}
+        return new{E}(settle_tolerance(tolerance, target_correction), settle_ulps, target_correction)
+    end
+end
+
+"""
+`tolerance`, which must lie under `target_correction` when one is set. A corrector that settles looser than its
+target first correction leaves step control nothing to measure, and the reach passes any move within its noise.
+"""
+function settle_tolerance(tolerance::E, target_correction::Union{Nothing, E})::E where {E <: Real}
+    isnothing(target_correction) || tolerance < target_correction ||
+        throw(ArgumentError("the settle tolerance $tolerance must lie under the target first correction $target_correction"))
+    return tolerance
 end
 
 # Defaults: the cheapest step control that kept Gambit's branch on ten benchmark games where others left it. A target

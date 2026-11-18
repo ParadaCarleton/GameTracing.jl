@@ -196,7 +196,7 @@ end
     @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
     # A first correction far past a 1e-6 target is refused, and no refusal is allowed.
-    for distance in (StrategyDistance{element}(; target_correction = 1.0f-6), LogitDistance{element}(; target_correction = 1.0f-6))
+    for distance in (StrategyDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6), LogitDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6))
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
     end
@@ -204,6 +204,12 @@ end
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.8f0)))
     @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.78f0))))
     @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = LogitDistance{element}(; target_correction = 100))))
+    # A settle tolerance at or past the target first correction is refused; without a target it is free.
+    for distance_type in (StrategyDistance{element}, LogitDistance{element})
+        @test_throws ArgumentError distance_type(; tolerance = 1 // 4, target_correction = 1 // 4)
+        @test distance_type(; tolerance = 1 // 5, target_correction = 1 // 4).tolerance == element(1 // 5)
+        @test distance_type(; tolerance = 1, target_correction = nothing).tolerance == 1
+    end
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
     # A reach finite in a wider type that rounds to Inf would switch the refusal off.
     @test_throws ArgumentError PathFollowingSettings{element}(; reach = floatmax(widen(element)))

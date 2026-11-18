@@ -379,10 +379,20 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         scale = error_scale(corrector.error_estimate, correction, before)
         before = correction
         if corrector.converged(tracer.previous, tracer.iterate, tracer.residual, scale)
-            return Attempt{E}(NoRefusal, iteration, contraction, first_correction, scale, E(NaN32), E(NaN32), Int8(0))
+            return Attempt{E}(NoRefusal, iteration, contraction, first_correction, settled_scale(scale), E(NaN32), E(NaN32), Int8(0))
         end
     end
     return refused(E, NotConverged, step_factor(tracer.algorithm.step_control, contraction, first_correction, E(NaN32)))
+end
+
+"""
+`scale` at a converged iterate. A `converged` that settles at a scale that is not finite and non-negative throws an
+`ArgumentError`: an infinite scale would bound the error by Inf, and the reach would pass any move.
+"""
+function settled_scale(scale::E)::E where {E <: Real}
+    # A throw: the fault lies in `converged`, and a refusal would only shrink the step until `TooManyRefusals`.
+    isfinite(scale) && scale >= 0 || throw(ArgumentError("converged settled at scale $scale; it may settle only at a finite, non-negative scale"))
+    return scale
 end
 
 """

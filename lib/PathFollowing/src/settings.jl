@@ -61,7 +61,8 @@ step metric.
 
 - `max_iterations`: corrections before the corrector gives up and the step is refused.
 - `converged(previous, iterate, residual, scale)`: whether `iterate`, one correction from `previous`, has converged,
-  the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`.
+  the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`. A `converged`
+  that settles at an infinite or NaN `scale` throws an `ArgumentError`.
 - `contraction_limit`: a correction longer than this times the one before it is refused as diverging.
 - `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)`.
 - `distance(from, to)`: a correction's length, for the contraction test, the error estimate and step control.

@@ -111,6 +111,22 @@ function (::CappedMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where
 end
 PathFollowing.correction_bound(::CappedMove)::Real = 1
 
+"""
+The unit circle with its Jacobian reported at a tenth of its size: Newton overshoots, and each correction outgrows the
+one before it.
+"""
+struct Overshoot end
+
+function (::Overshoot)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    residual[1] = point[1]^2 + point[2]^2 - 1
+    jacobian[1, 1] = point[1] / 5
+    jacobian[1, 2] = point[2] / 5
+    return nothing
+end
+
+"""A `converged` that ignores its contract and settles where `scale` is infinite."""
+settles_at_infinite_scale(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool = isinf(scale)
+
 """A `converged` that never holds."""
 never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
 
@@ -471,6 +487,17 @@ end
         # An error bound of 1, as a tolerance of 1 allows, cannot tell that move from the corrector's noise.
         tracer.settle_error = PathFollowing.settle_error(tracer, one(E), E[2, 0], E[1, 0])
         @test !PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
+    end
+
+    @testset "a converged that settles at an infinite scale throws, as its error bound would pass any move" begin
+        # Without the check, the step was accepted 4.1 predictor lengths from its predictor, off the curve, with an error
+        # bound of Inf for every later step.
+        corrector = Newton(; max_iterations = 8, converged = settles_at_infinite_scale, contraction_limit = E(100), error_estimate = ContractionEstimate(; safety = E(1) / 5))
+        step_control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
+        tracer = unwrap(init(CurveProblem(Overshoot(), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control, orientation_check = nothing); first_step = E(1) / 10))
+        @test_throws ArgumentError step!(tracer)
+        @test_throws ArgumentError PathFollowing.settled_scale(E(NaN32))
+        @test PathFollowing.settled_scale(zero(E)) == 0
     end
 
     @testset "the settle error is measured in the step metric frozen at the accepted point" begin

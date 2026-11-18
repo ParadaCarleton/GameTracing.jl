@@ -258,18 +258,29 @@ end
     @test GameTracing.opening_step(poisoned, element) == 1
 end
 
+@testset "both engines default to one step metric and Gambit's step growth ($element)" for element in (Float32, widen(Float32))
+    metric = GameTracing.default_step_metric(element)
+    @test (metric.distance, metric.precision_term) == (FisherDistance, LogPrecisionTerm)
+    @test GameTracing.gambit_settings(element(3 // 100), GameTracing.GAMBIT_MAX_ACCEL).step_metric == metric
+    @test PathFollowingSettings{element}().step_metric == metric
+    @test PathFollowingSettings{element}().max_step_growth == element(GameTracing.GAMBIT_MAX_ACCEL) == StepControl{element}().max_step_growth
+end
+
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), REVERSAL_GAME))
     checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
-    # The split check at trigger 1 refuses the long step too, so each check alone keeps the branch.
-    for alone in ((; orientation_check = nothing), (; split_check = nothing))
-        @test largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; alone...))).profile, checked.profile) < 1 // 1000
-    end
-    # The control: the same trace without either check ends elsewhere.
-    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing, split_check = nothing)))
-    @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
+    gap_to_checked(overrides) = largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; overrides...))).profile, checked.profile)
+    # The orientation check alone keeps the branch. The split check alone misses the long step, as its half steps run
+    # back too, and the trace ends elsewhere, as it does without either check.
+    @test gap_to_checked((; split_check = nothing)) < 1 // 1000
+    @test gap_to_checked((; orientation_check = nothing)) > 1 // 2
+    @test gap_to_checked((; orientation_check = nothing, split_check = nothing)) > 1 // 2
+    # At growth 2 with the summed metric and trigger 1, the split check alone refuses the long step too.
+    summed = (; max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1))
+    trigger_one = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 1, tolerance = PathFollowingSettings{element}().split_check.tolerance)
+    @test gap_to_checked((; summed..., orientation_check = nothing, split_check = trigger_one)) < 1 // 1000
 end
 
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
@@ -320,9 +331,13 @@ end
     payoffs = ntuple(_ -> randn(rng, (20, 20)), 2)
     wide = widen(Float32)
     @test !is_error(logit_solve(NormalFormGains(payoffs); maxregret = 1.0f-4, settings = PathFollowingSettings{wide}()))
-    # The turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there, and the trace stops loudly at the fold.
+    # The default Fisher metric turns it in Float32 too.
     narrow = NormalFormGains(map(table -> Float32.(table), payoffs))
-    failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
+    @test !is_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
+    # In the summed metric the turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there, and the trace stops
+    # loudly at the fold.
+    summed = TraceGeometry{Float32}(; distance = SummedDistance, state_weight = 1)
+    failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}(; step_metric = summed)))
     @test failure.cause == GameTracing.TraceStuck
     @test abs(failure.context.precision - 315.68f0) < 1
 end

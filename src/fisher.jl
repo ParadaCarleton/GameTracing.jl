@@ -22,6 +22,7 @@ its most probable strategy: the index of its largest logit, or 0 for its referen
 largest for `λ > 0` and smallest for `λ < 0`, so an overflowing product `λ wᵢ` cannot choose it. The normalizer is
 `log Σ exp(zᵢ - z_pivot)` over its strategies and its reference (`centered_logit`). Each logit enters as `λ (wᵢ - w_pivot)`,
 which keeps its relative accuracy at a large common logit. No centered logit is positive, so the normalizer is finite.
+`log1p` of the other strategies' sum keeps its relative accuracy where that sum is under `eps`.
 """
 function log_normalizer(point::AbstractVector{E}, range::UnitRange{Int})::Tuple{Int, E} where {E <: Real}
     pivot, direction = 0, sign(last(point))
@@ -34,7 +35,7 @@ function log_normalizer(point::AbstractVector{E}, range::UnitRange{Int})::Tuple{
     for index in range
         total += index == pivot ? zero(E) : exp(centered_logit(point, index, pivot))
     end
-    return (pivot, log(one(E) + total))
+    return (pivot, log1p(total))
 end
 
 """The log probability of strategy `index` (0 for the reference) at a point `[w; λ]`, its player's `log_normalizer` `normalizer`."""

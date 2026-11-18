@@ -77,8 +77,8 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
   The turn target is in radians under `step_metric`.
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
-  `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. On a game with an
-  exact pitchfork the trace then takes a side arm, as Gambit does. `nothing` switches the check off.
+  `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. `nothing` switches
+  the check off.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.

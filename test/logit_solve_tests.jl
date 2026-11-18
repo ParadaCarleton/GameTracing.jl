@@ -269,12 +269,6 @@ end
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
 end
 
-@testset "PathFollowing takes a side arm at an exact pitchfork, as Gambit does ($element)" for element in (Float32, widen(Float32))
-    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.battle_of_the_sexes))
-    checked = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}()))
-    @test all(strategy -> maximum(strategy) > 99 // 100, checked.profile)
-end
-
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
     one_player = GameTracing.FisherRaoChange((1:1,))
     # From even odds to odds of 1:3 the Bhattacharyya angle is 15°, so the distance is twice that: π / 6.

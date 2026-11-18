@@ -285,3 +285,12 @@ end
     @test GameTracing.log_normalizer(flipped, 1:2)[1] == 2
     @test GameTracing.log_normalizer(flipped, 1:2)[2] ≈ log(1 + exp(-big(3)) + exp(-big(2))) rtol = 4 * eps(element)
 end
+
+@testset "the log normalizer keeps its relative accuracy where the other strategies' sum is under eps ($element)" for element in (Float32, widen(Float32))
+    # Logit -20 against the reference: `log(1 + e⁻²⁰)` rounded the normalizer to 0 in Float32; it is 2.06e-9.
+    for logit in element[-20, -40]
+        normalizer = GameTracing.log_normalizer(element[logit, 1], 1:1)
+        @test first(normalizer) == 0
+        @test last(normalizer) ≈ log1p(exp(big(logit))) rtol = 4 * eps(element)
+    end
+end

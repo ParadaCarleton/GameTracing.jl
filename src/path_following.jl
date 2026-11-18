@@ -155,7 +155,7 @@ function PathFollowingSettings{E}(;
         split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = default_split_check(distance),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
-        # Both engines' default. At growth 1.1 it takes 35-68% fewer hard_games steps than the summed metric at weight 1.
+        # Both engines' default. At growth 1.1 it took 35-68% fewer hard_games steps than the summed metric.
         step_metric::TraceGeometry{E} = default_step_metric(E),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
@@ -170,10 +170,10 @@ end
 `PathFollowingSettings`' default split check: trigger 1.3 and tolerance 10 times `distance`'s settle tolerance. At
 growth 1.1 a step held by a step-control target rides at `f` near 1. So trigger 1 fired on up to 67% of
 logitnash_speed's steps and cost up to 33% per game (median). Trigger 1.3 fired on 0.4-2.7% of them and cost at most
-2%. In a hunt over 20,000 two-action games and 1200 unfolded pitchforks, it fired on and refused all 7 jumps in each
-type; the smallest jump `f` was 1.41. At growth 2 with the summed metric, jumps came as low as `f` 1.1: a looser step
-control needs trigger 1. A zero settle tolerance gives the tolerance no scale, so it throws an `ArgumentError` that
-asks for an explicit `split_check`.
+2%. A hunt over 20,000 two-action games and 1200 unfolded pitchforks found the same 7 jumps in Float32 and Float64.
+Trigger 1.3 fired on and refused each; the smallest jump `f` was 1.41. At growth 2 with the summed metric, jumps came
+as low as `f` 1.1: a looser step control needs trigger 1. A zero settle tolerance gives the tolerance no scale, so it
+throws an `ArgumentError` that asks for an explicit `split_check`.
 """
 function default_split_check(distance::CorrectorDistance{E})::PathFollowing.HalfStepCheck{E} where {E <: Real}
     iszero(distance.tolerance) && throw(

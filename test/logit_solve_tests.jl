@@ -7,7 +7,7 @@ const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
 """Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and PathFollowing's."""
 function engine_settings(::Type{E})::Vector{Pair{String, EngineSettings{E}}} where {E <: Real}
-    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), 1.1f0), "PathFollowing" => PathFollowingSettings{E}()]
+    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), GameTracing.GAMBIT_MAX_ACCEL), "PathFollowing" => PathFollowingSettings{E}()]
 end
 
 @testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision ($engine)" for (engine, settings) in engine_settings(Float32)
@@ -277,10 +277,12 @@ end
     @test gap_to_checked((; split_check = nothing)) < 1 // 1000
     @test gap_to_checked((; orientation_check = nothing)) > 1 // 2
     @test gap_to_checked((; orientation_check = nothing, split_check = nothing)) > 1 // 2
-    # At growth 2 with the summed metric and trigger 1, the split check alone refuses the long step too.
+    # At growth 2 with the summed metric and trigger 1, the split check alone refuses the long step too; without either
+    # check the trace ends elsewhere there as well.
     summed = (; max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1))
     trigger_one = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 1, tolerance = PathFollowingSettings{element}().split_check.tolerance)
     @test gap_to_checked((; summed..., orientation_check = nothing, split_check = trigger_one)) < 1 // 1000
+    @test gap_to_checked((; summed..., orientation_check = nothing, split_check = nothing)) > 1 // 2
 end
 
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))

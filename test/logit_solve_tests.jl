@@ -86,6 +86,12 @@ const FOLD_PEAK_GAME = (
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
 )
 
+# A fresh draw of PR 125's CI run: main's Float32 BifurcationKit trace exhausted at the fold peak λ ≈ 26.26, a logit at -88.
+const FOLD_EXHAUSTED_GAME = (
+    Float32[-0.17346182f0 0.98846f0 -0.047029182f0; -0.15673546f0 1.7735703f0 3.5914543f0; 0.1646234f0 -4.6235147f0 -0.70840126f0],
+    Float32[-2.4531052f0 1.945029f0 -6.307946f0; 0.8079069f0 -0.08894292f0 -2.0735276f0; 1.8209918f0 1.0540596f0 -3.7581315f0],
+)
+
 """
 Whether a branch point settles as its engine's corrector settles points, by a Newton step with the precision free
 (`branch_step`): in logits, or in strategies (`StrategyDistance`).
@@ -104,7 +110,7 @@ end
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, branch_games(fresh_rng())...)
+    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, FOLD_EXHAUSTED_GAME, branch_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
         result = logit_solve_branch(gains; settings)
         @test !is_error(result)

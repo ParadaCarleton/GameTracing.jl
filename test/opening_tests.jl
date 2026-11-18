@@ -1,5 +1,5 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
-using LinearAlgebra: I, lu
+using LinearAlgebra: I, lu, opnorm
 using Random: AbstractRNG, Xoshiro
 
 # Random normal-form games whose trace to precision 1e6 once opened at λ ≈ 42426 and stalled off the map.
@@ -18,14 +18,17 @@ function far_opening_games(rng::AbstractRNG)::AbstractVector
 end
 
 """
-Whether `failure` is a `PrecisionExhausted` that Float32 rounding explains: a logit's rounding, `eps` of the largest
-logit, moves each payoff-weighted gain by up to `max|payoff|` times that, and the logit map multiplies it by `λ`;
-the corrector's last correction is within twice that noise.
+Whether `failure` is a `PrecisionExhausted` that rounding explains. At the last accepted logits `z`, the residual
+`z - λ G(z)` rounds by up to `eps` times `|z| + |λ G| + ‖λ ∂G/∂z‖ |z|`. Newton's correction amplifies it by
+`‖(I - λ ∂G/∂z)⁻¹‖`, taken in the wider type; the corrector's last correction is within twice that.
 """
-function exhausted_by_rounding(payoffs::Tuple, failure::TraceFailure)::Bool
-    (; lambda, correction, logits) = failure.context
-    noise = lambda * maximum(maximum.(abs, payoffs)) * eps(eltype(logits)) * maximum(abs, logits)
-    return failure.cause == GameTracing.PrecisionExhausted && correction <= 2 * noise
+function exhausted_by_rounding(gains::NormalFormGains, failure::TraceFailure)::Bool
+    (; correction, logits, precision) = failure.context
+    point = evaluated(gains, logits, precision)
+    slope = widen.(point.logit_slope)
+    largest = maximum(abs, logits)
+    noise = eps(eltype(logits)) * (largest + maximum(abs, point.response) + opnorm(slope, Inf32) * largest)
+    return failure.cause == GameTracing.PrecisionExhausted && correction <= 2 * opnorm(inv(I - slope), Inf32) * noise
 end
 
 """A `keep_going` that stops a trace at the first accepted point at or past precision `precision`."""
@@ -55,8 +58,8 @@ const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = T
 end
 
 @testset "a Float32 trace that exhausts its precision does so at rounding noise, which Float64 passes" begin
-    gains_32 = NormalFormGains(first(far_opening_games(Xoshiro(ROUNDING_EXHAUSTED_SEED))))
     payoffs_32 = first(far_opening_games(Xoshiro(ROUNDING_EXHAUSTED_SEED)))
+    gains_32 = NormalFormGains(payoffs_32)
     failure = unwrap_error(
         trace_endpoint(
             LogitGame(gains_32, FAR_TARGET),
@@ -67,7 +70,7 @@ end
     )
     @test failure.cause == GameTracing.PrecisionExhausted
     @test failure.context.precision < 50
-    @test exhausted_by_rounding(payoffs_32, failure)
+    @test exhausted_by_rounding(gains_32, failure)
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
@@ -102,7 +105,7 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
                 )
             )
             (; precision, logits) = failure.context
-            @test precision >= 50 || exhausted_by_rounding(payoffs, failure)
+            @test precision >= 50 || exhausted_by_rounding(gains, failure)
             if precision < 50
                 @info "a far-target trace stopped short" failure.cause failure.context
             end

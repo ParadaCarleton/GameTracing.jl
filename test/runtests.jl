@@ -3,6 +3,7 @@ using Test
 
 include("games.jl")
 include("fixtures.jl")
+include("rounding.jl")
 include("arms.jl")
 include("gambit.jl")
 

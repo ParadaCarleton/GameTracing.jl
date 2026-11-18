@@ -107,6 +107,26 @@ end
     @test isfinite(unwrap_error(result).context.precision)
 end
 
+@testset "a reach failure that halves to an unresolved step exhausts the precision at the failed iterate and its step ($element)" for element in (Float32, widen(Float32))
+    start, predicted, far = element[1, -2, 1 // 2], element[1, -2, 3 // 4], element[3, -2, 3 // 4]
+    check = GameTracing.CorrectorReach(
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element),
+    )
+    payload = (; p = element(3 // 4), ds = element(1 // 4), residual = zero(element))
+    @test check((; payload..., x = predicted, z0 = (; u = start), step = 0); fromNewton = false)
+    # The predictor moved a logit by 0.5; this iterate moves one 1.5 further, past the reach of twice that.
+    @test !check((; payload..., x = far, step = 1); fromNewton = false)
+    @test check.stalled == far
+    @test check.state[].stalled_step == (; pin = payload.p, arclength = payload.ds)
+    # The halved step's predictor is the start: no smaller step resolves, so the reach failure confirms noise.
+    @test !check((; payload..., x = start, z0 = (; u = start), step = 0, ds = payload.ds / 2); fromNewton = false)
+    @test GameTracing.noise_confirmed(check)
+    @test GameTracing.exhausted_record(check) ==
+        (; precision = payload.p, correction = element(3 // 2), stalled_iterate = far, stalled_pin = payload.p, stalled_arclength = payload.ds)
+    # Only PALC's corrector stalls on a step; a plain Newton iterate has none to record.
+    @test_throws ArgumentError GameTracing.record_stall!(check, (; x = far, step = 1, residual = zero(element)))
+end
+
 @testset "exceptions BifurcationKit and LAPACK throw are told apart from a caller's" begin
     @test GameTracing.uncorrected_start("Stopping continuation.")
     @test GameTracing.uncorrected_start(

@@ -214,7 +214,7 @@ function engine_points(
         return Err(unwrap_error(result))
     end
     if !settled
-        return Err(TraceFailure(NoConvergence, (; context..., maximum_precision, reason = :maximum_precision)))
+        return Err(TraceFailure(NoConvergence, failure_context(context, (; maximum_precision, reason = :maximum_precision))))
     end
     return Ok((; recorder.precisions, recorder.logits))
 end

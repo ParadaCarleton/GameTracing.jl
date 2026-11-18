@@ -92,6 +92,27 @@ end
     end
 end
 
+@testset "M v keeps a common move against an extinct reference within its own size, against BigFloat ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    # Players of 3 and 2 strategies: a block of at most two entries sums exactly in any order.
+    ranges = (1:2, 3:3)
+    for shift in element[10, 30, 60], _ in 1:10
+        point = [shift .+ randn(rng, element, 3); (1 + rand(rng, element)) / 2]
+        state_weight, palc_state_weight = rand(rng, element), (1 + rand(rng, element)) / 2
+        metric = FisherMetric(ranges, state_weight, TargetPrecisionTerm, element(10), palc_state_weight)
+        exact_metric = FisherMetric(ranges, big(state_weight), TargetPrecisionTerm, big(element(10)), big(palc_state_weight))
+        frozen, exact_frozen = PathFollowing.frozen_metric(metric, point), PathFollowing.frozen_metric(exact_metric, big.(point))
+        common, other = element[1, 1, 0, 0], randn(rng, element, 4)
+        exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
+        applied = PathFollowing.metric_apply!(similar(other), frozen, other)
+        # Rounded entries summed apart would leave `eps` of each entry: up to 1e6 times the product at shift 30.
+        @test abs(dot(common, applied) - exact) <= (1 + 64 * eps(element)) * abs(exact)
+        reversed = PathFollowing.metric_apply!(similar(common), frozen, common)
+        @test abs(dot(other, reversed) - exact) <= 64 * eps(element) * (abs(exact) + dot(abs.(other), abs.(reversed)))
+        @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
+    end
+end
+
 @testset "player_kl is each player's categorical KL, zero at equal logits, finite where probabilities round ($element)" for element in (Float32, widen(Float32))
     rng = fresh_rng()
     ranges = (1:1, 2:3, 4:6)

@@ -210,7 +210,40 @@ function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, lef
     return (state_weight * total + precision_dot_weight(frozen) * last(left) * last(right)) / palc_state_weight
 end
 
-# `M v = (state_weight Jᵀ G J v + (c - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, so `(G J v)ᵢ = qᵢ dᵢ`, `d` as in `player_inner`.
+"""
+Write player `player`'s block of `M v`, `gap_scale` times `(G J v)ᵢ = qᵢ dᵢ` (`d` as in `player_inner`), into `out[range]`,
+and return its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ qᵢ dᵢ` is the reference's `π_ref (pivot + mean)`. The
+pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
+against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
+"""
+function player_apply!(
+        out::AbstractVector{E},
+        frozen::FrozenFisher{<:FisherMetric, E},
+        vector::AbstractVector{E},
+        player::Integer,
+        range::UnitRange{Int},
+        gap_scale::E,
+    )::E where {E <: Real}
+    pivot_index = frozen.pivots[player]
+    pivot = pivot_move(frozen, vector, player)
+    mean = centered_mean(frozen, vector, player, range, pivot)
+    information, pivot_gap = frozen.references[player] * (pivot + mean), strategy_gap(frozen.point, pivot_index)
+    pulled, others = pivot_gap * information, zero(E)
+    for index in range
+        if index != pivot_index
+            share = frozen.probabilities[index] * ((logit_move(frozen, vector, index) - pivot) - mean)
+            out[index] = gap_scale * share
+            others += out[index]
+            pulled += (frozen.point[index] - pivot_gap) * share
+        end
+    end
+    if !iszero(pivot_index)
+        out[pivot_index] = gap_scale * information - others
+    end
+    return pulled
+end
+
+# `M v = (state_weight Jᵀ G J v + (c - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, one block per player (`player_apply!`).
 function PathFollowing.metric_apply!(
         out::AbstractVector{E},
         frozen::FrozenFisher{<:FisherMetric, E},
@@ -220,13 +253,7 @@ function PathFollowing.metric_apply!(
     gap_scale = state_weight * last(frozen.point) / palc_state_weight
     pulled = zero(E)
     for (player, range) in enumerate(frozen.metric.ranges)
-        pivot = pivot_move(frozen, vector, player)
-        mean = centered_mean(frozen, vector, player, range, pivot)
-        for index in range
-            information = frozen.probabilities[index] * ((logit_move(frozen, vector, index) - pivot) - mean)
-            out[index] = gap_scale * information
-            pulled += frozen.point[index] * information
-        end
+        pulled += player_apply!(out, frozen, vector, player, range, gap_scale)
     end
     out[end] = (state_weight * pulled + precision_dot_weight(frozen) * last(vector)) / palc_state_weight
     return out

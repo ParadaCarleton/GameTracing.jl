@@ -5,7 +5,12 @@ makedocs(;
     authors = "Carlos Parada",
     modules = [GameTracing],
     format = Documenter.HTML(canonical = "https://paradacarleton.github.io/GameTracing.jl/stable"),
-    pages = ["Home" => "index.md", "API" => "api.md"],
+    pages = [
+        "Home" => "index.md",
+        "API" => "api.md",
+        # One page per topic keeps each under Documenter's 200 KiB size_threshold.
+        "Internals" => ["internals/tracing.md", "internals/games.md", "internals/engines.md"],
+    ],
     warnonly = false,
 )
 

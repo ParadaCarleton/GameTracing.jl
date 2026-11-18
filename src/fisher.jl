@@ -80,7 +80,8 @@ end
 `FisherDistance` as an operator `M` on displacements `[Δw; Δλ]` at a point `[w; λ]`, the logits `z = λ w` of each
 player in its range of `ranges` (`logit_ranges`), at PALC state weight `θ = palc_state_weight`:
 
-`ΔxᵀMΔx = (state_weight Σₚ Δzₚᵀ Gₚ Δzₚ + (c(λ) - (1 - θ)) Δλ²) / θ`, with `Δz = λ Δw + w Δλ`.
+`ΔxᵀMΔx = (state_weight Σₚ Δzₚᵀ Gₚ Δzₚ + (c(λ) - (1 - θ)) Δλ²) / θ`, with `Δz = λ Δw + w Δλ`, up to the target
+(`precision_dot_weight` past it).
 
 `Gₚ = diag(qₚ) - qₚqₚᵀ` is the Fisher information of player `p`'s mixed strategy in its logits, `qₚ` the probabilities
 of its strategies past the reference: the Hessian of `log(1 + Σ exp zₚ)`. A player with one logit has `σ(z)σ(-z)`.
@@ -144,10 +145,16 @@ function precision_term_weight(precision_term::PrecisionTerm, precision::E, targ
     return inv(target_precision)^2
 end
 
-"""The weight of `Δλ²` in `frozen`'s dot, before PALC's `θ` divides it: `c(λ) - (1 - θ)` (`FisherMetric`)."""
+"""
+The weight of `Δλ²` in `frozen`'s dot, before PALC's `θ` divides it: `c(λ) - (1 - θ)` (`FisherMetric`). PALC's `θ`
+keeps `1 - θ` within half of `c(P)` (`palc_state_weight_under`), but past `P` the log term's `c(λ)` falls further.
+There PALC's share shrinks with it, to `(1 - θ) c(λ) / c(P)`, so the weight stays about `c(λ) / 2`, never negative.
+"""
 function precision_dot_weight(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
     (; precision_term, target_precision, palc_state_weight) = frozen.metric
-    return precision_term_weight(precision_term, last(frozen.point), target_precision) - (one(E) - palc_state_weight)
+    weight = precision_term_weight(precision_term, last(frozen.point), target_precision)
+    smallest = precision_term_weight(precision_term, target_precision, target_precision)
+    return weight - (one(E) - palc_state_weight) * min(one(E), weight / smallest)
 end
 
 """The logit move `Δzᵢ = λ Δwᵢ + wᵢ Δλ` of the displacement `vector = [Δw; Δλ]` at `frozen`'s point."""

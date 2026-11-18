@@ -66,10 +66,11 @@ end
         state_weight, target, palc_state_weight = rand(rng, element), 1 + 3 * rand(rng, element), (1 + rand(rng, element)) / 2
         metric = FisherMetric(ranges, state_weight, precision_term, target, palc_state_weight)
         frozen = PathFollowing.frozen_metric(metric, point)
-        precision_weight = precision_term == LogPrecisionTerm ? inv(1 + last(point))^2 : inv(target)^2
+        precision_weight, smallest = (precision_term == LogPrecisionTerm ? inv(1 + level)^2 : inv(target)^2 for level in (last(point), target))
         # PALC adds `(1 - θ) Δλ²` to `θ ⟨Δx, Δx⟩`, so `θ M + (1 - θ) e eᵀ` is the distance's operator.
         operator = fisher_operator(ranges, point, state_weight, precision_weight)
-        operator[end, end] -= 1 - palc_state_weight
+        # Past the target PALC's share shrinks with the log term (`precision_dot_weight`).
+        operator[end, end] -= (1 - palc_state_weight) * min(1, precision_weight / smallest)
         operator ./= palc_state_weight
         @test inner_matrix(frozen, element, 7) ≈ operator rtol = sqrt(eps(element))
         @test applied_matrix(frozen, element, 7) ≈ operator rtol = sqrt(eps(element))
@@ -173,4 +174,22 @@ end
     vector = element[1, -1, 2]
     @test palc_dot.apply!(copy(vector)) == PathFollowing.metric_apply!(similar(vector), collected, vector)
     @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
+end
+
+@testset "PALC's precision weight stays positive past the target; PathFollowing's is the log term's ($element)" for element in (Float32, widen(Float32))
+    for target in element[1 // 2, 10, 1000]
+        smallest = GameTracing.precision_term_weight(LogPrecisionTerm, target, target)
+        palc_state_weight = GameTracing.palc_state_weight_under(smallest)
+        palc, path = (FisherMetric((1:1,), one(element), LogPrecisionTerm, target, weight) for weight in (palc_state_weight, one(element)))
+        # Past `√2 (1 + P) - 1`, `c(λ) - (1 - θ)` would turn negative and PALC's dot indefinite.
+        for precision in element[0, target / 2, target, sqrt(element(2)) * (1 + target), 10 * target, 10^6 * target]
+            weight = GameTracing.precision_term_weight(LogPrecisionTerm, precision, target)
+            palc_weight = GameTracing.precision_dot_weight(PathFollowing.frozen_metric(palc, element[1, precision]))
+            @test palc_weight > 0
+            if precision <= target
+                @test palc_weight == weight - (1 - palc_state_weight)
+            end
+            @test GameTracing.precision_dot_weight(PathFollowing.frozen_metric(path, element[1, precision])) == weight
+        end
+    end
 end

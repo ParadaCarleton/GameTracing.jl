@@ -18,17 +18,22 @@ function far_opening_games(rng::AbstractRNG)::AbstractVector
 end
 
 """
-Whether `failure` is a `PrecisionExhausted` that rounding explains. At the last accepted logits `z`, the residual
-`z - λ G(z)` rounds by up to `eps` times `|z| + |λ G| + ‖λ ∂G/∂z‖ |z|`. Newton's correction amplifies it by
-`‖(I - λ ∂G/∂z)⁻¹‖`, taken in the wider type; the corrector's last correction is within twice that.
+Whether `failure` is a `PrecisionExhausted` that rounding explains, judged at the last accepted point `(z, λ)`; the
+failed iterate lies within one correction of it. The residual `z - λ G(z)` rounds by up to `eps` times
+`|z| + ‖λ ∂G/∂z‖ |z| + λ (terms + 2) max|payoff|`: the logits, their effect on `G`, and `G`'s sums of payoff terms,
+whose cancellation keeps the payoffs' scale. PALC's Newton step solves the bordered system with `λ` free, so the
+logit block of its inverse, in the wider type, amplifies that noise; the last correction is within twice that.
 """
 function exhausted_by_rounding(gains::NormalFormGains, failure::TraceFailure)::Bool
-    (; correction, logits, precision) = failure.context
+    (; correction, logits, precision, logit_tangent, tangent_precision) = failure.context
     point = evaluated(gains, logits, precision)
-    slope = widen.(point.logit_slope)
-    largest = maximum(abs, logits)
-    noise = eps(eltype(logits)) * (largest + maximum(abs, point.response) + opnorm(slope, Inf32) * largest)
-    return failure.cause == GameTracing.PrecisionExhausted && correction <= 2 * opnorm(inv(I - slope), Inf32) * noise
+    width = length(logits)
+    # Scaling the border row leaves the logit block of the inverse unchanged.
+    bordered = widen.([I - point.logit_slope -point.precision_slope; logit_tangent' tangent_precision])
+    amplification = opnorm(inv(bordered)[1:width, 1:width], Inf32)
+    largest, terms = maximum(abs, logits), length(first(gains.payoffs))
+    noise = eps(eltype(logits)) * (largest + opnorm(widen.(point.logit_slope), Inf32) * largest + precision * (terms + 2) * maximum(maximum.(abs, gains.payoffs)))
+    return failure.cause == GameTracing.PrecisionExhausted && correction <= 2 * amplification * noise
 end
 
 """A `keep_going` that stops a trace at the first accepted point at or past precision `precision`."""

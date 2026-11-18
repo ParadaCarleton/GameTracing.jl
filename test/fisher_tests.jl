@@ -27,7 +27,8 @@ end
 
 """
 `player_apply!`'s bound on the rounding of player `player`'s block sum of `applied = M vector`, in `applied`'s element
-type, from the exact frozen metric `exact`: `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))`.
+type, from the exact frozen metric `exact`: `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))`
+plus the underflow `(2n + 9) (1 + gap_scale) η`, `η` the smallest subnormal.
 """
 function block_sum_bound(
         exact::GameTracing.FrozenFisher{<:FisherMetric, BigFloat},
@@ -40,7 +41,9 @@ function block_sum_bound(
     largest_log = maximum(probability -> abs(log(probability)), [references[player]; probabilities[range]])
     gap_scale = metric.state_weight * last(point) / metric.palc_state_weight
     moves = sum(index -> probabilities[index] * (abs(last(point) * vector[index]) + abs(point[index] * last(vector))), range)
-    return eps(E) * ((length(range) + 1 + largest_log) * sum(entry -> abs(big(entry)), applied[range]) + gap_scale * references[player] * moves)
+    strategies = length(range) + 1
+    rounding = eps(E) * ((strategies + largest_log) * sum(entry -> abs(big(entry)), applied[range]) + gap_scale * references[player] * moves)
+    return rounding + (2 * strategies + 9) * (1 + gap_scale) * big(nextfloat(zero(E)))
 end
 
 """A one-logit pass with zero gain and no `logit_ranges`."""
@@ -136,11 +139,13 @@ end
         frozen, exact_frozen = PathFollowing.frozen_metric(metric, point), PathFollowing.frozen_metric(exact_metric, big.(point))
         for (player, range) in enumerate(ranges)
             common = [index in range ? one(element) : zero(element) for index in 1:7]
-            # A common move against an extinct reference has entries near its own sum, so the bound rejects a zero block.
+            # A common move against an extinct reference has entries near its own sum, and a differential move's sum
+            # outweighs its logit moves' rounding, so the bound rejects a zero block for both.
             for vector in (common, randn(rng, element, 7))
                 applied = PathFollowing.metric_apply!(similar(vector), frozen, vector)
                 exact = sum(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[range])
                 @test abs(sum(big.(applied[range])) - exact) <= block_sum_bound(exact_frozen, applied, vector, player, range)
+                @test abs(exact) > block_sum_bound(exact_frozen, zero(applied), vector, player, range)
             end
             other = randn(rng, element, 7)
             exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
@@ -158,6 +163,15 @@ end
     exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
     @test abs(sum(big.(applied[1:3])) - exact) <= block_sum_bound(exact_frozen, applied, other, 1, 1:3)
     @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
+    # A subnormal move: half of `Δw = η` rounds to 0, so the block sums to 0 against M's η / 4, which only the
+    # underflow term bounds.
+    point, tiny = element[0, 1], element[nextfloat(zero(element)), 0]
+    metric = FisherMetric((1:1,), one(element), TargetPrecisionTerm, one(element), one(element))
+    exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
+    applied = PathFollowing.metric_apply!(similar(tiny), PathFollowing.frozen_metric(metric, point), tiny)
+    exact = PathFollowing.metric_apply!(similar(big.(tiny)), exact_frozen, big.(tiny))[1]
+    @test exact ≈ big(nextfloat(zero(element))) / 4 rtol = eps(element)
+    @test abs(big(applied[1]) - exact) <= block_sum_bound(exact_frozen, applied, tiny, 1, 1:1)
 end
 
 @testset "player_kl is each player's categorical KL, zero at equal logits, finite where probabilities round ($element)" for element in (Float32, widen(Float32))

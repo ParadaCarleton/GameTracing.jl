@@ -63,8 +63,8 @@ end
 """
 `KL(π_from ‖ π_to)` of one player's mixed strategy, its logits `z = λ w[range]` at two points `[w; λ]`: the sum of each
 strategy's `kl_share`, its reference's included, from log probabilities centered on each point's pivot (`log_normalizer`).
-It keeps its relative accuracy at large common logits and stays finite where a probability rounds to 0. It is infinite
-only where a logit at `to` lies past `-floatmax` and that strategy's probability at `from` does not round to 0.
+It keeps its relative accuracy at large common logits and stays finite where a probability rounds to 0.
+It is finite while every log probability at `to`, a centered logit `λ (wᵢ - w_pivot)` less the normalizer, exceeds `-floatmax`.
 """
 function player_kl(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)
@@ -182,7 +182,8 @@ end
 The root `√(ω(λ) - (1 - θ))` of the weight of `Δλ²` in `frozen`'s dot, before PALC's `θ` divides it (`FisherMetric`).
 While `c(λ) ≥ c(P)` the weight is `c(λ) - (1 - θ)`. Past `P` PALC's share shrinks with the log term, to
 `(1 - θ) c(λ) / c(P)`. Both are `c(λ) (1 - (1 - θ) / max(c(λ), c(P)))`, whose root `√c(λ) √(1 - …)` is positive for
-every finite `λ`, as `1 - θ < c(P)`. The products apply the root to each side, so only a product too small to hold underflows.
+every finite `λ`, as `1 - θ < c(P)`. The products apply the root to each side, `(root Δλ) (root Δλ')`.
+The dot's precision term keeps its relative accuracy while each side's `root Δλ` exceeds `floatmin`, and underflows below.
 """
 function precision_dot_root(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
     (; precision_term, target_precision, palc_state_weight) = frozen.metric
@@ -258,9 +259,12 @@ and return its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ
 pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
 against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
 
-The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))` of `M`'s, for `n`
-strategies and `L` the largest `|log π|` among them. The first term is the entries' rounding and the second the logit
-moves'. Entries of size `s` hold no nonzero sum under about `eps s`, so a large differential move can sum to zero.
+The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|)) + (2n + 9) (1 + gap_scale) η`
+of `M`'s, for `n` strategies, `L` the largest `|log π|` among them and `η` the smallest subnormal. The first term is the
+entries' rounding, the second the logit moves' and the third their underflow. Under the standard model
+`fl(x ∘ y) = (x ∘ y) (1 + δ) + η`, each product adds at most `η`; the block's products add at most `2n + 9` of them,
+each times `gap_scale` or one. The bound holds for a normal `gap_scale`. Entries of size `s` hold no nonzero sum under
+about `eps s`, so a large differential move can sum to zero.
 """
 function player_apply!(
         out::AbstractVector{E},

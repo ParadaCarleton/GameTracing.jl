@@ -136,8 +136,8 @@ end
     end
 end
 
-@testset "both engines trace the folding 3x3 game and the exhausting 2x2x2 game to maxregret 1e-4 ($element, $engine)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
-    for payoffs in (FOLDING_3X3_GAME, EXHAUSTING_2X2X2_GAME)
+@testset "both engines trace the folding 3x3 game and the folding 2x2x2 game to maxregret 1e-4 ($element, $engine)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
+    for payoffs in (FOLDING_3X3_GAME, FOLDING_2X2X2_GAME)
         gains = NormalFormGains(map(table -> element.(table), payoffs))
         result = logit_solve_branch(gains; settings, maxregret = 1.0f-4)
         @test !is_error(result)

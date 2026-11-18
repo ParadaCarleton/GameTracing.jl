@@ -58,7 +58,7 @@ struct ShapedTable{R <: AbstractRNG, S <: Tuple}
     shape::S
 end
 
-(table::ShapedTable)(::Integer)::Array = 3 .* randn(table.rng, table.shape)
+(table::ShapedTable)(::Integer)::AbstractArray = 3 .* randn(table.rng, table.shape)
 
 """A random game from seed `seed`, its strategy counts from `CATEGORICAL_SHAPES`, to precision 10."""
 function random_categorical_case(seed::Integer)::BenchmarkCase
@@ -144,11 +144,11 @@ function fixed_cases()::AbstractVector{BenchmarkCase}
     ]
 end
 
-"""The `NormalFormGains` games: the folding 3x3 and exhausting 2x2x2 games, and random games of more strategies."""
+"""The `NormalFormGains` games: the folding 3x3 and 2x2x2 games, and random games of more strategies."""
 function categorical_cases()::AbstractVector{BenchmarkCase}
     return BenchmarkCase[
         categorical_case("folding 3x3", FOLDING_3X3_GAME, 30),
-        categorical_case("exhausting 2x2x2", EXHAUSTING_2X2X2_GAME, 30),
+        categorical_case("folding 2x2x2", FOLDING_2X2X2_GAME, 30),
         map(random_categorical_case, 1:12)...,
     ]
 end
@@ -196,8 +196,8 @@ function (trace_run::TraceRun{C, S})()::GameTracing.TraceResult{Float32} where {
 end
 
 """The gains PathFollowing solves for `pass`: a two-action `NormalFormPass` as `NormalFormGains` of its tables."""
-path_gains(pass::NormalFormPass)::NormalFormGains = NormalFormGains(pass.payoffs)
-path_gains(gains::NormalFormGains)::NormalFormGains = gains
+(path_gains(pass::NormalFormPass{N, A})::NormalFormGains{N, A}) where {N, A} = NormalFormGains(pass.payoffs)
+(path_gains(gains::G)::G) where {G <: NormalFormGains} = gains
 
 function (trace_run::TraceRun{C, S})()::GameTracing.BranchResult{Float32} where {C <: Case, S <: PathFollowingSettings}
     (; case, settings) = trace_run
@@ -301,9 +301,9 @@ function profile_gap(left::AbstractVector, right::AbstractVector{E})::E where {E
 end
 
 """The summary group of `case`: `"swap"` for a map swap, `"categ"` for a `NormalFormGains` game, `"fixed"` for the rest."""
-case_group(::SwapCase)::String = "swap"
-case_group(::Case)::String = "fixed"
-case_group(::Case{<:NormalFormGains})::String = "categ"
+case_group(::SwapCase)::AbstractString = "swap"
+case_group(::Case)::AbstractString = "fixed"
+case_group(::Case{<:NormalFormGains})::AbstractString = "categ"
 
 """One variant's `outcome` on game `case`: its reference kind, whether the game is a pitchfork, its group (`case_group`) and the gap to that reference."""
 struct Row
@@ -584,7 +584,7 @@ function scope_cases(scope::AbstractString)::AbstractVector{BenchmarkCase}
 end
 
 """The variant labels with rows in summary group `group`: PathFollowing's and LogitNash's run on no swap, LogitNash's on no categorical game."""
-function group_labels(group::AbstractString, variants::V, path_variants::P)::Vector{String} where {V <: AbstractVector, P <: AbstractVector}
+function group_labels(group::AbstractString, variants::V, path_variants::P)::AbstractVector{String} where {V <: AbstractVector, P <: AbstractVector}
     path_labels = ifelse(group == "swap", String[], first.(path_variants))
     return [first.(variants); path_labels; ifelse(group == "fixed", ["logitnash"], String[])]
 end

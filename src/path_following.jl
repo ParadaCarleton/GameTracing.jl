@@ -366,7 +366,7 @@ end
 
 """The context of PathFollowing's start `failure` over `width` logits: `context` and the flat start."""
 function start_context(failure::PathFollowing.StepFailure{E}, width::Integer, context::NamedTuple)::NamedTuple where {E <: Real}
-    return (; context..., reason = Symbol(failure.cause), precision = zero(E), logits = zeros(E, width), steps = 0)
+    return failure_context(context, (; reason = Symbol(failure.cause), precision = zero(E), logits = zeros(E, width), steps = 0))
 end
 
 """
@@ -381,7 +381,7 @@ function stopped_context(
         details::NamedTuple,
     )::NamedTuple where {E <: Real}
     @debug "trace stopped" _group = :trace reason
-    return (; context..., reason, precision = last(point), logits = collect(logits_at(point)), steps, details...)
+    return failure_context(context, (; reason, precision = last(point), logits = collect(logits_at(point)), steps, details...))
 end
 
 """

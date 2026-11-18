@@ -13,11 +13,26 @@ A trace that did not reach its target: `cause` names why and `context` carries t
 and precision. A `trace_endpoint` trace that left its start also carries that point's payoff `gaps` `w`, the tangent
 there in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps (`gap_tangent`, `tangent_precision`), and the
 step it held; a non-finite start has none of these. A `PrecisionExhausted` failure also carries the Newton iterate
-`stalled_iterate = [w; λ]` whose `correction` in logits stalled, at precision `lambda`.
+`stalled_iterate = [w; λ]` whose `correction` in logits stalled, at precision `lambda`. The caller's own `context`
+fields sit beside these (`failure_context`).
 """
 struct TraceFailure{C <: NamedTuple}
     cause::TraceCause
     context::C
+end
+
+"""
+    failure_context(context, fields)
+
+A `TraceFailure` context: the caller's `context` beside the trace's own `fields`. A caller field named as a trace field
+throws, so neither hides the other.
+"""
+function failure_context(context::NamedTuple, fields::NamedTuple)::NamedTuple
+    shared = intersect(keys(context), keys(fields))
+    if !isempty(shared)
+        throw(ArgumentError("the caller's context names the trace's own fields $(join(shared, ", "))"))
+    end
+    return merge(context, fields)
 end
 
 """

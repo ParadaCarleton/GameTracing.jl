@@ -199,6 +199,11 @@ end
     end
 end
 
+"""The context of the failure `reached_state` returns for `progress` and `outcome` on `game`, with the caller's `context`."""
+function failure_fields(progress::GameTracing.TraceProgress, outcome::NamedTuple, game::LogitGame, context::NamedTuple)::NamedTuple
+    return unwrap_error(GameTracing.reached_state(progress, outcome, game, REDRAW_SETTINGS, context)).context
+end
+
 @testset "a corrector at rounding noise fails PrecisionExhausted at its precision, before the target" begin
     game = LogitGame(GAME, TARGET_PRECISION)
     traced = unwrap(trace_endpoint(game, WIDTH, REDRAW_SETTINGS))
@@ -212,6 +217,11 @@ end
     @test failure.context.correction == exhausted.correction
     @test failure.context.stalled_iterate == exhausted.stalled_iterate
     @test failure.context.gaps == progress.gaps
+    # A caller's context field named as a trace field throws, whether the stall or the progress writes it.
+    @test failure_fields(progress, outcome, game, (; label = :stall)).label == :stall
+    for clashing in ((; lambda = 0.0f0), (; stalled_iterate = Float32[0]), (; gaps = Float32[0]))
+        @test_throws ArgumentError failure_fields(progress, outcome, game, clashing)
+    end
     @test failure.context.logit_accuracy == outcome.logit_accuracy
     @test failure.context.accepted_step == outcome.accepted_step
     unaccepted = GameTracing.TraceProgress(copy(traced.logits), half, 0, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false, false, TARGET_PRECISION)

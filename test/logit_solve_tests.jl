@@ -205,6 +205,9 @@ end
     @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.78f0))))
     @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = LogitDistance{element}(; target_correction = 100))))
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
+    # A reach finite in a wider type that rounds to Inf would switch the refusal off.
+    @test_throws ArgumentError PathFollowingSettings{element}(; reach = floatmax(widen(element)))
+    @test PathFollowingSettings{element}(; reach = Inf32).reach == Inf32
     # A distance in another element type is refused.
     @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
     # The error estimate's safety converts to the element type.

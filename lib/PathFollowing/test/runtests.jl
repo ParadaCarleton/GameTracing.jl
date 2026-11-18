@@ -610,6 +610,10 @@ end
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), refusal_factor = 0)
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = 0)
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = NaN32)
+        # A reach positive and finite in a wider type can round to zero, which refuses every move, or to Inf in `E`.
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = nextfloat(zero(widen(E))))
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = floatmax(widen(E)))
+        @test StepControl(; targets..., max_step_growth = one(E), max_step = one(E), reach = Inf32).reach == Inf32
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1)
         # A shrink an eighth of eps under 1 rounds to 1 in `E`, and each retry repeated its step.
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1 - big(eps(E)) / 8)

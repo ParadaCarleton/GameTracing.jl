@@ -20,6 +20,8 @@ export Metric, MetricDistance, correction_bound, frozen_metric, freeze_metric!, 
 export Tracer, AcceptedStep, StepFailure, FailureCause, Refusal, Bound
 export Unresolved, TooManyRefusals, NotFiniteStart, SingularStart
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor
+# For wrappers that convert their own `reach` before they build a `StepControl`.
+public reach_in
 
 include("metric.jl")
 include("settings.jl")

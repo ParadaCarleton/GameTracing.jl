@@ -129,7 +129,7 @@ function PathFollowingSettings{E}(;
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
         E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
-        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), E(reach), orientation_check,
+        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
         Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
 end

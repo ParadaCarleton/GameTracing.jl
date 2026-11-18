@@ -115,7 +115,8 @@ A converged point farther than `reach` predictor lengths from its predictor, in 
 (`FarFromPredictor`) and retried at `shrink` times the length. Such a corrector left the curve the predictor followed,
 and its point can lie on another branch. The start's own error moves the corrector too, so the reach adds the
 correction that settled the start. On 300 unfolded pitchforks per scale (battle of the sexes plus `0.1 randn`
-payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3 that jumped moved 4.2 to 5.09.
+payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3 that jumped moved 4.2 to 5.09. `reach = Inf`
+switches the refusal off; any other `reach` must be positive and finite in the step control's type.
 """
 struct StepControl{E <: Real}
     target_contraction::Union{Nothing, E}
@@ -140,7 +141,6 @@ function StepControl(;
     )::StepControl{E} where {E <: Real}
     max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
     refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
-    reach > 0 || throw(ArgumentError("reach must be positive; got $reach"))
     # Checked in `E`, where a shrink near 1 rounds to 1 and a retry would repeat its step.
     zero(E) < E(shrink) < one(E) || throw(ArgumentError("shrink must lie in (0, 1) in $E; got $shrink"))
     max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
@@ -148,8 +148,18 @@ function StepControl(;
     isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
     return StepControl{E}(
         optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn), max_step_growth,
-        E(max_step), E(refusal_factor), E(shrink), E(reach),
+        E(max_step), E(refusal_factor), E(shrink), reach_in(E, reach),
     )
+end
+
+"""
+`reach` in `E`. It must stay positive and finite there: a tiny reach rounds to zero, which refuses every move, and a
+huge one rounds to Inf. Only an explicit Inf switches the refusal off.
+"""
+function reach_in(::Type{E}, reach::Real)::E where {E <: Real}
+    converted = E(reach)
+    zero(E) < converted && (isfinite(converted) || isinf(reach)) || throw(ArgumentError("reach must be positive and finite in $E, or Inf; got $reach"))
+    return converted
 end
 
 """`limit` in `E`, or `nothing`; a set limit must be positive."""

@@ -1,5 +1,5 @@
 using BifurcationKit: BifurcationKit
-using ErrorTypes: is_error, unwrap, unwrap_error
+using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
 
 """
@@ -11,9 +11,59 @@ function logitnash_equilibrium(payoffs::Tuple, precision::Real)::NamedTuple
     return (; first_choices = Float32[first(strategy) for strategy in profile], precision = Float32(status.lambda))
 end
 
-"""GameTracing's `TraceResult` for `payoffs` at `precision`."""
-function traced_result(payoffs::Tuple, precision::E, settings::BifurcationKitSettings{E})::TraceResult{E} where {E <: Real}
-    return trace_endpoint(LogitGame(NormalFormPass(map(table -> E.(table), payoffs)), precision), length(payoffs), settings)
+# A trace's endpoint in `NormalFormPass`'s logits, each player's log odds of its first action, and its logit accuracy.
+const Endpoint{E} = @NamedTuple{logits::Vector{E}, logit_accuracy::E}
+const EndpointResult{E} = Result{Endpoint{E}, TraceFailure}
+
+"""BifurcationKit's endpoint for `payoffs` at `precision` (`trace_endpoint` on `NormalFormPass`), its accuracy its own."""
+function traced_result(payoffs::Tuple, precision::E, settings::BifurcationKitSettings{E})::EndpointResult{E} where {E <: Real}
+    result = trace_endpoint(LogitGame(NormalFormPass(map(table -> E.(table), payoffs)), precision), length(payoffs), settings)
+    if is_error(result)
+        return Err(unwrap_error(result))
+    end
+    (; logits, logit_accuracy) = unwrap(result)
+    return Ok((; logits, logit_accuracy))
+end
+
+"""
+PathFollowing's endpoint for `payoffs` at `precision`: `logit_solve_lambda` on `NormalFormGains` lands there. Its logit
+is the second action's log odds, so the sign flips. PathFollowing reports no accuracy, so the accuracy is the Float64
+Newton correction at the endpoint (`newton_correction`).
+"""
+function traced_result(payoffs::Tuple, precision::E, settings::PathFollowingSettings{E})::EndpointResult{E} where {E <: Real}
+    result = logit_solve_lambda(NormalFormGains(map(table -> E.(table), payoffs)), precision; settings)
+    if is_error(result)
+        return Err(unwrap_error(result))
+    end
+    logits = -only(unwrap(result)).logits
+    return Ok((; logits, logit_accuracy = E(newton_correction(NormalFormPass(map(float, payoffs)), logits, precision))))
+end
+
+"""BifurcationKit's settings at each tangent, by name: the variants every trace test runs."""
+function tangent_settings()::Vector{Pair{String, EngineSettings{Float32}}}
+    return ["BifurcationKit Bordered" => BifurcationKitSettings{Float32}(; tangent = BifurcationKit.Bordered()), "BifurcationKit Secant" => BifurcationKitSettings{Float32}(; tangent = BifurcationKit.Secant())]
+end
+
+"""PathFollowing's default settings in Float32 and Float64, by name: the engine every trace test runs beside BifurcationKit."""
+function path_settings()::Vector{Pair{String, EngineSettings}}
+    return ["PathFollowing Float32" => PathFollowingSettings{Float32}(), "PathFollowing Float64" => PathFollowingSettings{widen(Float32)}()]
+end
+
+"""BifurcationKit's default settings in Float32 and PathFollowing's (`path_settings`), by name."""
+function default_settings()::Vector{Pair{String, EngineSettings}}
+    return ["BifurcationKit" => BifurcationKitSettings{Float32}(); path_settings()]
+end
+
+"""
+Whether a `TraceStuck` `failure` of `settings`' engine stalled where it says: BifurcationKit at a point that did not move
+or a step it could not resolve, PathFollowing at an unresolved step, its refusals or a landing.
+"""
+function declared_stall(failure::TraceFailure, ::BifurcationKitSettings)::Bool
+    return failure.context.unmoved || failure.context.unresolved
+end
+
+function declared_stall(failure::TraceFailure, ::PathFollowingSettings)::Bool
+    return failure.context.reason in (:unresolved_step, :refusals, :landing)
 end
 
 """First-action probabilities of `logits`."""
@@ -29,6 +79,11 @@ function settled_endpoint(payoffs::Tuple, logits::AbstractVector{E}, precision::
     return settled_logits(NormalFormPass(map(table -> E.(table), payoffs)), logits, precision, settings)
 end
 
+"""`settled_strategies` for the two-action payoff tables `payoffs`, on `NormalFormGains`' logits, the negated `logits`."""
+function settled_endpoint(payoffs::Tuple, logits::AbstractVector{E}, precision::Real, settings::PathFollowingSettings{E})::Bool where {E <: Real}
+    return settled_strategies(NormalFormGains(map(table -> E.(table), payoffs)), -logits, precision, settings.distance)
+end
+
 """
     cross_checked!(payoffs, precision, settings)
 
@@ -40,9 +95,9 @@ reach the target skips the comparison; every endpoint must also solve the map to
 Gambit's branch folds before the target (`gambit_folds_before`), Gambit's answer may be a later crossing, so the Gambit
 comparisons are skipped and the reference decides. Returns whether they were skipped.
 """
-function cross_checked!(payoffs::Tuple, precision::Real, settings::BifurcationKitSettings{Float32})::Bool
+function cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSettings{E})::Bool where {E <: Real}
     cross = logitnash_equilibrium(payoffs, precision)
-    result = traced_result(payoffs, cross.precision, settings)
+    result = traced_result(payoffs, E(cross.precision), settings)
     @test !is_error(result)
     if is_error(result)
         @info "trace failed" payoffs unwrap_error(result).cause
@@ -122,41 +177,43 @@ end
     end
 end
 
-@testset "the trace reaches the reference equilibrium on LogitNash's games" begin
-    for (name, payoffs) in pairs(LOGITNASH_GAMES), precision in (1, 4), tangent in (BifurcationKit.Bordered(), BifurcationKit.Secant())
+@testset "the trace reaches the reference equilibrium on LogitNash's games ($engine)" for (engine, settings) in [tangent_settings(); path_settings()]
+    for (name, payoffs) in pairs(LOGITNASH_GAMES), precision in (1, 4)
         if !(name in PITCHFORK_GAMES)
-            cross_checked!(payoffs, precision, BifurcationKitSettings{Float32}(; tangent))
+            cross_checked!(payoffs, precision, settings)
         end
     end
 end
 
-@testset "past an exact pitchfork the trace ends at an equilibrium or fails as Singular, PrecisionExhausted or a stall" begin
-    for name in PITCHFORK_GAMES, tangent in (BifurcationKit.Bordered(), BifurcationKit.Secant())
-        pass = NormalFormPass(map(table -> Float32.(table), LOGITNASH_GAMES[name]))
-        result = trace_endpoint(LogitGame(pass, 4.0f0), length(pass.payoffs), BifurcationKitSettings{Float32}(; tangent))
+@testset "past an exact pitchfork the trace ends at an equilibrium or fails as Singular, PrecisionExhausted or a stall ($engine)" for (engine, settings) in [tangent_settings(); path_settings()]
+    element = GameTracing.element_type(settings)
+    for name in PITCHFORK_GAMES
+        pass = NormalFormPass(map(table -> element.(table), LOGITNASH_GAMES[name]))
+        result = traced_result(LOGITNASH_GAMES[name], element(4), settings)
         # The cause depends on whether rounding breaks the symmetry: an exact branch point factors singular, while one
         # that rounding unfolds by about eps (battle_of_the_sexes, rcond ≥ 1e-5) is near-singular and exhausts. A step
         # the turn test refuses at the branch point halves until its predictor cannot move the point (`unresolved`), or an
-        # unmoved point stops the trace (run 41375663203).
+        # unmoved point stops the trace (run 41375663203). PathFollowing declares its stalls as reasons (`declared_stall`).
         if is_error(result)
             failure = unwrap_error(result)
             @test failure.cause in (GameTracing.Singular, GameTracing.PrecisionExhausted) ||
-                (failure.cause == GameTracing.TraceStuck && (failure.context.unmoved || failure.context.unresolved))
+                (failure.cause == GameTracing.TraceStuck && declared_stall(failure, settings))
             # A trace that broke at its start never reached the pitchfork.
             @test failure.context.precision > 0
         else
-            @test residual_norm(pass, unwrap(result).logits, 4.0f0) < 1.0f-4
+            @test residual_norm(pass, unwrap(result).logits, element(4)) < 1.0f-4
         end
     end
 end
 
-@testset "a pitchfork unfolded by a payoff perturbation: the bordered trace turns with the principal branch" begin
+@testset "a pitchfork unfolded by a payoff perturbation: the trace turns with the principal branch ($engine)" for (engine, settings) in default_settings()
     # Measured over 40 draws per scale against the arclength reference: the secant tangent followed the principal branch
     # 0/40 at 1e-4, 3/40 at 1e-3, 34/40 at 1e-2 and 39/40 at 1e-1; the bordered tangent 40/40 at every scale.
+    # PathFollowing followed it 40/40 at every scale, in Float32 and Float64 alike, with no failed trace.
     rng = fresh_rng()
     for scale in inv.(float.((10^4, 10^3, 10^2, 10))), _ in 1:3
         payoffs = map(table -> table .+ scale .* randn(rng, 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
-        cross_checked!(payoffs, 4, BifurcationKitSettings{Float32}())
+        cross_checked!(payoffs, 4, settings)
     end
 end
 
@@ -181,12 +238,16 @@ end
     @test agreeing(first_choices(double_logits), oracle.first_choices)
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
     # Every Float32 arm follows the double-precision branch within both traces' accuracy.
-    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants(ARM_WEIGHTS)]
-        result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
+    # PathFollowing follows it too, within its own accuracy and the double trace's.
+    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants(ARM_WEIGHTS); path_settings()]
+        result = traced_result(UNFOLDED_PITCHFORK_GAME, GameTracing.element_type(settings)(precision), settings)
         @test !is_error(result)
         if !is_error(result)
             (; logits, logit_accuracy) = unwrap(result)
-            @test logit_accuracy <= settle_bound(settings.corrector, logits)
+            # PathFollowing's accuracy is the Newton correction at its endpoint, which no corrector bound limits.
+            if settings isa BifurcationKitSettings
+                @test logit_accuracy <= settle_bound(settings.corrector, logits)
+            end
             @test agreeing(first_choices(logits), oracle.first_choices)
             @test agreeing(first_choices(logits), first_choices(double_logits))
             @test maximum(abs, logits .- double_logits) <= logit_accuracy + doubled.logit_accuracy
@@ -203,11 +264,10 @@ end
     end
 end
 
-@testset "a step past the target precision lands where the branch first reaches it" begin
+@testset "a step past the target precision lands where the branch first reaches it ($engine)" for (engine, settings) in default_settings()
     # Traced at the requested precisions themselves, both short of the fold, so the reference must reach them.
-    settings = BifurcationKitSettings{Float32}()
     for precision in (3.0f0, 3.1f0)
-        result = traced_result(OVERSHOT_GAME, precision, settings)
+        result = traced_result(OVERSHOT_GAME, GameTracing.element_type(settings)(precision), settings)
         @test !is_error(result)
         reference = branch_reference(NormalFormPass(map(float, OVERSHOT_GAME)), length(OVERSHOT_GAME), precision)
         @test reference.reached
@@ -217,22 +277,22 @@ end
     end
 end
 
-@testset "where Gambit's default steps leave the branch, the trace meets Gambit at fine steps" begin
+@testset "where Gambit's default steps leave the branch, the trace meets Gambit at fine steps ($engine)" for (engine, settings) in default_settings()
     # The oracle is Gambit at a 1e-3 first step that never grows; its default steps end elsewhere (`GAMBIT_LEAVES_GAME`).
     oracle = gambit_branch(GAMBIT_LEAVES_GAME, 3.0f0; first_step = 1 // 1000, max_accel = 1)
-    traced = traced_result(GAMBIT_LEAVES_GAME, oracle.precision, BifurcationKitSettings{Float32}())
+    traced = traced_result(GAMBIT_LEAVES_GAME, GameTracing.element_type(settings)(oracle.precision), settings)
     @test !is_error(traced)
     @test agreeing(first_choices(unwrap(traced).logits), oracle.first_choices)
-    @test settled_endpoint(GAMBIT_LEAVES_GAME, unwrap(traced).logits, oracle.precision, BifurcationKitSettings{Float32}())
+    @test settled_endpoint(GAMBIT_LEAVES_GAME, unwrap(traced).logits, oracle.precision, settings)
 end
 
-@testset "random games with two actions each: the trace follows the principal branch" begin
+@testset "random games with two actions each: the trace follows the principal branch ($engine)" for (engine, settings) in default_settings()
     rng = fresh_rng()
     skipped = 0
     for _ in 1:20
         players = rand(rng, 2:4)
         payoffs = ntuple(_ -> 3 .* randn(rng, ntuple(_ -> 2, players)), players)
-        skipped += cross_checked!(payoffs, 3, BifurcationKitSettings{Float32}())
+        skipped += cross_checked!(payoffs, 3, settings)
     end
     @info "Gambit comparisons skipped where its branch folds before the target" skipped
 end
@@ -243,12 +303,12 @@ end
     @test !folds_before(Float32[0, 1, 3.5f0, 3.2f0, 4], 3)
 end
 
-@testset "on a game whose principal branch folds just past the target, the trace meets the reference" begin
+@testset "on a game whose principal branch folds just past the target, the trace meets the reference ($engine)" for (engine, settings) in default_settings()
     precision = logitnash_equilibrium(FOLDED_GAMBIT_GAME, 3).precision
     reference = branch_reference(NormalFormPass(map(float, FOLDED_GAMBIT_GAME)), length(FOLDED_GAMBIT_GAME), precision)
     @test reference.reached
-    traced = first_choices(unwrap(traced_result(FOLDED_GAMBIT_GAME, precision, BifurcationKitSettings{Float32}())).logits)
+    traced = first_choices(unwrap(traced_result(FOLDED_GAMBIT_GAME, GameTracing.element_type(settings)(precision), settings)).logits)
     @test agreeing(traced, reference.first_choices)
     # Whether Gambit's comparison runs here depends on pygambit's step sizes, so only the checks it runs are asserted.
-    cross_checked!(FOLDED_GAMBIT_GAME, 3, BifurcationKitSettings{Float32}())
+    cross_checked!(FOLDED_GAMBIT_GAME, 3, settings)
 end

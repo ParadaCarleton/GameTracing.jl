@@ -11,8 +11,9 @@ const MIXED_STALL_SEED = 0x233ce38d667063a1
 const ZERO_STEP_SEED = 0x4e6997513e7cba6d
 # The seed whose (3, 3) game folds at λ ≈ 18.02, where the per-logit Bernoulli weights exhausted Float32.
 const FAR_FOLD_SEED = 0xe291aba5864127e0
-# Game 1 has logits near -27 at λ ≈ 9: Float32 rounding exceeds `logit_tolerance`, so only double precision reaches 50.
-const ROUNDING_EXHAUSTED_SEED = 0x4c03385ca80ab207
+# Game 1's Float32 trace exhausts its precision at λ ≈ 26.1 by rounding, 2e-6 from Gambit; Float64 reaches 50. Its last
+# correction is 0.135 of the rounding bound, so a tenfold one is no noise.
+const ROUNDING_EXHAUSTED_SEED = 0x3ff2026d53896c44
 
 """Normal-form games with strategy counts `(3, 3)` and `(2, 2, 2)`, payoffs `3 randn`, drawn from `rng` in that order."""
 function far_opening_games(rng::AbstractRNG)::AbstractVector
@@ -102,7 +103,12 @@ end
 (stop::StopAtPrecision)(::AbstractVector, precision::Real)::Bool = precision < stop.precision
 
 const FAR_TARGET = 1.0f6
-const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = TraceGeometry{Float32}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
+"""`BifurcationKitSettings` in `E` that step in the Fisher distance with the log precision term."""
+function log_precision_settings(::Type{E})::BifurcationKitSettings{E} where {E <: Real}
+    return BifurcationKitSettings{E}(; step_metric = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
+end
+
+const LOG_PRECISION_SETTINGS = log_precision_settings(Float32)
 
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
     for payoffs in (far_opening_games(Xoshiro(FAR_OPENING_SEED))..., far_opening_games(fresh_rng())...)
@@ -170,7 +176,7 @@ end
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
-    settings_wide = BifurcationKitSettings{wide}(; step_metric = TraceGeometry{wide}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
+    settings_wide = log_precision_settings(wide)
     reached = unwrap_error(
         trace_endpoint(
             LogitGame(gains_wide, wide(FAR_TARGET)),
@@ -193,21 +199,23 @@ end
 
 # Each comparison runs a Gambit trace; the mutation jobs skip it to stay under their time limit.
 if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
-    @testset "a trace to a far target stays on Gambit's branch" begin
+    @testset "a trace to a far target stays on Gambit's branch ($element)" for element in (Float32, widen(Float32))
         seeded = (
             far_opening_games(Xoshiro(FAR_OPENING_SEED))...,
             last(far_opening_games(Xoshiro(MIXED_STALL_SEED))),
             first(far_opening_games(Xoshiro(ZERO_STEP_SEED))),
             first(far_opening_games(Xoshiro(FAR_FOLD_SEED))),
         )
-        for payoffs in (seeded..., far_opening_games(fresh_rng())...)
+        settings = log_precision_settings(element)
+        for payoffs_32 in (seeded..., far_opening_games(fresh_rng())...)
+            payoffs = map(payoff -> element.(payoff), payoffs_32)
             gains = NormalFormGains(payoffs)
             failure = unwrap_error(
                 trace_endpoint(
-                    LogitGame(gains, FAR_TARGET),
+                    LogitGame(gains, element(FAR_TARGET)),
                     GameTracing.logit_count(gains),
-                    LOG_PRECISION_SETTINGS;
-                    keep_going = StopAtPrecision(50.0f0),
+                    settings;
+                    keep_going = StopAtPrecision(element(50)),
                 )
             )
             (; precision, logits) = failure.context

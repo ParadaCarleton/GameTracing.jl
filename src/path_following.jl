@@ -77,8 +77,8 @@ end
 
 """
     PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
-                             target_contraction, target_turn, max_step_growth, reach, orientation_check, max_refusals,
-                             min_step_ulps, step_metric, linear_solver)
+                             target_contraction, target_turn, max_step_growth, reach, orientation_check, split_check,
+                             max_refusals, min_step_ulps, step_metric, linear_solver)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
@@ -99,6 +99,17 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
   `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. `nothing` switches
   the check off.
+- `split_check`: PathFollowing's `HalfStepCheck{E}`, or `nothing` to switch it off. A step with factor at least
+  `trigger` runs again in two half steps, which must reach its point within `tolerance` in `distance`. The default
+  trigger is 1.3, and the tolerance 10 times `distance`'s settle tolerance. Without the check, about 1 random
+  two-action game in 1200 left its principal branch on a step that passed every other test.
+  Evidence, with `StrategyDistance` in Float32 and Float64, the reach on and off: 203 seeds of 20 two-action games, and
+  battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs, 300 draws per scale. The half steps flagged all 22 jumps and
+  148 of 196,594 steps that kept the branch (0.075%). Kept steps reached their point within 2.5e-5 at the 99.99th
+  percentile. Each jump failed or landed at least 0.27 away. So the 5e-4 tolerance lies 20 times above that
+  percentile and 550 times under the nearest jump. Every jump had `f` at least 1.52; a trigger of 1.3 fires on 1.9%
+  of kept steps. With the reach off, the check keeps three of the four unfolded pitchforks that the reach keeps. At
+  the fourth, both half steps jump with the step.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -115,6 +126,7 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     max_step_growth::E
     reach::E
     orientation_check::Union{Nothing, PathFollowing.DeterminantSign}
+    split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}}
     max_refusals::Int
     min_step_ulps::Int
     step_metric::TraceGeometry{E}
@@ -139,6 +151,7 @@ function PathFollowingSettings{E}(;
         # On unfolded pitchforks a step that jumped branches moved 4.2 or more of its lengths, one that kept it 1.86 at most.
         reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
+        split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = PathFollowing.HalfStepCheck{E}(; trigger = 13 // 10, tolerance = 10 * distance.tolerance),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
         # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
@@ -149,7 +162,7 @@ function PathFollowingSettings{E}(;
     return PathFollowingSettings{E, L, D}(
         E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
         optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
-        Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
+        split_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
 end
 
@@ -312,6 +325,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
         # PathFollowing measures the precision at target one, and has no PALC state weight to divide by.
         metric = trace_metric(settings.step_metric, gains, logit_count(gains), one(E), one(E)),
         settings.orientation_check,
+        settings.split_check,
         accept = PositivePrecision(),
         settings.linear_solver,
         settings.min_step_ulps,

@@ -5,7 +5,8 @@ const ARMS = (
     fisher_log_precision_reach = (; precision_term = LogPrecisionTerm),
 )
 # The BifurcationKit arms' state weights in the tests and the full benchmark, about the default 0.1. Below 0.03 the log
-# term exhausts at the folding 3x3 game and at `UNFOLDED_PITCHFORK_GAME` near λ 0.808.
+# term exhausts at the folding 3x3 game and at `UNFOLDED_PITCHFORK_GAME` near λ 0.808, a known failure that
+# `logitnash_tests.jl` pins at 0.01.
 const ARM_WEIGHTS = (0.03f0, 0.1f0, 0.3f0)
 # The PathFollowing arms' state weights in the full benchmark, about the log term's fewest steps at 0.1.
 const PATH_WEIGHTS = (0.03f0, 0.1f0, 0.3f0)

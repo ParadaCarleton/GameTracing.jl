@@ -180,8 +180,7 @@ end
     @test doubled.logit_accuracy <= settle_bound(double_settings.corrector, double_logits)
     @test agreeing(first_choices(double_logits), oracle.first_choices)
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
-    # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under the categorical Fisher
-    # metric the log term exhausts near λ 0.808 below state weight 0.03, which `ARM_WEIGHTS` leaves out.
+    # Every Float32 arm follows the double-precision branch within both traces' accuracy.
     for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants(ARM_WEIGHTS)]
         result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
         @test !is_error(result)
@@ -193,6 +192,14 @@ end
             @test maximum(abs, logits .- double_logits) <= logit_accuracy + doubled.logit_accuracy
             @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, logits, precision, settings)
         end
+    end
+    # Known failure: the log term at state weight 0.01, below `ARM_WEIGHTS`, exhausts at the pitchfork near λ 0.808.
+    stalled = traced_result(UNFOLDED_PITCHFORK_GAME, precision, arm_settings(ARMS.fisher_log_precision_reach, 0.01f0))
+    @test_broken !is_error(stalled)
+    if is_error(stalled)
+        failure = unwrap_error(stalled)
+        @test failure.cause == GameTracing.PrecisionExhausted
+        @test abs(failure.context.precision - 0.808f0) < 0.01f0
     end
 end
 

@@ -67,4 +67,5 @@ small to keep steps short where the curve bends.
 ## Failures
 
 `init` fails `NotFiniteStart` or `SingularStart`. `step!` fails `Unresolved` when the predictor falls below the
-float type's resolution, and `TooManyRefusals` past `max_refusals`. Each failure names the last `Refusal`.
+float type's resolution or a retry rounds back to the refused step, and `TooManyRefusals` past `max_refusals`. Each
+failure names the last `Refusal`.

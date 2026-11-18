@@ -497,6 +497,17 @@ end
         @test tracer.point[2] == bound.value
     end
 
+    @testset "a retry that rounds back to the refused step fails Unresolved" begin
+        # A shrink one ulp under 1 cannot shorten the smallest subnormal step: each retry repeated it until TooManyRefusals.
+        targets = (; target_contraction = nothing, target_correction = nothing, target_turn = nothing)
+        control = StepControl(; targets..., max_step_growth = E(2), max_step = one(E), shrink = prevfloat(one(E)))
+        settings = algorithm(E; step_control = control, accept = (start, predicted, corrected) -> false)
+        tracer = unwrap(init(CurveProblem(Line(), E[0, 0], E[1, 1]), settings; first_step = nextfloat(zero(E))))
+        failure = unwrap_error(step!(tracer))
+        @test (failure.cause, failure.last_refusal, failure.refusals) == (Unresolved, AcceptRefused, 1)
+        @test failure.step_length == nextfloat(zero(E))
+    end
+
     @testset "a bounded step over a fold's top stops at the first crossing" begin
         # From (3/5, 4/5) a step of 4/5 passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
         tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)

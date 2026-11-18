@@ -35,7 +35,8 @@ end
 
 A trace's end short of its caller's goal: the `FailureCause`, the last `Refusal` before it (`NoRefusal` at the start),
 the step length its failing check judged and the refusals in the failed step. That length is the first step at the
-start, the controller's step for `Unresolved`, and the last refused predictor, cut at a `Bound`, for `TooManyRefusals`.
+start, and the last refused predictor, cut at a `Bound`, for `TooManyRefusals`. For `Unresolved` it is the controller's
+step, or the retry that did not shrink below the predictor it refuses.
 """
 struct StepFailure{E <: Real}
     cause::FailureCause
@@ -144,7 +145,8 @@ point's side of the bound or stops on it. A predictor that reaches the bound is 
 Newton's method corrects at the bound's value, under every test of a step. A corrected point past the bound refuses as
 `PastBound`. The step sees the bound only at its predictor and corrected point: a curve that passes the bound and
 comes back within one step goes unseen. The resolution check judges the controller's step before the cut, as a landing
-always moves the point. The point must lie off the bound.
+always moves the point. A retry no shorter than the predictor it refuses fails `Unresolved`. The point must lie off the
+bound.
 """
 function CommonSolve.step!(
         tracer::Tracer{E},
@@ -178,6 +180,10 @@ function CommonSolve.step!(
         # The retry shrinks the predictor taken, cut or not; an infinite factor shrinks like an unmeasured one.
         shrink = inv(algorithm.step_control.shrink)
         tracer.step_length = taken / ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
+        # A retry that rounds back to the refused length would repeat it: the step is below resolution.
+        if !(tracer.step_length < taken)
+            return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
+        end
     end
     return Err(StepFailure(TooManyRefusals, last_refusal, taken, refusals))
 end

@@ -160,6 +160,14 @@ function traced(problem::CurveProblem, settings::PseudoArclength, steps::Integer
     return points
 end
 
+"""A tracer on the unit circle after one step of `4/5` from `start` toward `direction`, under step control with no targets."""
+function circle_step(start::Vector{E}, direction::Vector{E})::Tracer where {E <: Real}
+    control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
+    tracer = unwrap(init(CurveProblem(Circle(one(E)), start, direction), algorithm(E; step_control = control); first_step = E(4) / 5))
+    unwrap(step!(tracer))
+    return tracer
+end
+
 @testset "PathFollowing $E" for E in (Float32, Float64)
     tolerance = sqrt(eps(E))
 
@@ -414,6 +422,22 @@ end
         stubborn = algorithm(E; corrector = Newton(; max_iterations = 2, converged = never, contraction_limit = one(E), error_estimate = LastCorrection()))
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), stubborn; first_step = E(1) / 10))
         @test unwrap_error(land!(tracer, 2, one(E) / 4)) == NotConverged
+    end
+
+    @testset "land! after a step over a fold's top corrects onto the first crossing, from the step's start" begin
+        # From (3/5, 4/5) the step passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
+        tracer = circle_step(E[3, 4] ./ 5, E[-1, 0])
+        @test tracer.point ≈ E[-7, 24] ./ 25 atol = 100 * tolerance
+        @test unwrap(land!(tracer, 2, E(9) / 10)) ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
+        # The start's tangent leads away from y = 1/2, and the point's leads to it only ahead of the point.
+        @test unwrap_error(land!(tracer, 2, one(E) / 2)) == NoCrossing
+    end
+
+    @testset "land! after a step through a fold's bottom corrects back from the point" begin
+        # From (-7/25, -24/25) the step passes y's minimum at (0, -1) to (3/5, -4/5); y = -9/10 also lies behind the start.
+        tracer = circle_step(E[-7, -24] ./ 25, E[1, 0])
+        @test tracer.point ≈ E[3, -4] ./ 5 atol = 100 * tolerance
+        @test unwrap(land!(tracer, 2, -E(9) / 10)) ≈ [sqrt(E(19)) / 10, -E(9) / 10] atol = 100 * tolerance
     end
 
     @testset "a NaN start fails NotFiniteStart" begin

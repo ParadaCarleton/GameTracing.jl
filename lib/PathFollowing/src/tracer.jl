@@ -9,9 +9,10 @@ one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not fini
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
 was not finite at an iterate (`NotFiniteResidual`), a bordered system was singular (`SingularSystem`), `accept`
 returned `false` (`AcceptRefused`), step control found the step too long (`TooFast`), or the orientation check found
-a changed sign (`OrientationFlip`). `NoRefusal` marks an accepted attempt.
+a changed sign (`OrientationFlip`). `NoRefusal` marks an accepted attempt. `land!` also refuses `NoCrossing`: neither
+tangent of the last step leads to the value.
 """
-@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip
+@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip NoCrossing
 
 """
     AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
@@ -45,16 +46,19 @@ end
 """
     Tracer
 
-The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
-the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the step and turn metrics
-frozen at `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system. `init`
-builds one and `step!` advances it. Read its fields; do not write them.
+The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the point the last step
+started from and its tangent (`step_start`, `start_tangent`; the start itself before any step), the next
+`step_length`, the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the step
+and turn metrics frozen at `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered
+system. `init` builds one and `step!` advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, T}
     const problem::P
     const algorithm::A
     const point::Vector{E}
     const tangent::Vector{E}
+    const step_start::Vector{E}
+    const start_tangent::Vector{E}
     step_length::E
     steps::Int
     orientation::Int8
@@ -96,7 +100,7 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0),
+        problem, algorithm, collect(problem.start), zeros(E, size), collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0),
         frozen_metric(algorithm.metric, problem.start), frozen_metric(algorithm.turn_metric, problem.start), zeros(E, size),
         zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
         zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
@@ -116,6 +120,7 @@ function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tr
         return Err(StepFailure(SingularStart, NoRefusal, tracer.step_length, 0))
     end
     tracer.tangent .= tracer.candidate ./ metric_norm(tracer.metric, tracer.candidate)
+    copyto!(tracer.start_tangent, tracer.tangent)
     tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
@@ -377,11 +382,13 @@ function factor_term(target::E, measured::E)::E where {E <: Real}
 end
 
 """
-Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, freeze both metrics there and size
-the next step.
+Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, keep the step's start and its
+tangent, freeze both metrics there and size the next step.
 """
 function accept_point!(tracer::Tracer{E}, attempt::Attempt{E})::Tracer{E} where {E <: Real}
     (; algorithm) = tracer
+    copyto!(tracer.step_start, tracer.point)
+    copyto!(tracer.start_tangent, tracer.tangent)
     copyto!(tracer.point, tracer.iterate)
     tracer.orientation = attempt.orientation
     freeze_metric!(tracer.metric, tracer.point)
@@ -396,16 +403,19 @@ end
 """
     land!(tracer, coordinate, value)
 
-The curve's point where `x[coordinate] = value`, near `tracer.point`, or the `Refusal` that stopped its corrector. The
-predictor follows the tangent from `tracer.point` to that hyperplane, and Newton's method corrects on it. A tangent
-parallel to the hyperplane refuses as `SingularSystem`. The tracer keeps its point, tangent and step.
+The curve's point where `x[coordinate] = value` near the last step, or the `Refusal` that stopped its corrector. The
+predictor follows the point's tangent back to that hyperplane, or else the step start's tangent forward to it
+(`landing_origin`), and Newton's method corrects on it. A step over a fold's top can cross the value twice, and the
+point's tangent then leads on to a later crossing; the start's leads to the first. The tracer keeps its point, tangent
+and step.
 """
 function land!(tracer::Tracer{E}, coordinate::Integer, value::Real)::Result{Vector{E}, Refusal} where {E <: Real}
-    slope = tracer.tangent[coordinate]
-    if iszero(slope)
-        return Err(SingularSystem)
+    origin = landing_origin(tracer, coordinate, E(value))
+    if is_error(origin)
+        return Err(unwrap_error(origin))
     end
-    tracer.predicted .= tracer.point .+ ((E(value) - tracer.point[coordinate]) / slope) .* tracer.tangent
+    (from, along) = unwrap(origin)
+    tracer.predicted .= from .+ ((E(value) - from[coordinate]) / along[coordinate]) .* along
     tracer.predicted[coordinate] = E(value)
     fill!(tracer.row, zero(E))
     tracer.row[coordinate] = one(E)
@@ -414,4 +424,25 @@ function land!(tracer::Tracer{E}, coordinate::Integer, value::Real)::Result{Vect
         return Err(corrected.refusal)
     end
     return Ok(copy(tracer.iterate))
+end
+
+"""
+The point and tangent a landing on `x[coordinate] = value` predicts from: the point when its tangent leads back to the
+value, else the step's start when its tangent leads forward to it. Where both lead there, the point predicts better:
+from the start, a long step's landing diverged on a random game. Two tangents parallel to the hyperplane refuse as
+`SingularSystem`, and two that lead away from the value as `NoCrossing`.
+"""
+function landing_origin(tracer::Tracer{E}, coordinate::Integer, value::E)::Result{NTuple{2, Vector{E}}, Refusal} where {E <: Real}
+    (; step_start, start_tangent, point, tangent) = tracer
+    if leads_to(point, tangent, coordinate, value, -one(E))
+        return Ok((point, tangent))
+    elseif leads_to(step_start, start_tangent, coordinate, value, one(E))
+        return Ok((step_start, start_tangent))
+    end
+    return Err(iszero(start_tangent[coordinate]) && iszero(tangent[coordinate]) ? SingularSystem : NoCrossing)
+end
+
+"""Whether `tangent` leads from `from` to `x[coordinate] = value` in the sense `sense`: `1` forward, `-1` back."""
+function leads_to(from::AbstractVector{E}, tangent::AbstractVector{E}, coordinate::Integer, value::E, sense::E)::Bool where {E <: Real}
+    return !iszero(tangent[coordinate]) && sense * (value - from[coordinate]) * tangent[coordinate] >= 0
 end

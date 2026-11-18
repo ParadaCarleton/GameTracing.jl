@@ -372,8 +372,8 @@ function path_step!(
 end
 
 """
-The point of `tracer`'s branch at precision `precision`, which its last step reached or passed (`land!`), or the
-`TraceStuck` failure of that corrector with `context`.
+The point of `tracer`'s branch at precision `precision` within its last step (`land!`), or the `TraceStuck` failure of
+that landing with `context`. A step over a fold's top can reach `precision` twice; the landing finds the first.
 """
 function landed_point(tracer::PathFollowing.Tracer{E}, precision::E, context::NamedTuple)::Result{Vector{E}, TraceFailure} where {E <: Real}
     landed = PathFollowing.land!(tracer, length(tracer.point), precision)

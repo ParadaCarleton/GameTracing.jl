@@ -87,13 +87,14 @@ end
 
 """
 One logit with a flat gain `level`, plus deterministic noise of size `noise` past the precision `onset`: a uniform draw
-in `[-1, 1)` hashed from the logit's bits, which the slope does not see. Newton's corrections there are `λ noise` times
-a difference of two draws.
+in `[-1, 1)` hashed from the logit's bits and `salt`, which the slope does not see. Newton's corrections there are
+`λ noise` times a difference of two draws. One rounding change redraws the whole stream, so test several salts.
 """
 struct NoisyFlatPass{E <: Real}
     level::E
     noise::E
     onset::E
+    salt::UInt
 end
 
 function (pass::NoisyFlatPass)(
@@ -103,7 +104,7 @@ function (pass::NoisyFlatPass)(
         logits::AbstractVector{E},
         precision::Real,
     )::Nothing where {E <: Real}
-    draw = (E(hash(only(logits)) % 65536) / 32768 - one(E)) * (precision > pass.onset)
+    draw = (E(hash(only(logits), pass.salt) % 65536) / 32768 - one(E)) * (precision > pass.onset)
     fill!(gain, pass.level + pass.noise * draw)
     fill!(gain_slope, zero(E))
     fill!(gain_precision_slope, zero(E))

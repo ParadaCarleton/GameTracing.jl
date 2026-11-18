@@ -101,16 +101,17 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   the check off.
 - `split_check`: PathFollowing's `HalfStepCheck{E}`, or `nothing` to switch it off. A step with factor at least
   `trigger` runs again in two half steps, which must reach its point within `tolerance` in `distance`. The default
-  trigger is 1.3, and the tolerance 10 times `distance`'s settle tolerance. A zero settle tolerance has no default:
-  pass `split_check`. Without the check, about 1 random two-action game in 1200 left its principal branch on a step
-  that passed every other test.
-  Evidence, with `StrategyDistance` in Float32 and Float64, the reach on and off: 203 seeds of 20 two-action games, and
-  battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs, 300 draws per scale. The half steps flagged all 22 jumps and
-  148 of 196,594 steps that kept the branch (0.075%). Kept steps reached their point within 2.5e-5 at the 99.99th
-  percentile. Each jump failed or landed at least 0.27 away. So the 5e-4 tolerance lies 20 times above that
-  percentile and 550 times under the nearest jump. Every jump had `f` at least 1.52; a trigger of 1.3 fires on 1.9%
-  of kept steps. With the reach off, the check keeps three of the four unfolded pitchforks that the reach keeps. At
-  the fourth, both half steps jump with the step.
+  trigger is 1, every step at or past a step-control target (`default_split_check`), and the tolerance 10 times
+  `distance`'s settle tolerance. A zero settle tolerance has no default: pass `split_check`. Without the check, about 1
+  random two-action game in 5000 left its principal branch on a step that passed every other test.
+  Evidence, with `StrategyDistance` in Float32 and Float64. A sweep with the reach on and off: 203 seeds of 20
+  two-action games, and battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs, 300 draws per scale. The half steps
+  flagged all 22 jumps and 148 of 196,594 steps that kept the branch (0.075%). Kept steps reached their point within
+  2.5e-5 at the 99.99th percentile. Each jump failed or landed at least 0.27 away. So the 5e-4 tolerance lies 20 times
+  above that percentile and 550 times under the nearest jump. A hunt over 20,000 more two-action games found 4 jumps,
+  at `f` from 1.23 to 1.44, and the half steps refused each. A trigger of 1 fires on 9.8% of the hunt's kept steps and
+  refuses 0.06% of them. With the reach off, the check keeps three of the four unfolded pitchforks that the reach
+  keeps. At the fourth, both half steps jump with the step.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -168,8 +169,11 @@ function PathFollowingSettings{E}(;
 end
 
 """
-`PathFollowingSettings`' default split check: trigger 1.3 and tolerance 10 times `distance`'s settle tolerance. A zero
-settle tolerance gives the tolerance no scale, so it throws an `ArgumentError` that asks for an explicit `split_check`.
+`PathFollowingSettings`' default split check: trigger 1 and tolerance 10 times `distance`'s settle tolerance. A step
+with `f ≥ 1` meets or passes one of step control's targets, so the check verifies every such step. A trigger above 1
+fits the smallest jump seen, and more draws found smaller ones: a sweep's smallest `f` was 1.52, and a 20,000-game hunt
+and a suite draw jumped at 1.23 and between 1.1 and 1.2. A zero settle tolerance gives the tolerance no scale, so it
+throws an `ArgumentError` that asks for an explicit `split_check`.
 """
 function default_split_check(distance::CorrectorDistance{E})::PathFollowing.HalfStepCheck{E} where {E <: Real}
     iszero(distance.tolerance) && throw(
@@ -178,7 +182,7 @@ function default_split_check(distance::CorrectorDistance{E})::PathFollowing.Half
                 "HalfStepCheck{$E}(; trigger, tolerance), with a tolerance above the corrector's settled error, or nothing",
         ),
     )
-    return PathFollowing.HalfStepCheck{E}(; trigger = 13 // 10, tolerance = 10 * distance.tolerance)
+    return PathFollowing.HalfStepCheck{E}(; trigger = 1, tolerance = 10 * distance.tolerance)
 end
 
 """`estimate` with its numbers in `E`."""

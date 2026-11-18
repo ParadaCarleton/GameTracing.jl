@@ -391,11 +391,15 @@ end
     @info "Gambit comparisons skipped where its branch folds before the target" skipped
 end
 
-# Random games where PathFollowing's corrector jumped branches without its split check: draws of three suite runs' fresh
-# seeds, then two draws of a 200-seed sweep.
+# Random games where PathFollowing's corrector jumped branches without its split check: draws of four suite runs' fresh
+# seeds, two of a 200-seed sweep and four of a 1000-seed hunt.
 const JUMPED_TWO_ACTION_GAMES = [
     two_action_games(Xoshiro(seed))[draw]
-        for (seed, draw) in ((0x0b357a95eb385c17, 4), (0xe3d835fcb88261eb, 12), (0x8ee16446e3ac8acf, 13), (0xb2cb58af5afc41b4, 12), (0xa656d4e67e70d45e, 10))
+        for (seed, draw) in (
+            (0x0b357a95eb385c17, 4), (0xe3d835fcb88261eb, 12), (0x8ee16446e3ac8acf, 13), (0x501a9b6a3e953473, 1),
+            (0xb2cb58af5afc41b4, 12), (0xa656d4e67e70d45e, 10),
+            (0x64458f7352e8bfd9, 16), (0xb282f30aeb0a2397, 19), (0xe3bd68fccdf58be2, 20), (0xf61c7e3f6e4606ee, 7),
+        )
 ]
 
 @testset "PathFollowing keeps the random games' principal branch where it jumped; without its split check it jumps ($element)" for element in (Float32, widen(Float32))

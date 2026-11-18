@@ -201,6 +201,10 @@ meets the start's branch once, so on that branch the half steps reach the point.
 every step measurement in range. The shorter half steps often keep the start's branch. Half steps that jump to the
 step's point pass the check.
 
+A trigger of 1 checks every step that meets or passes a step-control target. A higher trigger fits the smallest jump
+seen, and more draws keep finding smaller ones: on random two-action games, `f` 1.52 in one sweep, then 1.23 and 1.1
+to 1.2.
+
 Both numbers convert to `E` and must stay finite there: `trigger` non-negative and `tolerance` positive. Without `E`,
 the check takes the float type of the two numbers promoted. `PseudoArclength` also needs `trigger` at most the step
 control's `refusal_factor`, past which a step is refused first.

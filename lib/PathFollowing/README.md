@@ -33,7 +33,7 @@ algorithm = PseudoArclength(;
     ),
     metric = FixedWeights([1.0, 1.0]),
     orientation_check = DeterminantSign(),
-    split_check = HalfStepCheck{Float64}(; trigger = 1.3, tolerance = 1e-8),
+    split_check = HalfStepCheck{Float64}(; trigger = 1, tolerance = 1e-8),
     linear_solver = LUFactorization(),
     max_refusals = 60,
 )

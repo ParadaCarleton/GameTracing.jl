@@ -173,16 +173,26 @@ end
     free = BifurcationKit.FreeParameterNewton()
     settings = BifurcationKitSettings{element}(
         palc_corrector = free,
-        palc_options = (; orientation_check = false, θ = one(element) / 4),
-        continuation_options = (; max_steps = 3, p_max = one(element) / 2),
+        palc_options = (; _bothside = true),
+        continuation_options = (; detect_loop = true),
     )
     algorithm = GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION; orientation_check = true)
     @test algorithm.corrector === free
-    @test !algorithm.orientation_check
-    @test algorithm.θ == one(element) / 4
+    @test algorithm._bothside && algorithm.orientation_check
     options = GameTracing.continuation_options(settings, settings.first_step, 50, TARGET_PRECISION)
-    @test (options.max_steps, options.p_max) == (3, one(element) / 2)
-    @test options.p_min == 0
+    @test options.detect_loop
+    @test (options.max_steps, options.p_min, options.p_max) == (50, 0, TARGET_PRECISION)
+end
+
+@testset "an option that names a keyword the trace sets itself throws ($element)" for element in (Float32, float(Int))
+    for palc_options in ((; θ = one(element) / 4), (; orientation_check = false), (; dotθ = BifurcationKit.DotTheta()))
+        settings = BifurcationKitSettings{element}(; palc_options)
+        @test_throws ArgumentError GameTracing.palc_algorithm(settings, WIDTH, TARGET_PRECISION)
+    end
+    for continuation_options in ((; p_max = one(element) / 2), (; max_steps = 3), (; newton_options = BifurcationKit.NewtonPar()))
+        settings = BifurcationKitSettings{element}(; continuation_options)
+        @test_throws ArgumentError GameTracing.continuation_options(settings, settings.first_step, 50, TARGET_PRECISION)
+    end
 end
 
 @testset "continuation options carry the settings and the trace's endpoint-only needs" begin

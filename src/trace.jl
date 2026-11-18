@@ -62,13 +62,11 @@ distance (`TraceGeometry`).
 - `palc_corrector`: PALC's `corrector` keyword, `nothing` by default, which is BifurcationKit's own Newton method
   (`newton_palc`; it stops on leaving `[0, P]`, `P` the target precision). `BifurcationKit.FreeParameterNewton()` leaves `λ` free there instead,
   the trace's choice before this field. `CorrectorReach` reads any corrector's Newton callbacks.
-- `palc_options`: a `NamedTuple` of further keywords for `BifurcationKit.PALC`, which override the trace's own
-  (`tangent`, `θ`, `dotθ`, `bls`, `step_control`, `orientation_check`, `corrector`, `orientation_dot`). Do not override
-  `step_control`, `orientation_check`, `orientation_dot`, `θ`, `dotθ` or `bls`: the trace's step shrinking, tangent orientation
-  and geometry rest on them, and `BifurcationKitSettings` fields set them consistently.
-- `continuation_options`: a `NamedTuple` of further keywords for `BifurcationKit.ContinuationPar`, which override the trace's
-  own. Do not override `newton_options`, `p_min`, `p_max`, `ds` or the `dsmin`/`dsmax` pair: `CorrectorReach` converges a
-  corrector on its own test and needs `tol = 0`, and the trace ends at `p_max`.
+- `palc_options`: a `NamedTuple` of further keywords for `BifurcationKit.PALC`. A keyword the trace sets itself (`tangent`,
+  `θ`, `dotθ`, `bls`, `step_control`, `orientation_check`, `corrector`, `orientation_dot`) throws an `ArgumentError` at the
+  trace: the step shrinking, tangent orientation and geometry rest on them. Set them through the fields above.
+- `continuation_options`: a `NamedTuple` of further keywords for `BifurcationKit.ContinuationPar`. A keyword the trace sets
+  itself (`continuation_options` lists them) throws the same way: `CorrectorReach` needs `tol = 0`, and the trace ends at `p_max`.
 """
 struct BifurcationKitSettings{
         E <: Real,
@@ -210,7 +208,7 @@ function palc_with_geometry(
     )::BifurcationKit.AbstractContinuationAlgorithm where {E <: Real}
     # No named local: the tuple's Union-typed solver fields would make it an abstract local.
     return BifurcationKit.PALC(;
-        merge(
+        added_options(
             (;
                 tangent = settings.tangent,
                 θ = geometry.palc_state_weight,
@@ -265,7 +263,16 @@ function continuation_options(
         tol_bisection_eigenvalue = zero(E),
         tol_param_bisection_event = zero(E),
     )
-    return BifurcationKit.ContinuationPar(; merge(own, settings.continuation_options)...)
+    return BifurcationKit.ContinuationPar(; added_options(own, settings.continuation_options)...)
+end
+
+"""`merge(own, options)`, or an `ArgumentError` where `options` names a keyword of `own`, which the trace sets itself."""
+function added_options(own::NamedTuple, options::NamedTuple)::NamedTuple
+    overridden = intersect(keys(own), keys(options))
+    if !isempty(overridden)
+        throw(ArgumentError("the trace sets $(join(overridden, ", ")) itself; set it through a BifurcationKitSettings field"))
+    end
+    return merge(own, options)
 end
 
 """

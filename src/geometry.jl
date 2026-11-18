@@ -212,18 +212,12 @@ function palc_product(
     return dot(left, right, last(left), last(right), state_weight)
 end
 
-"""`vector` under the in-place operator `A` of a `DotTheta`, `⟨x, y⟩ = xᵀ A y`; `nothing` is the identity."""
-function applied_operator(::Nothing, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    return vector
-end
-
-function applied_operator(apply::Any, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    return apply(vector)
-end
-
-"""The row `b` with `b ⋅ τ = palc_product(dot, state_weight, vector, τ)` for every branch vector `τ`."""
+"""
+The row `b` with `b ⋅ τ = palc_product(dot, state_weight, vector, τ)` for every branch vector `τ`. `palc_geometry`'s
+`dot` scales by its point weights, `⟨x, y⟩ = xᵀ A y`, and `palc_options` cannot replace it.
+"""
 function palc_border(dot::BifurcationKit.DotTheta, state_weight::E, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    border = state_weight .* applied_operator(dot.apply!, copy(vector))
+    border = state_weight .* dot.apply!(copy(vector))
     border[end] += (one(E) - state_weight) * last(vector)
     return border
 end

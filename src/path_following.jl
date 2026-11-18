@@ -101,8 +101,9 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
   the check off.
 - `split_check`: PathFollowing's `HalfStepCheck{E}`, or `nothing` to switch it off. A step with factor at least
   `trigger` runs again in two half steps, which must reach its point within `tolerance` in `distance`. The default
-  trigger is 1.3, and the tolerance 10 times `distance`'s settle tolerance. Without the check, about 1 random
-  two-action game in 1200 left its principal branch on a step that passed every other test.
+  trigger is 1.3, and the tolerance 10 times `distance`'s settle tolerance. A zero settle tolerance has no default:
+  pass `split_check`. Without the check, about 1 random two-action game in 1200 left its principal branch on a step
+  that passed every other test.
   Evidence, with `StrategyDistance` in Float32 and Float64, the reach on and off: 203 seeds of 20 two-action games, and
   battle of the sexes plus 1e-4 to 1e-1 `randn` payoffs, 300 draws per scale. The half steps flagged all 22 jumps and
   148 of 196,594 steps that kept the branch (0.075%). Kept steps reached their point within 2.5e-5 at the 99.99th
@@ -151,7 +152,7 @@ function PathFollowingSettings{E}(;
         # On unfolded pitchforks a step that jumped branches moved 4.2 or more of its lengths, one that kept it 1.86 at most.
         reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
-        split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = PathFollowing.HalfStepCheck{E}(; trigger = 13 // 10, tolerance = 10 * distance.tolerance),
+        split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = default_split_check(distance),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
         # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
@@ -164,6 +165,20 @@ function PathFollowingSettings{E}(;
         optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
         split_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
     )
+end
+
+"""
+`PathFollowingSettings`' default split check: trigger 1.3 and tolerance 10 times `distance`'s settle tolerance. A zero
+settle tolerance gives the tolerance no scale, so it throws an `ArgumentError` that asks for an explicit `split_check`.
+"""
+function default_split_check(distance::CorrectorDistance{E})::PathFollowing.HalfStepCheck{E} where {E <: Real}
+    iszero(distance.tolerance) && throw(
+        ArgumentError(
+            "the default split check's tolerance is 10 times the settle tolerance, which is zero here; pass split_check = " *
+                "HalfStepCheck{$E}(; trigger, tolerance), with a tolerance above the corrector's settled error, or nothing",
+        ),
+    )
+    return PathFollowing.HalfStepCheck{E}(; trigger = 13 // 10, tolerance = 10 * distance.tolerance)
 end
 
 """`estimate` with its numbers in `E`."""

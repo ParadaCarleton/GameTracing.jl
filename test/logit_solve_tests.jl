@@ -210,6 +210,14 @@ end
         @test distance_type(; tolerance = 1 // 5, target_correction = 1 // 4).tolerance == element(1 // 5)
         @test distance_type(; tolerance = 1, target_correction = nothing).tolerance == 1
     end
+    # A zero settle tolerance, where the corrector settles by ulps alone, gives the default split check no scale.
+    for distance in (StrategyDistance{element}(; tolerance = 0), LogitDistance{element}(; tolerance = 0))
+        @test_throws ArgumentError PathFollowingSettings{element}(; distance)
+        @test isnothing(PathFollowingSettings{element}(; distance, split_check = nothing).split_check)
+        check = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 13 // 10, tolerance = 1 // 1000)
+        @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, split_check = check)))
+    end
+    @test PathFollowingSettings{element}(; distance = LogitDistance{element}(; tolerance = 1 // 10^6)).split_check.tolerance == 10 * element(1 // 10^6)
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
     # A reach finite in a wider type that rounds to Inf would switch the refusal off.
     @test_throws ArgumentError PathFollowingSettings{element}(; reach = floatmax(widen(element)))

@@ -190,6 +190,7 @@ struct DeterminantSign end
 
 """
     HalfStepCheck{E}(; trigger, tolerance)
+    HalfStepCheck(; trigger, tolerance)
 
 `PseudoArclength`'s check that a step kept its branch. A step whose factor `f` (`StepControl`) is at least `trigger`
 runs again in two half steps. The first corrects at the half predictor. The second predicts along that point's tangent
@@ -200,8 +201,9 @@ meets the start's branch once, so on that branch the half steps reach the point.
 every step measurement in range. The shorter half steps often keep the start's branch. Half steps that jump to the
 step's point pass the check.
 
-Both numbers convert to `E` and must stay finite there: `trigger` non-negative and `tolerance` positive.
-`PseudoArclength` also needs `trigger` under the step control's `refusal_factor`, past which a step is refused first.
+Both numbers convert to `E` and must stay finite there: `trigger` non-negative and `tolerance` positive. Without `E`,
+the check takes the float type of the two numbers promoted. `PseudoArclength` also needs `trigger` at most the step
+control's `refusal_factor`, past which a step is refused first.
 """
 struct HalfStepCheck{E <: Real}
     trigger::E
@@ -213,6 +215,11 @@ struct HalfStepCheck{E <: Real}
         zero(E) < converted_tolerance < Inf || throw(ArgumentError("tolerance must be positive and finite in $E; got $tolerance"))
         return new{E}(converted_trigger, converted_tolerance)
     end
+end
+
+"""`HalfStepCheck` in the float type of `trigger` and `tolerance` promoted."""
+function HalfStepCheck(; trigger::Real, tolerance::Real)::HalfStepCheck
+    return HalfStepCheck{float(promote_type(typeof(trigger), typeof(tolerance)))}(; trigger, tolerance)
 end
 
 """
@@ -282,10 +289,10 @@ function PseudoArclength(;
     )
 end
 
-"""Throw unless `check` can fire: its trigger must lie under `control`'s `refusal_factor`, past which steps are refused."""
+"""Throw unless `check` can fire: its trigger must not pass `control`'s `refusal_factor`, past which steps are refused."""
 reachable_trigger(::StepControl, ::Nothing)::Nothing = nothing
 function reachable_trigger(control::StepControl, check::HalfStepCheck)::Nothing
-    check.trigger < control.refusal_factor ||
-        throw(ArgumentError("the split check's trigger $(check.trigger) must lie under the refusal factor $(control.refusal_factor)"))
+    check.trigger <= control.refusal_factor ||
+        throw(ArgumentError("the split check's trigger $(check.trigger) must not pass the refusal factor $(control.refusal_factor)"))
     return nothing
 end

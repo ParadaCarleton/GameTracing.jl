@@ -741,9 +741,12 @@ end
         @test_throws ArgumentError HalfStepCheck{E}(; trigger = one(E), tolerance = floatmax(widen(E)))
         @test_throws ArgumentError HalfStepCheck{E}(; trigger = floatmax(widen(E)), tolerance = one(E))
         @test HalfStepCheck{E}(; trigger = 0, tolerance = 1 // 3).tolerance === E(1 // 3)
-        # A step past the refusal factor is refused before the check, so a trigger there never fires.
-        @test_throws ArgumentError algorithm(E; split_check = HalfStepCheck{E}(; trigger = 2, tolerance = one(E)))
-        @test algorithm(E; split_check = HalfStepCheck{E}(; trigger = prevfloat(E(2)), tolerance = one(E))).split_check.trigger < 2
+        # A step past the refusal factor 2 is refused before the check, so a trigger there never fires; one at 2 can.
+        @test_throws ArgumentError algorithm(E; split_check = HalfStepCheck{E}(; trigger = nextfloat(E(2)), tolerance = one(E)))
+        @test algorithm(E; split_check = HalfStepCheck{E}(; trigger = 2, tolerance = one(E))).split_check.trigger == 2
+        # Without a type parameter, the check takes its numbers' promoted float type.
+        @test HalfStepCheck(; trigger = 13 // 10, tolerance = one(E) / 1000) === HalfStepCheck{E}(; trigger = 13 // 10, tolerance = one(E) / 1000)
+        @test HalfStepCheck(; trigger = 2, tolerance = 1) isa HalfStepCheck{float(Int)}
         wide_check = HalfStepCheck{widen(E)}(; trigger = 1, tolerance = 1)
         @test_throws ArgumentError init(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E; split_check = wide_check); first_step = one(E) / 10)
         @test_throws ArgumentError algorithm(E; min_step_ulps = -1)

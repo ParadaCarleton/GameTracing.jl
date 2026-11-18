@@ -125,7 +125,7 @@ end
 
 @testset "every state weight in (0, 1) traces, a one-logit game at the default settings included" begin
     for state_weight in (0.1f0, 0.5f0, 0.9f0), distance in instances(StepDistance)
-        geometry = TraceGeometry{Float32}(; distance, state_weight)
+        geometry = TraceGeometry{Float32}(; distance, state_weight, precision_term = TargetPrecisionTerm)
         # PALC's state weight is set by the precision's smallest weight over the trace, at the target.
         palc_state_weight = 1 - min(1, last(GameTracing.plain_weights(geometry, 1, 2.0f0))) / 2
         @test GameTracing.palc_geometry(geometry, FOLD_GAME, 1, 2.0f0).palc_state_weight == palc_state_weight

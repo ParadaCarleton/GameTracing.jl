@@ -261,6 +261,7 @@ end
 @testset "both engines default to one step metric and Gambit's step growth ($element)" for element in (Float32, widen(Float32))
     metric = GameTracing.default_step_metric(element)
     @test (metric.distance, metric.precision_term) == (FisherDistance, LogPrecisionTerm)
+    @test TraceGeometry{element}(; state_weight = 3 // 10).precision_term == LogPrecisionTerm
     gambit, bare = GameTracing.gambit_settings(element(3 // 100), GameTracing.GAMBIT_MAX_ACCEL), BifurcationKitSettings{element}()
     @test gambit.step_metric == bare.step_metric == PathFollowingSettings{element}().step_metric == metric
     @test (gambit.aggressiveness, gambit.step_control) == (bare.aggressiveness, bare.step_control)
@@ -441,8 +442,8 @@ end
 
 @testset "a zero precision gives the flat start, with no step and no log ($element)" for element in (Float32, widen(Float32))
     payoffs = map(table -> element.(table), LOGITNASH_GAMES.stag_hunt)
-    for distance in instances(StepDistance)
-        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
+    for step_metric in every_geometry(element(1 // 10))
+        settings = BifurcationKitSettings{element}(; step_metric)
         traced = unwrap(@test_logs trace_endpoint(LogitGame(NormalFormPass(payoffs), zero(element)), 2, settings))
         @test traced.logits == zeros(element, 2) && traced.steps == 0 && traced.logit_accuracy == 0
     end
@@ -460,7 +461,7 @@ end
     pass = NormalFormPass(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
     tiny, huge = sqrt(nextfloat(zero(element))), sqrt(floatmax(element)) * 2
     for distance in (AveragedDistance, SummedDistance, FisherDistance), target in (tiny, huge)
-        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
+        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance, precision_term = TargetPrecisionTerm))
         @test_throws ArgumentError trace_endpoint(LogitGame(pass, target), 2, settings)
     end
     settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherDistance, precision_term = LogPrecisionTerm))

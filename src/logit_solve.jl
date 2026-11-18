@@ -30,7 +30,8 @@ const BranchResult{E, N} = Result{Vector{QREProfile{E, N}}, TraceFailure}
 
 `BifurcationKitSettings` for pygambit's step arguments: `first_step` is the first arclength step and `max_accel` caps each
 step's growth (`StepControl`'s `max_step_growth`, and `aggressiveness = max_accel - 1`). BifurcationKit's growth limit
-must exceed 1, so at `max_accel = 1` step control only refuses steps and zero aggressiveness holds the step length.
+must exceed 1, so at `max_accel = 1` step control only refuses steps. Zero aggressiveness then holds an accepted step's
+length, where Gambit also shrinks it after a poor corrector.
 The trace steps in `default_step_metric`, which `PathFollowingSettings` shares.
 """
 function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings{E} where {E <: Real}

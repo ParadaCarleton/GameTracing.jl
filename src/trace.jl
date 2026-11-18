@@ -95,7 +95,7 @@ end
 function BifurcationKitSettings{E}(;
         first_step::Real = 0.05f0,
         max_step::Real = 1000.0f0,
-        aggressiveness::Real = GAMBIT_MAX_ACCEL - 1,
+        aggressiveness::Real = E(GAMBIT_MAX_ACCEL) - one(E),
         step_metric::TraceGeometry{E} = default_step_metric(E),
         corrector::CorrectorSettings{E} = CorrectorSettings{E}(),
         max_steps::Integer = 2_000,

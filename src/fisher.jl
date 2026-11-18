@@ -232,6 +232,10 @@ Write player `player`'s block of `M v`, `gap_scale` times `(G J v)ᵢ = qᵢ d�
 and return its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ qᵢ dᵢ` is the reference's `π_ref (pivot + mean)`. The
 pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
 against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
+
+The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))` of `M`'s, for `n`
+strategies and `L` the largest `|log π|` among them. The first term is the entries' rounding and the second the logit
+moves'. Entries of size `s` hold no nonzero sum under about `eps s`, so a large differential move can sum to zero.
 """
 function player_apply!(
         out::AbstractVector{E},

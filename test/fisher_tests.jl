@@ -16,6 +16,24 @@ function direct_kl(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <
     return sum(probabilities .* log.(probabilities ./ others))
 end
 
+"""
+`player_apply!`'s bound on the rounding of player `player`'s block sum of `applied = M vector`, in `applied`'s element
+type, from the exact frozen metric `exact`: `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))`.
+"""
+function block_sum_bound(
+        exact::GameTracing.FrozenFisher{<:FisherMetric, BigFloat},
+        applied::AbstractVector{E},
+        vector::AbstractVector{E},
+        player::Integer,
+        range::UnitRange{Int},
+    )::BigFloat where {E <: Real}
+    (; metric, point, probabilities, references) = exact
+    largest_log = maximum(probability -> abs(log(probability)), [references[player]; probabilities[range]])
+    gap_scale = metric.state_weight * last(point) / metric.palc_state_weight
+    moves = sum(index -> probabilities[index] * (abs(last(point) * vector[index]) + abs(point[index] * last(vector))), range)
+    return eps(E) * ((length(range) + 1 + largest_log) * sum(entry -> abs(big(entry)), applied[range]) + gap_scale * references[player] * moves)
+end
+
 """A one-logit pass with zero gain and no `logit_ranges`."""
 struct RangelessPass end
 
@@ -93,25 +111,41 @@ end
     end
 end
 
-@testset "M v keeps a common move against an extinct reference within its own size, against BigFloat ($element)" for element in (Float32, widen(Float32))
+@testset "each block of M v sums to M's own sum within its rounding bound, at 2, 3 and 4 strategies, against BigFloat ($element)" for element in (Float32, widen(Float32))
     rng = fresh_rng()
-    # Players of 3 and 2 strategies: a block of at most two entries sums exactly in any order.
-    ranges = (1:2, 3:3)
-    for shift in element[10, 30, 60], _ in 1:10
-        point = [shift .+ randn(rng, element, 3); (1 + rand(rng, element)) / 2]
-        state_weight, palc_state_weight = rand(rng, element), (1 + rand(rng, element)) / 2
+    # Players of 2, 3 and 4 strategies.
+    ranges = (1:1, 2:3, 4:6)
+    for shift in element[0, 10, 30, 60], _ in 1:10
+        point = [shift .+ randn(rng, element, 6); (1 + rand(rng, element)) / 2]
+        # `1 - θ` lies under the target term's `c(P) = 1 / 100`.
+        state_weight, palc_state_weight = rand(rng, element), 1 - rand(rng, element) / 200
         metric = FisherMetric(ranges, state_weight, TargetPrecisionTerm, element(10), palc_state_weight)
         exact_metric = FisherMetric(ranges, big(state_weight), TargetPrecisionTerm, big(element(10)), big(palc_state_weight))
         frozen, exact_frozen = PathFollowing.frozen_metric(metric, point), PathFollowing.frozen_metric(exact_metric, big.(point))
-        common, other = element[1, 1, 0, 0], randn(rng, element, 4)
-        exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
-        applied = PathFollowing.metric_apply!(similar(other), frozen, other)
-        # Rounded entries summed apart would leave `eps` of each entry: up to 1e6 times the product at shift 30.
-        @test abs(dot(common, applied) - exact) <= (1 + 64 * eps(element)) * abs(exact)
-        reversed = PathFollowing.metric_apply!(similar(common), frozen, common)
-        @test abs(dot(other, reversed) - exact) <= 64 * eps(element) * (abs(exact) + dot(abs.(other), abs.(reversed)))
-        @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
+        for (player, range) in enumerate(ranges)
+            common = [index in range ? one(element) : zero(element) for index in 1:7]
+            # A common move against an extinct reference has entries near its own sum, so the bound rejects a zero block.
+            for vector in (common, randn(rng, element, 7))
+                applied = PathFollowing.metric_apply!(similar(vector), frozen, vector)
+                exact = sum(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[range])
+                @test abs(sum(big.(applied[range])) - exact) <= block_sum_bound(exact_frozen, applied, vector, player, range)
+            end
+            other = randn(rng, element, 7)
+            exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
+            reversed = PathFollowing.metric_apply!(similar(common), frozen, common)
+            @test abs(dot(other, reversed) - exact) <= 64 * eps(element) * (abs(exact) + dot(abs.(other), abs.(reversed)))
+            @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
+        end
     end
+    # Four strategies, a differential move: entries near 1/4 cannot hold M's sum -1.97e-28, so the block may sum to 0.
+    point, other, common = element[60, 121 // 2, 61, 1], element[1, -1, 0, 0], element[1, 1, 1, 0]
+    metric = FisherMetric((1:3,), one(element), TargetPrecisionTerm, one(element), one(element))
+    frozen = PathFollowing.frozen_metric(metric, point)
+    exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:3,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
+    applied = PathFollowing.metric_apply!(similar(other), frozen, other)
+    exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
+    @test abs(sum(big.(applied[1:3])) - exact) <= block_sum_bound(exact_frozen, applied, other, 1, 1:3)
+    @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
 end
 
 @testset "player_kl is each player's categorical KL, zero at equal logits, finite where probabilities round ($element)" for element in (Float32, widen(Float32))

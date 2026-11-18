@@ -347,9 +347,14 @@ end
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     for distance in (StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), LogitDistance{element}(; tolerance = eps(element), settle_ulps = 0))
-        tracer = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; newton_iterations = 1, distance)))
-        failure = unwrap_error(GameTracing.landed_point(tracer, element(1), (; lam = 1)))
-        @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :landing, 1)
+        settings = PathFollowingSettings{element}(; newton_iterations = 1, distance, max_refusals = 2)
+        tracer = unwrap(GameTracing.path_init(gains, settings))
+        # The opening predictor passes this precision, so the first attempt corrects at it.
+        precision = tracer.step_length * last(tracer.tangent) * 9 // 10
+        failure = unwrap_error(GameTracing.stepped_landing!(tracer, precision, 10))
+        @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :refusals, precision)
+        @test failure.context.last_refusal == PathFollowing.NotConverged
+        @test iszero(failure.context.precision)
     end
 end
 

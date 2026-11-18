@@ -19,6 +19,16 @@ function (circle::Circle{E})(residual::AbstractVector{E}, jacobian::AbstractMatr
     return nothing
 end
 
+"""The curve `λ = u - u³` in `(u, λ)`: λ turns at a minimum, `u = -1/√3`, then at a maximum, `u = 1/√3`."""
+struct Wiggle end
+
+function (::Wiggle)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    residual[1] = point[2] - point[1] + point[1]^3
+    jacobian[1, 1] = 3 * point[1]^2 - 1
+    jacobian[1, 2] = one(E)
+    return nothing
+end
+
 """The fold `H = u² - λ` in `(u, λ)`: λ turns back at `u = 0`."""
 struct Fold end
 
@@ -78,10 +88,10 @@ end
 """A `converged` that never holds."""
 never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
 
-"""The bytes a warm `step!` of `tracer` allocates."""
-function warm_bytes(tracer::Tracer)::Int
-    step!(tracer)
-    return @allocated step!(tracer)
+"""The bytes a warm `step!` of `tracer` toward `bound` allocates."""
+function warm_bytes(tracer::Tracer, bound::Union{Nothing, Bound})::Int
+    step!(tracer, bound)
+    return @allocated step!(tracer, bound)
 end
 
 """Converged when the correction, times `scale`, moved no coordinate more than `tolerance`."""
@@ -160,12 +170,19 @@ function traced(problem::CurveProblem, settings::PseudoArclength, steps::Integer
     return points
 end
 
-"""A tracer on the unit circle after one step of `4/5` from `start` toward `direction`, under step control with no targets."""
-function circle_step(start::Vector{E}, direction::Vector{E})::Tracer where {E <: Real}
+"""A tracer on `system` from `start` toward `direction`, under step control with no targets, and the given overrides."""
+function untargeted(system::Any, start::Vector{E}, direction::Vector{E}; first_step::Real, overrides...)::Tracer where {E <: Real}
     control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
-    tracer = unwrap(init(CurveProblem(Circle(one(E)), start, direction), algorithm(E; step_control = control); first_step = E(4) / 5))
-    unwrap(step!(tracer))
-    return tracer
+    return unwrap(init(CurveProblem(system, start, direction), algorithm(E; step_control = control, overrides...); first_step))
+end
+
+"""The accepted steps of `tracer` toward `bound` until its point lies on it, at most `limit`; a failed step throws."""
+function bounded_steps(tracer::Tracer{E}, bound::Bound{E}, limit::Integer)::Vector{AcceptedStep{E}} where {E <: Real}
+    steps = AcceptedStep{E}[]
+    while tracer.point[bound.coordinate] != bound.value && length(steps) < limit
+        push!(steps, unwrap(step!(tracer, bound)))
+    end
+    return steps
 end
 
 @testset "PathFollowing $E" for E in (Float32, Float64)
@@ -404,40 +421,75 @@ end
         @test step.first_correction > 0
     end
 
-    @testset "land! corrects onto a coordinate's value and keeps the tracer's point" begin
+    @testset "a predictor that reaches the bound is cut there and lands with the value exact" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
-        step!(tracer)
-        before = copy(tracer.point)
-        for value in (E(1) / 4, E(1) / 20)
-            landed = unwrap(land!(tracer, 2, value))
-            @test landed[2] ≈ value atol = 10 * eps(E)
-            @test landed[1] ≈ sqrt(1 - value^2) atol = 100 * tolerance
-        end
-        @test tracer.point == before
+        bound = Bound(2, E(1) / 20)
+        accepted = unwrap(step!(tracer, bound))
+        @test tracer.point[2] == bound.value
+        @test tracer.point[1] ≈ sqrt(1 - bound.value^2) atol = 100 * tolerance
+        # The next step grows from the cut predictor, by at most max_step_growth.
+        @test accepted.step_length ≈ E(1) / 20 rtol = 10 * eps(E)
+        @test tracer.step_length <= 2 * accepted.step_length
+        @test_throws ArgumentError step!(tracer, bound)
     end
 
-    @testset "land! refuses a hyperplane along the tangent, and a corrector that does not converge" begin
-        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
-        @test unwrap_error(land!(tracer, 1, one(E) / 2)) == SingularSystem
-        stubborn = algorithm(E; corrector = Newton(; max_iterations = 2, converged = never, contraction_limit = one(E), error_estimate = LastCorrection()))
-        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), stubborn; first_step = E(1) / 10))
-        @test unwrap_error(land!(tracer, 2, one(E) / 4)) == NotConverged
+    @testset "a step short of the bound moves as without one" begin
+        free = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        bounded = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        unwrap(step!(free))
+        unwrap(step!(bounded, Bound(2, E(1) / 4)))
+        @test (bounded.point, bounded.tangent, bounded.step_length) == (free.point, free.tangent, free.step_length)
     end
 
-    @testset "land! after a step over a fold's top corrects onto the first crossing, from the step's start" begin
-        # From (3/5, 4/5) the step passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
-        tracer = circle_step(E[3, 4] ./ 5, E[-1, 0])
+    @testset "a corrected point past the bound refuses the step as PastBound" begin
+        # From (-7/25, -24/25) a step of 4/5 passes y's minimum at (0, -1) to (3/5, -4/5), past y = -9/10.
+        tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5, max_refusals = 0)
+        failure = unwrap_error(step!(tracer, Bound(2, -E(9) / 10)))
+        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, PastBound)
+        @test tracer.point == E[-7, -24] ./ 25
+    end
+
+    @testset "a bounded step over a fold's top stops at the first crossing" begin
+        # From (3/5, 4/5) a step of 4/5 passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
+        tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)
+        @test length(bounded_steps(tracer, Bound(2, E(9) / 10), 1)) == 1
+        @test tracer.point ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
+        # y = 1/2 lies behind the start, so the same step stays above it.
+        tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)
+        unwrap(step!(tracer, Bound(2, one(E) / 2)))
         @test tracer.point ≈ E[-7, 24] ./ 25 atol = 100 * tolerance
-        @test unwrap(land!(tracer, 2, E(9) / 10)) ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
-        # The start's tangent leads away from y = 1/2, and the point's leads to it only ahead of the point.
-        @test unwrap_error(land!(tracer, 2, one(E) / 2)) == NoCrossing
     end
 
-    @testset "land! after a step through a fold's bottom corrects back from the point" begin
-        # From (-7/25, -24/25) the step passes y's minimum at (0, -1) to (3/5, -4/5); y = -9/10 also lies behind the start.
-        tracer = circle_step(E[-7, -24] ./ 25, E[1, 0])
-        @test tracer.point ≈ E[3, -4] ./ 5 atol = 100 * tolerance
-        @test unwrap(land!(tracer, 2, -E(9) / 10)) ≈ [sqrt(E(19)) / 10, -E(9) / 10] atol = 100 * tolerance
+    @testset "a bounded step through a fold's bottom stops at the first crossing" begin
+        # From (-7/25, -24/25) the step passes y's minimum at (0, -1); it meets y = -97/100 at x = ∓0.2431, the first at -.
+        tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5)
+        @test length(bounded_steps(tracer, Bound(2, -E(97) / 100), 1)) == 1
+        @test tracer.point ≈ [-sqrt(1 - E(97)^2 / 100^2), -E(97) / 100] atol = 100 * tolerance
+        # y = -9/10 lies past the step's end, and first behind its start: the refused step shrinks and lands ahead.
+        tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5)
+        steps = bounded_steps(tracer, Bound(2, -E(9) / 10), 4)
+        @test first(steps).refusals == 1
+        @test tracer.point ≈ [sqrt(E(19)) / 10, -E(9) / 10] atol = 100 * tolerance
+    end
+
+    @testset "a bound behind the start stays behind: the trace lands on its next crossing ahead" begin
+        # From (1, 0) toward rising y the step of 4/5 ends at (3/5, 4/5); y = -1/10 lies behind, at (√99/10, -1/10).
+        tracer = untargeted(Circle(one(E)), E[1, 0], E[0, 1]; first_step = E(4) / 5)
+        bound = Bound(2, -E(1) / 10)
+        unwrap(step!(tracer, bound))
+        @test tracer.point ≈ E[3, 4] ./ 5 atol = 100 * tolerance
+        bounded_steps(tracer, bound, 20)
+        @test tracer.point ≈ [-sqrt(E(99)) / 10, -E(1) / 10] atol = 100 * tolerance
+    end
+
+    @testset "a step over two folds of λ = u - u³ stops at the crossing between them" begin
+        # From u = -3/5 a step of 227/200 passes λ's minimum and maximum to u ≈ 3/5, λ ≈ 48/125; λ = 0 lies between.
+        tracer = untargeted(Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0]; first_step = E(227) / 200, max_refusals = 0)
+        failure = unwrap_error(step!(tracer, Bound(2, zero(E))))
+        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, PastBound)
+        tracer = untargeted(Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0]; first_step = E(227) / 200)
+        bounded_steps(tracer, Bound(2, zero(E)), 20)
+        @test tracer.point ≈ E[0, 0] atol = 100 * tolerance
     end
 
     @testset "a NaN start fails NotFiniteStart" begin
@@ -478,9 +530,13 @@ end
         @test factored_sign(E[1 0; 0 NaN32], [1, 2]) == 0
     end
 
-    @testset "a warm step allocates nothing" begin
+    @testset "a warm step allocates nothing, nor does one that lands on a bound" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
-        @test warm_bytes(tracer) == 0
+        @test warm_bytes(tracer, nothing) == 0
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        bound = Bound(2, E(3) / 20)
+        @test warm_bytes(tracer, bound) == 0
+        @test tracer.point[2] == bound.value
     end
 
     @testset "property: random ellipses keep every point on the curve" begin

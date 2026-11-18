@@ -97,7 +97,7 @@ tangents in radians. Each target is the value its measurement should take: at `f
 The turn is measured in the turn metric, so its target depends on that metric's scaling. `nothing` drops a term.
 
 A step with `f > refusal_factor` is refused; any other step is accepted, and the next one is `1 / max(f, 1 /
-max_step_growth)` times as long, at most `max_step`. A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
+max_step_growth)` times as long as its predictor (cut at a `Bound`), at most `max_step`. A refused step is retried at `1 / max(f, 1 / shrink)` times its length, with `f` from the measurements it made: `κ`
 and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shrink`) when it failed earlier.
 """
 struct StepControl{E <: Real}

@@ -43,8 +43,11 @@ while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
 end
 ```
 
-`land!(tracer, coordinate, value)` corrects onto the curve's point near the last step where one coordinate takes
-`value`. Use it to stop at an exact parameter value that a step passed, also where that step passed a fold's top.
+`step!(tracer, Bound(coordinate, value))` stops at an exact value of one coordinate. A predictor that reaches the
+value is cut there, and Newton's method corrects at that value. A corrected point past it refuses the step as
+`PastBound`, and a shorter step tries again. So the trace stops at the value's first crossing that a predictor or a
+corrected point shows. A curve that passes the value and comes back within one step goes unseen; keep the turn target
+small to keep steps short where the curve bends.
 
 ## Settings
 

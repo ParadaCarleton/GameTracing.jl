@@ -348,19 +348,20 @@ function stopped_context(
 end
 
 """
-One accepted step of `tracer` (PathFollowing's `AcceptedStep`), or the `TraceFailure` that ends the trace:
-`NoConvergence` once it has taken `max_steps`, else `TraceStuck` for PathFollowing's `Unresolved` or
-`TooManyRefusals`. `context` rides on the failure.
+One accepted step of `tracer` (PathFollowing's `AcceptedStep`) that stops at precision `precision` (PathFollowing's
+`Bound`), or the `TraceFailure` that ends the trace: `NoConvergence` once it has taken `max_steps`, else `TraceStuck`
+for PathFollowing's `Unresolved` or `TooManyRefusals`. `context` rides on the failure.
 """
 function path_step!(
         tracer::PathFollowing.Tracer{E},
+        precision::E,
         max_steps::Integer,
         context::NamedTuple,
     )::Result{PathFollowing.AcceptedStep{E}, TraceFailure} where {E <: Real}
     if tracer.steps >= max_steps
         return Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
     end
-    stepped = CommonSolve.step!(tracer)
+    stepped = CommonSolve.step!(tracer, PathFollowing.Bound(length(tracer.point), precision))
     if is_error(stepped)
         failure = unwrap_error(stepped)
         reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
@@ -372,21 +373,8 @@ function path_step!(
 end
 
 """
-The point of `tracer`'s branch at precision `precision` within its last step (`land!`), or the `TraceStuck` failure of
-that landing with `context`. A step over a fold's top can reach `precision` twice; the landing finds the first.
-"""
-function landed_point(tracer::PathFollowing.Tracer{E}, precision::E, context::NamedTuple)::Result{Vector{E}, TraceFailure} where {E <: Real}
-    landed = PathFollowing.land!(tracer, length(tracer.point), precision)
-    if is_error(landed)
-        details = (; target = precision, refusal = unwrap_error(landed))
-        return Err(TraceFailure(TraceStuck, stopped_context(:landing, tracer.point, tracer.steps, context, details)))
-    end
-    return Ok(unwrap(landed))
-end
-
-"""
 `settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
-at most `tolerance`. A step past `maximum_precision` lands there (`landed_point`), which settles or fails
+at most `tolerance`. The steps stop at `maximum_precision` (`path_step!`), where the trace settles or fails
 `NoConvergence` with reason `:maximum_precision`.
 """
 function engine_points(
@@ -412,43 +400,23 @@ function recorded_points(
         max_steps::Integer,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    stepped = capped_step!(tracer, maximum_precision, max_steps, context)
+    stepped = path_step!(tracer, maximum_precision, max_steps, context)
     while !is_error(stepped)
-        point = unwrap(stepped)
+        point = tracer.point
         if !recorder(logits_at(point), last(point))
             return Ok((; recorder.precisions, recorder.logits))
         end
         if last(point) >= maximum_precision
             return Err(TraceFailure(NoConvergence, stopped_context(:maximum_precision, point, tracer.steps, context, (; maximum_precision))))
         end
-        stepped = capped_step!(tracer, maximum_precision, max_steps, context)
+        stepped = path_step!(tracer, maximum_precision, max_steps, context)
     end
     return Err(unwrap_error(stepped))
 end
 
 """
-The point of `tracer`'s next accepted step (`path_step!`), or of its landing at `maximum_precision` once the step
-passes it (`landed_point`), or the failure of either.
-"""
-function capped_step!(
-        tracer::PathFollowing.Tracer{E},
-        maximum_precision::E,
-        max_steps::Integer,
-        context::NamedTuple,
-    )::Result{Vector{E}, TraceFailure} where {E <: Real}
-    stepped = path_step!(tracer, max_steps, context)
-    if is_error(stepped)
-        return Err(unwrap_error(stepped))
-    end
-    if last(tracer.point) < maximum_precision
-        return Ok(tracer.point)
-    end
-    return landed_point(tracer, maximum_precision, context)
-end
-
-"""
 `logit_solve_lambda` on PathFollowing: the logits of `gains`' principal branch at each precision of `precisions`, from
-one trace that lands on each in rising order at its first crossing (`landed_point`), or the first failure.
+one trace whose steps stop at each in rising order (`stepped_landing!`), or the first failure.
 """
 function engine_lambdas(
         gains::NormalFormGains,
@@ -480,14 +448,17 @@ function landed_lambdas(
     return Ok([collect(logits_at(point)) for point in points])
 end
 
-"""The point of `tracer`'s branch at `precision`: steps until one reaches it, then lands there (`landed_point`)."""
+"""
+The point of `tracer`'s branch at `precision`: its steps stop there (`path_step!`), at the first crossing a predictor
+or a corrected point shows.
+"""
 function stepped_landing!(tracer::PathFollowing.Tracer{E}, precision::E, max_steps::Integer)::Result{Vector{E}, TraceFailure} where {E <: Real}
     context = (; lam = precision)
     while last(tracer.point) < precision
-        stepped = path_step!(tracer, max_steps, context)
+        stepped = path_step!(tracer, precision, max_steps, context)
         if is_error(stepped)
             return Err(unwrap_error(stepped))
         end
     end
-    return landed_point(tracer, precision, context)
+    return Ok(copy(tracer.point))
 end

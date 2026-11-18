@@ -56,14 +56,14 @@ end
 
 """
 Whether a `TraceStuck` `failure` of `settings`' engine stalled where it says: BifurcationKit at a point that did not move
-or a step it could not resolve, PathFollowing at an unresolved step, its refusals or a landing.
+or a step it could not resolve, PathFollowing at an unresolved step or its refusals.
 """
 function declared_stall(failure::TraceFailure, ::BifurcationKitSettings)::Bool
     return failure.context.unmoved || failure.context.unresolved
 end
 
 function declared_stall(failure::TraceFailure, ::PathFollowingSettings)::Bool
-    return failure.context.reason in (:unresolved_step, :refusals, :landing)
+    return failure.context.reason in (:unresolved_step, :refusals)
 end
 
 """First-action probabilities of `logits`."""

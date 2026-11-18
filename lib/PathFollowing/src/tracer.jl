@@ -9,10 +9,10 @@ one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not fini
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
 was not finite at an iterate (`NotFiniteResidual`), a bordered system was singular (`SingularSystem`), `accept`
 returned `false` (`AcceptRefused`), step control found the step too long (`TooFast`), or the orientation check found
-a changed sign (`OrientationFlip`). `NoRefusal` marks an accepted attempt. `land!` also refuses `NoCrossing`: neither
-tangent of the last step leads to the value.
+a changed sign (`OrientationFlip`), or the corrected point went past the step's `Bound` (`PastBound`). `NoRefusal`
+marks an accepted attempt.
 """
-@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip NoCrossing
+@enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip PastBound
 
 """
     AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
@@ -46,19 +46,16 @@ end
 """
     Tracer
 
-The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the point the last step
-started from and its tangent (`step_start`, `start_tangent`; the start itself before any step), the next
-`step_length`, the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the step
-and turn metrics frozen at `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered
-system. `init` builds one and `step!` advances it. Read its fields; do not write them.
+The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`,
+the accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the step and turn metrics
+frozen at `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system. `init`
+builds one and `step!` advances it. Read its fields; do not write them.
 """
 mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, T}
     const problem::P
     const algorithm::A
     const point::Vector{E}
     const tangent::Vector{E}
-    const step_start::Vector{E}
-    const start_tangent::Vector{E}
     step_length::E
     steps::Int
     orientation::Int8
@@ -100,7 +97,7 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0),
+        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0),
         frozen_metric(algorithm.metric, problem.start), frozen_metric(algorithm.turn_metric, problem.start), zeros(E, size),
         zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
         zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
@@ -120,19 +117,38 @@ function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tr
         return Err(StepFailure(SingularStart, NoRefusal, tracer.step_length, 0))
     end
     tracer.tangent .= tracer.candidate ./ metric_norm(tracer.metric, tracer.candidate)
-    copyto!(tracer.start_tangent, tracer.tangent)
     tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
 
 """
-    step!(tracer)
+    Bound(coordinate, value)
+
+A value of one coordinate that a step (`step!`) stops at: `x[coordinate] = value`.
+"""
+struct Bound{E <: Real}
+    coordinate::Int
+    value::E
+end
+
+"""
+    step!(tracer[, bound])
 
 Advance `tracer` by one accepted point and return its `AcceptedStep`, or the `StepFailure` that ends the trace. A
-refused attempt shrinks the step and tries again.
+refused attempt shrinks the step and tries again. With a `Bound`, the step stays on the point's side of the bound or
+stops on it. A predictor that reaches the bound is cut where its line meets it, and Newton's method corrects at the
+bound's value, under every test of a step. A corrected point past the bound refuses as `PastBound`. The step sees the
+bound only at its predictor and corrected point: a curve that passes the bound and comes back within one step goes
+unseen. The point must lie off the bound.
 """
-function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailure{E}} where {E <: Real}
+function CommonSolve.step!(
+        tracer::Tracer{E},
+        bound::Union{Nothing, Bound{E}} = nothing,
+    )::Result{AcceptedStep{E}, StepFailure{E}} where {E <: Real}
     (; algorithm) = tracer
+    if on_bound(bound, tracer.point)
+        throw(ArgumentError("the point lies on the bound $bound"))
+    end
     refusals = 0
     last_refusal = NoRefusal
     while true
@@ -140,10 +156,11 @@ function CommonSolve.step!(tracer::Tracer{E})::Result{AcceptedStep{E}, StepFailu
         if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
             return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
         end
-        attempt = attempt_step!(tracer)
+        lands = reaches(bound, tracer.point, tracer.predicted)
+        taken = lands ? cut_predictor!(tracer, bound) : tracer.step_length
+        attempt = attempt_step!(tracer, bound, lands)
         if attempt.refusal == NoRefusal
-            taken = tracer.step_length
-            accept_point!(tracer, attempt)
+            accept_point!(tracer, attempt, taken)
             return Ok(AcceptedStep(taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn))
         end
         refusals += 1
@@ -177,16 +194,62 @@ function refused(::Type{E}, refusal::Refusal, factor::E = zero(E))::Attempt{E} w
     return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), factor, Int8(0))
 end
 
+"""Whether `point` lies on `bound`; never without one."""
+on_bound(::Nothing, ::AbstractVector)::Bool = false
+function on_bound(bound::Bound{E}, point::AbstractVector{E})::Bool where {E <: Real}
+    return point[bound.coordinate] == bound.value
+end
+
+"""Whether `to` lies on `bound` or on its other side from `from`; never without one."""
+reaches(::Nothing, ::AbstractVector, ::AbstractVector)::Bool = false
+function reaches(bound::Bound{E}, from::AbstractVector{E}, to::AbstractVector{E})::Bool where {E <: Real}
+    return signbit(from[bound.coordinate] - bound.value) != signbit(to[bound.coordinate] - bound.value) || on_bound(bound, to)
+end
+
 """
-Correct `tracer.predicted`, then test the corrected point: `accept`, a finite system there, its tangent, step
-control's factor and its orientation sign.
+Cut `tracer.predicted` where its line from `tracer.point` meets `bound`, and border the corrector's system with the
+bound's coordinate. The cut predictor's length in the step metric.
 """
-function attempt_step!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
+function cut_predictor!(tracer::Tracer{E}, bound::Bound{E})::E where {E <: Real}
+    (; coordinate, value) = bound
+    fraction = (value - tracer.point[coordinate]) / (tracer.predicted[coordinate] - tracer.point[coordinate])
+    tracer.predicted .= tracer.point .+ (fraction * tracer.step_length) .* tracer.tangent
+    tracer.predicted[coordinate] = value
+    fill!(tracer.row, zero(E))
+    tracer.row[coordinate] = one(E)
+    return fraction * tracer.step_length
+end
+
+"""
+After a correction against `bound`: a landing (`lands`) keeps the bound's value exactly; else whether the corrected
+point went past the bound.
+"""
+past_bound!(::Tracer, ::Nothing, ::Bool)::Bool = false
+function past_bound!(tracer::Tracer{E}, bound::Bound{E}, lands::Bool)::Bool where {E <: Real}
+    if lands
+        # The bordered row holds the coordinate at the value; this drops the solves' rounding.
+        tracer.iterate[bound.coordinate] = bound.value
+        return false
+    end
+    return reaches(bound, tracer.point, tracer.iterate) && !on_bound(bound, tracer.iterate)
+end
+
+"""
+Correct `tracer.predicted`, then test the corrected point: `bound`, `accept`, a finite system there, its tangent,
+step control's factor and its orientation sign. A landing (`lands`) holds its row from `cut_predictor!`; any other
+attempt borders with the tangent.
+"""
+function attempt_step!(tracer::Tracer{E}, bound::Union{Nothing, Bound{E}}, lands::Bool)::Attempt{E} where {E <: Real}
     (; algorithm) = tracer
-    metric_apply!(tracer.row, tracer.metric, tracer.tangent)
+    if !lands
+        metric_apply!(tracer.row, tracer.metric, tracer.tangent)
+    end
     corrected = correct!(tracer)
     if corrected.refusal != NoRefusal
         return corrected
+    end
+    if past_bound!(tracer, bound, lands)
+        return refused(E, PastBound)
     end
     if !algorithm.accept(tracer.point, tracer.predicted, tracer.iterate)
         return refused(E, AcceptRefused)
@@ -382,67 +445,18 @@ function factor_term(target::E, measured::E)::E where {E <: Real}
 end
 
 """
-Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, keep the step's start and its
-tangent, freeze both metrics there and size the next step.
+Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, freeze both metrics there and size
+the next step from the predictor's length `taken`.
 """
-function accept_point!(tracer::Tracer{E}, attempt::Attempt{E})::Tracer{E} where {E <: Real}
+function accept_point!(tracer::Tracer{E}, attempt::Attempt{E}, taken::E)::Tracer{E} where {E <: Real}
     (; algorithm) = tracer
-    copyto!(tracer.step_start, tracer.point)
-    copyto!(tracer.start_tangent, tracer.tangent)
     copyto!(tracer.point, tracer.iterate)
     tracer.orientation = attempt.orientation
     freeze_metric!(tracer.metric, tracer.point)
     freeze_metric!(tracer.turn_metric, tracer.point)
     tracer.tangent .= tracer.candidate ./ metric_norm(tracer.metric, tracer.candidate)
     (; max_step_growth, max_step) = algorithm.step_control
-    tracer.step_length = min(tracer.step_length / max(attempt.factor, inv(max_step_growth)), max_step)
+    tracer.step_length = min(taken / max(attempt.factor, inv(max_step_growth)), max_step)
     tracer.steps += 1
     return tracer
-end
-
-"""
-    land!(tracer, coordinate, value)
-
-The curve's point where `x[coordinate] = value` near the last step, or the `Refusal` that stopped its corrector. The
-predictor follows the point's tangent back to that hyperplane, or else the step start's tangent forward to it
-(`landing_origin`), and Newton's method corrects on it. A step over a fold's top can cross the value twice, and the
-point's tangent then leads on to a later crossing; the start's leads to the first. The tracer keeps its point, tangent
-and step.
-"""
-function land!(tracer::Tracer{E}, coordinate::Integer, value::Real)::Result{Vector{E}, Refusal} where {E <: Real}
-    origin = landing_origin(tracer, coordinate, E(value))
-    if is_error(origin)
-        return Err(unwrap_error(origin))
-    end
-    (from, along) = unwrap(origin)
-    tracer.predicted .= from .+ ((E(value) - from[coordinate]) / along[coordinate]) .* along
-    tracer.predicted[coordinate] = E(value)
-    fill!(tracer.row, zero(E))
-    tracer.row[coordinate] = one(E)
-    corrected = correct!(tracer)
-    if corrected.refusal != NoRefusal
-        return Err(corrected.refusal)
-    end
-    return Ok(copy(tracer.iterate))
-end
-
-"""
-The point and tangent a landing on `x[coordinate] = value` predicts from: the point when its tangent leads back to the
-value, else the step's start when its tangent leads forward to it. Where both lead there, the point predicts better:
-from the start, a long step's landing diverged on a random game. Two tangents parallel to the hyperplane refuse as
-`SingularSystem`, and two that lead away from the value as `NoCrossing`.
-"""
-function landing_origin(tracer::Tracer{E}, coordinate::Integer, value::E)::Result{NTuple{2, Vector{E}}, Refusal} where {E <: Real}
-    (; step_start, start_tangent, point, tangent) = tracer
-    if leads_to(point, tangent, coordinate, value, -one(E))
-        return Ok((point, tangent))
-    elseif leads_to(step_start, start_tangent, coordinate, value, one(E))
-        return Ok((step_start, start_tangent))
-    end
-    return Err(iszero(start_tangent[coordinate]) && iszero(tangent[coordinate]) ? SingularSystem : NoCrossing)
-end
-
-"""Whether `tangent` leads from `from` to `x[coordinate] = value` in the sense `sense`: `1` forward, `-1` back."""
-function leads_to(from::AbstractVector{E}, tangent::AbstractVector{E}, coordinate::Integer, value::E, sense::E)::Bool where {E <: Real}
-    return !iszero(tangent[coordinate]) && sense * (value - from[coordinate]) * tangent[coordinate] >= 0
 end

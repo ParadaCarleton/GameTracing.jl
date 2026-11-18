@@ -368,7 +368,8 @@ function settled_strategies(gains::NormalFormGains, logits::AbstractVector, prec
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
     corrected = root .- branch_step(gains, logits, precision)
     measure = GameTracing.corrector_measure(distance, gains)
-    return measure([root ./ level; level], [corrected ./ level; level]) <= 2 * distance.tolerance
+    # The measure reads only the logits `z = λ w`, so `[z; 1]` serves at every precision, zero included.
+    return measure([root; one(level)], [corrected; one(level)]) <= 2 * distance.tolerance
 end
 
 """

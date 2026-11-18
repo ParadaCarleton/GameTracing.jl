@@ -135,8 +135,8 @@ function logit_solve_lambda(
     )::BranchResult{E, N} where {N, E <: Real}
     require_payoff_type(gains, settings)
     precisions = E.(lam)
-    # Checked in `E`, where a tiny or huge precision rounds to 0 or Inf.
-    if !all(reachable, precisions)
+    # Checked before and after conversion to `E`, which rounds a tiny negative precision to -0 and a huge one to Inf.
+    if !(all(reachable, lam) && all(reachable, precisions))
         throw(ArgumentError("every precision must be non-negative and finite in $E; got $lam"))
     end
     logits = engine_lambdas(gains, precisions, settings)

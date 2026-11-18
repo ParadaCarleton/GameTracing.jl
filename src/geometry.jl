@@ -46,11 +46,16 @@ end
 
 """
 `(gap, precision)`: the weights of `Σ Δwᵢ²` and `Δλ²` in `geometry`'s plain norm over `width` gaps at target precision
-`target_precision` (`coordinate_weight`, `precision_weight`, `StepDistance`).
+`target_precision` (`coordinate_weight`, `precision_weight`, `StepDistance`). A target whose square leaves `E`'s
+range throws `ArgumentError`; `FisherLogPrecisionDistance` does not square it.
 """
 function plain_weights(geometry::TraceGeometry{E}, width::Integer, target_precision::Real)::NTuple{2, E} where {E <: Real}
     target = E(target_precision)
-    return (coordinate_weight(geometry, width) * target^2, precision_weight(geometry) / target^2)
+    gap, precision = coordinate_weight(geometry, width) * target^2, precision_weight(geometry) / target^2
+    if !(gap > 0 && isfinite(gap) && precision > 0 && isfinite(precision))
+        throw(ArgumentError("target precision $target_precision squares out of range in $E; use FisherLogPrecisionDistance or a wider type"))
+    end
+    return (gap, precision)
 end
 
 """The plain inner product of two displacements `[Δw; Δλ]` in `geometry` at `target_precision` (`plain_weights`)."""

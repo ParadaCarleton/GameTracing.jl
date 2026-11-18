@@ -13,10 +13,18 @@ equilibrium. `target_precision` is the precision a trace ends at, non-negative a
 struct LogitGame{P, T <: Real}
     pass!::P
     target_precision::T
-    function LogitGame(pass!::P, target_precision::T)::LogitGame{P, T} where {P, T <: Real}
-        reachable(target_precision) || throw(ArgumentError("target_precision must be non-negative and finite; got $target_precision"))
-        return new{P, T}(pass!, target_precision)
+    function LogitGame{P, T}(pass!::P, target_precision::Real)::LogitGame{P, T} where {P, T <: Real}
+        stored = convert(T, target_precision)
+        # Both: a conversion can round a negative target to -0 or a huge one to Inf.
+        if !(reachable(target_precision) && reachable(stored))
+            throw(ArgumentError("target_precision must be non-negative and finite in $T; got $target_precision"))
+        end
+        return new{P, T}(pass!, stored)
     end
+end
+
+function LogitGame(pass!::P, target_precision::T)::LogitGame{P, T} where {P, T <: Real}
+    return LogitGame{P, T}(pass!, target_precision)
 end
 
 """Whether a trace can reach `precision`: it rises from its start at `λ = 0`, so a non-negative, finite one."""

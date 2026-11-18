@@ -358,11 +358,16 @@ end
         for maximum_precision in (-1, 0, NaN32, nextfloat(zero(widen(Float32))), huge)
             @test_throws ArgumentError logit_solve_branch(gains; maximum_precision, maxregret = 10, settings)
         end
-        for lam in (-1, NaN32, huge)
+        # The tiny negative precision rounds to -0 in Float32.
+        for lam in (-1, NaN32, huge, -nextfloat(zero(widen(Float32))))
             @test_throws ArgumentError logit_solve_lambda(gains, lam; settings)
         end
     end
     @test_throws ArgumentError trace_endpoint(LogitGame(gains, -1.0f0), 2, BifurcationKitSettings{Float32}())
+    # A target given in a wider type is checked as stored too.
+    @test LogitGame{typeof(gains), Float32}(gains, 1).target_precision === 1.0f0
+    @test_throws ArgumentError LogitGame{typeof(gains), Float32}(gains, huge)
+    @test_throws ArgumentError LogitGame{typeof(gains), Float32}(gains, -nextfloat(zero(widen(Float32))))
 end
 
 @testset "a zero precision gives the flat start, with no step and no log ($element)" for element in (Float32, widen(Float32))
@@ -370,13 +375,28 @@ end
     for distance in instances(StepDistance)
         settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
         traced = unwrap(@test_logs trace_endpoint(LogitGame(NormalFormPass(payoffs), zero(element)), 2, settings))
-        @test traced.logits == zeros(element, 2) && traced.steps == 0
+        @test traced.logits == zeros(element, 2) && traced.steps == 0 && traced.logit_accuracy == 0
     end
+    # A target that rounds to zero in the trace's type takes the same path.
+    rounded = unwrap(@test_logs trace_endpoint(LogitGame(NormalFormPass(payoffs), big"1e-1000"), 2, BifurcationKitSettings{element}()))
+    @test rounded.logits == zeros(element, 2) && rounded.steps == 0
     for (_, settings) in engine_settings(element)
         profiles = unwrap(@test_logs logit_solve_lambda(NormalFormGains(payoffs), [1, 0]; settings))
         @test last(profiles).lam == 0 && all(==(fill(element(0.5f0), 2)), last(profiles).profile)
         @test first(profiles).lam == 1
     end
+end
+
+@testset "a target that squares out of range throws in the plain distances; the log-precision distance traces it ($element)" for element in (Float32, widen(Float32))
+    pass = NormalFormPass(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
+    tiny, huge = sqrt(nextfloat(zero(element))), sqrt(floatmax(element)) * 2
+    for distance in (AveragedDistance, SummedDistance, FisherDistance), target in (tiny, huge)
+        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
+        @test_throws ArgumentError trace_endpoint(LogitGame(pass, target), 2, settings)
+    end
+    settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherLogPrecisionDistance))
+    # To first order the logits are the target times the gains at even odds: (8 + 0) / 2 - (7 + 5) / 2 = -2 for each player.
+    @test unwrap(trace_endpoint(LogitGame(pass, tiny), 2, settings)).logits ≈ fill(-2 * tiny, 2) rtol = 1.0f-3
 end
 
 @testset "PathFollowing's first step is finite and under max_step ($element)" for element in (Float32, widen(Float32))

@@ -446,8 +446,9 @@ function trace_endpoint(
             )
         )
     end
-    # The flat start is the only root at precision zero, so a zero target takes no step.
-    if iszero(game.target_precision)
+    # The flat start is the only root at precision zero, so a zero target takes no step. Checked in `E`, where a tiny
+    # target rounds to 0.
+    if iszero(E(game.target_precision))
         return Ok(Traced(flat, 0, zero(E)))
     end
     opening = TraceProgress(

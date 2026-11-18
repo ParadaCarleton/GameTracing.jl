@@ -5,5 +5,5 @@ The BifurcationKit trace, its callbacks, failures, redraws and projections.
 ```@autodocs
 Modules = [GameTracing]
 Public = false
-Pages = ["trace.jl", "callbacks.jl", "failure.jl", "redraw.jl", "projection.jl"]
+Pages = ["src/trace.jl", "src/callbacks.jl", "src/failure.jl", "src/redraw.jl", "src/projection.jl"]
 ```

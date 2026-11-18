@@ -34,7 +34,8 @@ end
     StepFailure(cause, last_refusal, step_length, refusals)
 
 A trace's end short of its caller's goal: the `FailureCause`, the last `Refusal` before it (`NoRefusal` at the start),
-the step length then and the refusals in the failed step.
+the step length its failing check judged and the refusals in the failed step. That length is the first step at the
+start, the controller's step for `Unresolved`, and the last refused predictor, cut at a `Bound`, for `TooManyRefusals`.
 """
 struct StepFailure{E <: Real}
     cause::FailureCause
@@ -142,7 +143,8 @@ refused attempt shrinks the predictor it took, cut or not, and tries again. With
 point's side of the bound or stops on it. A predictor that reaches the bound is cut where its line meets it, and
 Newton's method corrects at the bound's value, under every test of a step. A corrected point past the bound refuses as
 `PastBound`. The step sees the bound only at its predictor and corrected point: a curve that passes the bound and
-comes back within one step goes unseen. The point must lie off the bound.
+comes back within one step goes unseen. The resolution check judges the controller's step before the cut, as a landing
+always moves the point. The point must lie off the bound.
 """
 function CommonSolve.step!(
         tracer::Tracer{E},
@@ -154,14 +156,15 @@ function CommonSolve.step!(
     end
     refusals = 0
     last_refusal = NoRefusal
+    taken = tracer.step_length
     while true
         tracer.predicted .= tracer.point .+ tracer.step_length .* tracer.tangent
+        # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
+        if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
+            return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
+        end
         lands = reaches(bound, tracer.point, tracer.predicted)
         taken = lands ? cut_predictor!(tracer, bound) : tracer.step_length
-        # Checked after the cut, so a landing below the resolution fails too.
-        if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
-            return Err(StepFailure(Unresolved, last_refusal, taken, refusals))
-        end
         attempt = attempt_step!(tracer, bound, lands)
         if attempt.refusal == NoRefusal
             accept_point!(tracer, attempt, taken)
@@ -176,7 +179,7 @@ function CommonSolve.step!(
         shrink = inv(algorithm.step_control.shrink)
         tracer.step_length = taken / ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
     end
-    return Err(StepFailure(TooManyRefusals, last_refusal, tracer.step_length, refusals))
+    return Err(StepFailure(TooManyRefusals, last_refusal, taken, refusals))
 end
 
 """

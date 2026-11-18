@@ -170,8 +170,8 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
   step near a fold can land where the oriented tangent runs back along the curve.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
-- `min_step_ulps`: a predictor, cut at a `Bound` or not, that moves no coordinate by more than this many ulps of
-  its size ends the trace as `Unresolved`; smaller steps cannot add a point.
+- `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
+  as `Unresolved`; smaller steps cannot add a point. The check judges the step before a `Bound` cuts it.
 - `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
 """
 struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}

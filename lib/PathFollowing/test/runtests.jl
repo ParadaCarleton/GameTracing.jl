@@ -474,14 +474,27 @@ end
         @test accepted.step_length < E(9) / 10
         bounded_steps(tracer, bound, 40)
         @test tracer.point ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
+        # Without retries the failure reports the cut predictor it refused.
+        settings = algorithm(E; step_control = control, max_refusals = 0)
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(100)))
+        failure = unwrap_error(step!(tracer, bound))
+        @test failure.cause == TooManyRefusals
+        @test failure.step_length ≈ E(9) / 10 rtol = 10 * eps(E)
     end
 
-    @testset "a landing below min_step_ulps fails Unresolved" begin
-        # Up x = y from (1, 1), y = nextfloat(1) is one ulp away: the cut predictor moved each coordinate one ulp.
+    @testset "a bound one ulp ahead lands: the resolution check judges the step before the cut" begin
+        # Up x = y from (1, 1), y = nextfloat(1) is one ulp away. Judging the cut predictor failed this as Unresolved.
         tracer = unwrap(init(CurveProblem(Line(), E[1, 1], E[1, 1]), algorithm(E); first_step = E(1) / 10))
-        failure = unwrap_error(step!(tracer, Bound(2, nextfloat(one(E)))))
-        @test failure.cause == Unresolved
-        @test tracer.point == E[1, 1]
+        bound = Bound(2, nextfloat(one(E)))
+        unwrap(step!(tracer, bound))
+        @test tracer.point[2] == bound.value
+        @test tracer.point[1] ≈ bound.value atol = 4 * eps(E)
+        # An uncut step ends one ulp short of the bound, and the next step lands on it.
+        tracer = unwrap(init(CurveProblem(Line(), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 10))
+        @test unwrap(step!(tracer, Bound(2, one(E)))).step_length == E(1) / 10
+        bound = Bound(2, nextfloat(tracer.point[2]))
+        unwrap(step!(tracer, bound))
+        @test tracer.point[2] == bound.value
     end
 
     @testset "a bounded step over a fold's top stops at the first crossing" begin

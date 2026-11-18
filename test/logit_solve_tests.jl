@@ -261,9 +261,21 @@ end
 @testset "both engines default to one step metric and Gambit's step growth ($element)" for element in (Float32, widen(Float32))
     metric = GameTracing.default_step_metric(element)
     @test (metric.distance, metric.precision_term) == (FisherDistance, LogPrecisionTerm)
-    @test GameTracing.gambit_settings(element(3 // 100), GameTracing.GAMBIT_MAX_ACCEL).step_metric == metric
-    @test PathFollowingSettings{element}().step_metric == metric
+    gambit, bare = GameTracing.gambit_settings(element(3 // 100), GameTracing.GAMBIT_MAX_ACCEL), BifurcationKitSettings{element}()
+    @test gambit.step_metric == bare.step_metric == PathFollowingSettings{element}().step_metric == metric
+    @test (gambit.aggressiveness, gambit.step_control) == (bare.aggressiveness, bare.step_control)
     @test PathFollowingSettings{element}().max_step_growth == element(GameTracing.GAMBIT_MAX_ACCEL) == StepControl{element}().max_step_growth
+end
+
+@testset "Gambit's max_accel sets the growth limit ($element)" for element in (Float32, widen(Float32))
+    faster = GameTracing.gambit_settings(element(3 // 100), 2)
+    @test (faster.step_control.max_step_growth, faster.aggressiveness) == (2, 1)
+    # BifurcationKit's growth limit must exceed 1: at 1 the step control only refuses.
+    held = GameTracing.gambit_settings(element(3 // 100), 1)
+    @test isnothing(held.step_control.max_step_growth) && iszero(held.aggressiveness)
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
+    steps = Dict(accel => length(unwrap(logit_solve_branch(gains; maxregret = 1.0f-4, max_accel = accel))) for accel in (1, 2))
+    @test steps[1] > steps[2]
 end
 
 @testset "PathFollowing keeps Gambit's branch where a long step ran back along it ($element)" for element in (Float32, widen(Float32))

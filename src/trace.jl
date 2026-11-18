@@ -38,18 +38,19 @@ end
                      palc_options, continuation_options)
 
 BifurcationKit PALC controls for `trace_endpoint`, in `(w, λ)` with `w = logits / λ` the payoff gaps and `λ` the
-precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`); the default is the Fisher
-distance (`TraceGeometry`).
+precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`). Each default matches
+`gambit_settings` at Gambit's `max_accel`, except `first_step`.
 
 - `first_step`, `max_step`: first and largest arclength step. A step whose corrector fails halves; the trace ends as
   `TraceStuck` once its predictor moves the point no more than a few ulps of its size (`step_unresolved`).
   BifurcationKit's `dsmin` is zero: its halving stops at a zero step. After the predictor stops moving, BifurcationKit
   still halves to zero through the subnormals, about 150 halvings of one refused residual evaluation each.
 - `aggressiveness` (BifurcationKit's `a`): without a `step_control` growth limit, a step grows by
-  `1 + a ((N - n) / N)²` after a corrector of `n` of its `N = corrector.newton_iterations` iterations.
+  `1 + a ((N - n) / N)²` after a corrector of `n` of its `N = corrector.newton_iterations` iterations. The default
+  is `GAMBIT_MAX_ACCEL - 1`, the growth limit's largest growth.
 - `corrector`: a `CorrectorSettings`.
-- `step_metric`: a `TraceGeometry`, the norm a trace steps in and its state weight. The first tangent is the exact
-  tangent at the flat start (`opening_tangent`).
+- `step_metric`: a `TraceGeometry`, the norm a trace steps in and its state weight. The default is
+  `default_step_metric`, both engines' default. The first tangent is the exact tangent at the flat start (`opening_tangent`).
 - `max_steps`: continuation steps before the trace fails as `NoConvergence`.
 - `tangent`: BifurcationKit's tangent algorithm, passed to PALC as is. `Bordered()` (the default) solves the bordered
   Jacobian system. `Secant()` extrapolates the last two points and saves that solve. Do not use it where a small payoff
@@ -94,8 +95,8 @@ end
 function BifurcationKitSettings{E}(;
         first_step::Real = 0.05f0,
         max_step::Real = 1000.0f0,
-        aggressiveness::Real = 0.5f0,
-        step_metric::TraceGeometry{E} = TraceGeometry{E}(),
+        aggressiveness::Real = GAMBIT_MAX_ACCEL - 1,
+        step_metric::TraceGeometry{E} = default_step_metric(E),
         corrector::CorrectorSettings{E} = CorrectorSettings{E}(),
         max_steps::Integer = 2_000,
         tangent::T = BifurcationKit.Bordered(),

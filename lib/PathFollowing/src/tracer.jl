@@ -407,6 +407,7 @@ end
 Whether the corrected point lies farther than step control's `reach` times `taken` from its predictor in the step
 metric, by more than the corrector's noise. The noise is the move, in Newton's `distance`, within the error bounds of
 the start and of the point (`settle_error`, the point's from its convergence `scale`). A NaN move is far.
+A move that `distance` measures as zero passes, by intent: in GameTracing such a move leaves every strategy unchanged.
 """
 function far_from_predictor(tracer::Tracer{E}, taken::E, scale::E)::Bool where {E <: Real}
     (; algorithm) = tracer

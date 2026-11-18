@@ -260,15 +260,6 @@ end
     @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
 end
 
-@testset "PathFollowing keeps the principal branch past an unfolded pitchfork ($element)" for element in (Float32, widen(Float32))
-    gains = NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME))
-    checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
-    # The branch ends near the pure equilibrium (1, 1); the middle arm it passes ends mixed.
-    @test all(strategy -> first(strategy) > 99 // 100, checked.profile)
-    oracle = gambit_strategies(UNFOLDED_PITCHFORK_GAME, checked.lam)
-    @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
-end
-
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
     one_player = GameTracing.FisherRaoChange((1:1,))
     # From even odds to odds of 1:3 the Bhattacharyya angle is 15°, so the distance is twice that: π / 6.

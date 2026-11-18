@@ -37,6 +37,13 @@ function gambit_branch(
     return (; precision = pyconvert(E, profile.lam), first_choices)
 end
 
+"""Gambit's default `(; first_step, max_accel)` in `Float32`, read from `pygambit.qre.logit_solve_lambda`'s signature."""
+function gambit_step_defaults()::NamedTuple{(:first_step, :max_accel), Tuple{Float32, Float32}}
+    parameters = pyimport("inspect").signature(pyimport("pygambit").qre.logit_solve_lambda).parameters
+    first_step = pyconvert(Float32, parameters["first_step"].default)
+    return (; first_step, max_accel = pyconvert(Float32, parameters["max_accel"].default))
+end
+
 """Whether the branch points' precisions `lambdas` decrease anywhere before they first reach `target`."""
 function folds_before(lambdas::AbstractVector{E}, target::Real)::Bool where {E <: Real}
     rising = collect(Iterators.takewhile(<(target), lambdas))

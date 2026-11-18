@@ -1,4 +1,5 @@
 using BifurcationKit: BifurcationKit
+using ErrorfreeArithmetic: two_hilo_diff, two_prod, two_sum
 using LogExpFunctions: log1pmx
 using PathFollowing: PathFollowing
 """The gap of strategy `index` at a point `[w; λ]`: `w[index]`, or zero for the reference strategy, `index = 0`."""
@@ -176,7 +177,7 @@ end
 
 """
 `D` with `max(√c(λ), √c(P)) = 1 / D` at precision `precision` toward `target_precision` `P` (`precision_term_root`), as
-the unevaluated sum `(high, low)`: `TargetPrecisionTerm` `P`, `LogPrecisionTerm` `1 + min(|λ|, P)` by TwoSum.
+the unevaluated sum `(high, low)`: `TargetPrecisionTerm` `P`, `LogPrecisionTerm` `1 + min(|λ|, P)` by `two_sum`.
 """
 function weight_denominator(precision_term::PrecisionTerm, precision::E, target_precision::E)::NTuple{2, E} where {E <: Real}
     if precision_term == LogPrecisionTerm
@@ -185,25 +186,17 @@ function weight_denominator(precision_term::PrecisionTerm, precision::E, target_
     return (target_precision, zero(E))
 end
 
-"""Knuth's TwoSum: `left + right` rounded, and its rounding error. The two sum to `left + right` exactly."""
-function two_sum(left::E, right::E)::NTuple{2, E} where {E <: Real}
-    total = left + right
-    right_part = total - left
-    return (total, (left - (total - right_part)) + (right - right_part))
-end
-
 """
 `1 - (1 - θ) D²` for `θ = palc_state_weight` and `D = high + low` (`weight_denominator`): one minus PALC's share of
-the weight of `Δλ²`. Near a share of one, the subtraction cancels. Fast2Sum keeps the rounding error of `1 - θ`, as
-`θ ≤ 1`, and FMA keeps the rounding error of each product. While `1 - θ ≤ 1 / D²`, every product is finite and the
-result is within `eps |r| + 8 eps²` of the exact value `r`.
+the weight of `Δλ²`. Near a share of one, the subtraction cancels. Fast2Sum (`two_hilo_diff`, as `θ ≤ 1`) keeps the
+rounding error of `1 - θ`, and FMA (`two_prod`) keeps the rounding error of each product. While `1 - θ ≤ 1 / D²`,
+every product is finite and the result is within `eps |r| + 8 eps²` of the exact value `r`.
 """
 function share_complement(palc_state_weight::E, (high, low)::NTuple{2, E})::E where {E <: Real}
-    rest = one(E) - palc_state_weight
-    rest_error = (one(E) - rest) - palc_state_weight
-    partial = rest * high
-    share = partial * high
-    share_error = fma(partial, high, -share) + (fma(rest, high, -partial) + rest_error * high + 2 * rest * low) * high
+    rest, rest_error = two_hilo_diff(one(E), palc_state_weight)
+    partial, partial_error = two_prod(rest, high)
+    share, product_error = two_prod(partial, high)
+    share_error = product_error + (partial_error + rest_error * high + 2 * rest * low) * high
     return (one(E) - share) - share_error
 end
 

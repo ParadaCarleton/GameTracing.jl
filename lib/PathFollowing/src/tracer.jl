@@ -85,7 +85,8 @@ function CommonSolve.init(
         algorithm::PseudoArclength;
         first_step::Real,
     )::Result{<:Tracer{E}, StepFailure{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
-    0 < first_step < Inf || throw(ArgumentError("first_step must be positive and finite; got $first_step"))
+    # Checked in `E`, where a tiny or huge `first_step` rounds to 0 or Inf.
+    0 < E(first_step) < Inf || throw(ArgumentError("first_step must be positive and finite in $E; got $first_step"))
     size = length(problem.start)
     length(problem.direction) == size || throw(DimensionMismatch("start and direction differ in length"))
     bordered = zeros(E, size, size)

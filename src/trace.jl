@@ -415,7 +415,8 @@ Follow `game`'s branch of `width` logits from the flat start (zero logits, the o
 `keep_going(logits, λ)` runs at each accepted point before the next step's corrector, and `false` stops the trace.
 `accept_corrected(logits, λ, converged)` runs as each corrector ends, and `false` refuses a converged point, which
 halves the step. A trace that stops short fails with `NoConvergence` when it spends `settings.max_steps` and `TraceStuck` otherwise (a step below the float type's resolution, an unchanged accepted point, or a
-refusal); a non-finite start or a broken linear solve fails `NotFinite` or `Singular`. `context` rides on
+refusal); a non-finite start or a broken linear solve fails `NotFinite` or `Singular`. A zero target returns the
+flat start, with no step. `context` rides on
 every failure.
 
 `redraw(logits, λ, shift)` runs at each accepted point short of the target precision that `keep_going` passes, and returns
@@ -444,6 +445,10 @@ function trace_endpoint(
                 (; context..., logits = flat, precision = zero(E)),
             )
         )
+    end
+    # The flat start is the only root at precision zero, so a zero target takes no step.
+    if iszero(game.target_precision)
+        return Ok(Traced(flat, 0, zero(E)))
     end
     opening = TraceProgress(
         payoff_gaps(traced_start)[:],

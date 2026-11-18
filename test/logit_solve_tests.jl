@@ -352,8 +352,30 @@ end
     @test_throws ArgumentError logit_solve(gains; maxregret = 0)
     @test_throws ArgumentError logit_solve(gains; first_step = 0)
     @test_throws ArgumentError logit_solve_lambda(gains, 1; max_accel = 0.5f0)
-    for (_, settings) in engine_settings(Float32), maximum_precision in (-1, 0)
-        @test_throws ArgumentError logit_solve_branch(gains; maximum_precision, maxregret = 10, settings)
+    # A wider cap can round to 0 or Inf in Float32.
+    huge = floatmax(widen(Float32))
+    for (_, settings) in engine_settings(Float32)
+        for maximum_precision in (-1, 0, NaN32, nextfloat(zero(widen(Float32))), huge)
+            @test_throws ArgumentError logit_solve_branch(gains; maximum_precision, maxregret = 10, settings)
+        end
+        for lam in (-1, NaN32, huge)
+            @test_throws ArgumentError logit_solve_lambda(gains, lam; settings)
+        end
+    end
+    @test_throws ArgumentError trace_endpoint(LogitGame(gains, -1.0f0), 2, BifurcationKitSettings{Float32}())
+end
+
+@testset "a zero precision gives the flat start, with no step and no log ($element)" for element in (Float32, widen(Float32))
+    payoffs = map(table -> element.(table), LOGITNASH_GAMES.stag_hunt)
+    for distance in instances(StepDistance)
+        settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
+        traced = unwrap(@test_logs trace_endpoint(LogitGame(NormalFormPass(payoffs), zero(element)), 2, settings))
+        @test traced.logits == zeros(element, 2) && traced.steps == 0
+    end
+    for (_, settings) in engine_settings(element)
+        profiles = unwrap(@test_logs logit_solve_lambda(NormalFormGains(payoffs), [1, 0]; settings))
+        @test last(profiles).lam == 0 && all(==(fill(element(0.5f0), 2)), last(profiles).profile)
+        @test first(profiles).lam == 1
     end
 end
 

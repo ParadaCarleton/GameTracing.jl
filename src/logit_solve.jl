@@ -122,8 +122,8 @@ end
 pygambit's `logit_solve_lambda`: the `LogitQREProfile` on the principal branch of the normal-form game `gains`
 (`NormalFormGains`) at each precision in `lam`, a number or a vector, in `lam`'s order, or the first trace's failure.
 `first_step` and `max_accel` set the trace's steps (`gambit_settings`); `settings`, an `EngineSettings`, replaces
-them whole. `PathFollowingSettings` trace once and land on each precision at its first crossing; they refuse a negative one.
-Profiles take `float` of the payoffs' element type (Float64 for integer payoffs), and `settings` must share it
+them whole. `PathFollowingSettings` trace once and land on each precision at its first crossing. Every precision must
+be non-negative and finite in the trace's element type (`ArgumentError` otherwise). Profiles take `float` of the payoffs' element type (Float64 for integer payoffs), and `settings` must share it
 (`ArgumentError` otherwise).
 """
 function logit_solve_lambda(
@@ -134,11 +134,16 @@ function logit_solve_lambda(
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
     )::BranchResult{E, N} where {N, E <: Real}
     require_payoff_type(gains, settings)
-    logits = engine_lambdas(gains, E.(lam), settings)
+    precisions = E.(lam)
+    # Checked in `E`, where a tiny or huge precision rounds to 0 or Inf.
+    if !all(reachable, precisions)
+        throw(ArgumentError("every precision must be non-negative and finite in $E; got $lam"))
+    end
+    logits = engine_lambdas(gains, precisions, settings)
     if is_error(logits)
         return Err(unwrap_error(logits))
     end
-    return Ok(LogitQREProfile.((gains,), E.(lam), unwrap(logits)))
+    return Ok(LogitQREProfile.((gains,), precisions, unwrap(logits)))
 end
 
 """
@@ -183,9 +188,9 @@ function settled_points(
     if !(maxregret > 0)
         throw(ArgumentError("maxregret must be positive; got $maxregret"))
     end
-    # A trace rises from λ = 0, so it never reaches a lower cap.
-    if !(maximum_precision > 0)
-        throw(ArgumentError("maximum_precision must be positive; got $maximum_precision"))
+    # Checked in `E`, where a tiny or huge cap rounds to 0 or Inf. A cap of 0 ends the trace at its start.
+    if !(reachable(E(maximum_precision)) && E(maximum_precision) > 0)
+        throw(ArgumentError("maximum_precision must be positive and finite in $E; got $maximum_precision"))
     end
     require_payoff_type(gains, settings)
     return engine_points(gains, settings, E(maximum_precision), E(maxregret) * E(payoff_range(gains)), (; maxregret))

@@ -215,6 +215,9 @@ end
         problem = CurveProblem(Fold(), E[-1, 1], E[1, -1])
         @test unwrap(init(problem, algorithm(E); first_step = E(10))).step_length == one(E) / 2
         @test_throws ArgumentError init(problem, algorithm(E); first_step = typemax(E))
+        # Positive and finite in the wider type, 0 and Inf in `E`.
+        @test_throws ArgumentError init(problem, algorithm(E); first_step = nextfloat(zero(widen(E))))
+        @test_throws ArgumentError init(problem, algorithm(E); first_step = floatmax(widen(E)))
     end
 
     @testset "point weights reweight at every accepted point" begin

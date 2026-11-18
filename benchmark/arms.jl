@@ -481,7 +481,7 @@ end
 
 """
 One variant's trace of an unfolded battle of the sexes: whether it ended on the principal branch (the arclength
-reference's endpoint, to 1e-3), the reference's crossings of a singular point and the trace's steps.
+reference's endpoint, to 1e-3), the count of the reference's crossings of a singular point and the trace's steps.
 """
 struct UnfoldedRow
     scale::Float32
@@ -497,7 +497,7 @@ end
 function UnfoldedRow(scale::Real, draw::Integer, case::C, reference::NamedTuple, (label, settings)::Pair{String, S})::UnfoldedRow where {C <: Case, S <: BifurcationKitSettings}
     outcome = Outcome(case, settings)
     principal = reference.reached && profile_gap(outcome.choices, reference_choices(case, reference)) < 1.0f-3
-    return UnfoldedRow(scale, draw, label, outcome.status, outcome.steps, reference.crossings, principal)
+    return UnfoldedRow(scale, draw, label, outcome.status, outcome.steps, length(reference.crossings), principal)
 end
 
 reached_row(row::UnfoldedRow)::Bool = row.status == "reached"

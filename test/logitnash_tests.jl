@@ -66,6 +66,10 @@ function declared_stall(failure::TraceFailure, ::PathFollowingSettings)::Bool
     return failure.context.reason in (:unresolved_step, :refusals)
 end
 
+"""The last accepted logits of a failed trace of `settings`' engine, in `NormalFormPass`' logits."""
+pass_logits(failure::TraceFailure, ::BifurcationKitSettings)::Vector = collect(failure.context.logits)
+pass_logits(failure::TraceFailure, ::PathFollowingSettings)::Vector = -collect(failure.context.logits)
+
 """First-action probabilities of `logits`."""
 function first_choices(logits::AbstractVector{E})::Vector{E} where {E <: Real}
     return inv.(one(E) .+ exp.(-logits))
@@ -127,7 +131,7 @@ function cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSetting
     end
     reference = branch_reference(NormalFormPass(map(float, payoffs)), length(payoffs), cross.precision)
     # A generic game's branch crosses no singular point.
-    @test reference.crossings == 0
+    @test isempty(reference.crossings)
     if reference.reached
         @test agreeing(traced, reference.first_choices)
     end
@@ -180,7 +184,7 @@ end
         reference = branch_reference(pass, length(payoffs), cross.precision)
         @test reference.reached
         # Only the exact battle of the sexes puts a singular point, its pitchfork, on the branch.
-        @test reference.crossings <= (name == :battle_of_the_sexes)
+        @test length(reference.crossings) <= (name == :battle_of_the_sexes)
         @test residual_norm(pass, reference.logits, cross.precision * float(1)) < inv(float(10^6))
         # In probability space: LogitNash's profile may round a choice to certainty, an infinite logit.
         crossing = log.(cross.first_choices) .- log1p.(-cross.first_choices)
@@ -197,10 +201,11 @@ end
     end
 end
 
-@testset "past an exact pitchfork the trace ends at an equilibrium or fails as Singular, PrecisionExhausted or a stall ($engine)" for (engine, settings) in [tangent_settings(); path_settings()]
+@testset "past an exact pitchfork the trace ends at an equilibrium or fails at the pitchfork, on the branch ($engine)" for (engine, settings) in [tangent_settings(); path_settings()]
     element = GameTracing.element_type(settings)
     for name in PITCHFORK_GAMES
         pass = NormalFormPass(map(table -> element.(table), LOGITNASH_GAMES[name]))
+        reference_pass = NormalFormPass(map(float, LOGITNASH_GAMES[name]))
         result = traced_result(LOGITNASH_GAMES[name], element(4), settings)
         # The cause depends on whether rounding breaks the symmetry: an exact branch point factors singular, while one
         # that rounding unfolds by about eps (battle_of_the_sexes, rcond ≥ 1e-5) is near-singular and exhausts. A step
@@ -210,8 +215,17 @@ end
             failure = unwrap_error(result)
             @test failure.cause in (GameTracing.Singular, GameTracing.PrecisionExhausted) ||
                 (failure.cause == GameTracing.TraceStuck && declared_stall(failure, settings))
-            # A trace that broke at its start never reached the pitchfork.
-            @test failure.context.precision > 0
+            # The failure comes at the reference's pitchfork. Measured, the furthest lay 8.7e-4 of its precision before it
+            # (BifurcationKit's bordered tangent on battle of the sexes); a window of 1e-2 catches an early stall.
+            pitchfork = only(branch_reference(reference_pass, length(LOGITNASH_GAMES[name]), 4).crossings)
+            stall = failure.context.precision
+            @test abs(stall - pitchfork) <= pitchfork / 100
+            # The last accepted point solves the map and lies on the principal branch.
+            logits = pass_logits(failure, settings)
+            @test residual_norm(pass, logits, stall) < 1.0f-4
+            reference = branch_reference(reference_pass, length(LOGITNASH_GAMES[name]), stall)
+            @test reference.reached
+            @test agreeing(first_choices(logits), reference.first_choices)
         else
             @test residual_norm(pass, unwrap(result).logits, element(4)) < 1.0f-4
         end
@@ -234,7 +248,7 @@ end
     pass = NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME))
     reference = branch_reference(pass, 2, precision)
     @test reference.reached
-    @test reference.crossings == 0
+    @test isempty(reference.crossings)
     # Oracle: Gambit 16.7's logit branch and a 50-digit arclength trace both end at the pure equilibrium (1, 1).
     arm_root = level_root(pass, [float(15), float(10)], precision)
     @test all(>(99 // 100), reference.first_choices)

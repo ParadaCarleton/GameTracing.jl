@@ -6,22 +6,28 @@ function strategy_gap(point::AbstractVector{E}, index::Integer)::E where {E <: R
     return iszero(index) ? zero(E) : point[index]
 end
 
-"""The logit of strategy `index` (0 for the reference) at a point `[w; λ]`, less its player's pivot's: `λ (wᵢ - w_pivot)`."""
+"""
+The logit of strategy `index` (0 for the reference) at a point `[w; λ]`, less its player's pivot's: `λ (wᵢ - w_pivot)`.
+Past `floatmax` the gaps' difference becomes `λ wᵢ - λ w_pivot`, a sum of two terms of one sign.
+"""
 function centered_logit(point::AbstractVector{E}, index::Integer, pivot::Integer)::E where {E <: Real}
-    return last(point) * (strategy_gap(point, index) - strategy_gap(point, pivot))
+    precision, gap, pivot_gap = last(point), strategy_gap(point, index), strategy_gap(point, pivot)
+    difference = gap - pivot_gap
+    return isfinite(difference) ? precision * difference : precision * gap - precision * pivot_gap
 end
 
 """
 A player's pivot and log normalizer at a point `[w; λ]`, its logits `z = λ w[range]` against its reference. The pivot is
-its most probable strategy: the index of its largest positive logit, or 0 for its reference. The normalizer is
+its most probable strategy: the index of its largest logit, or 0 for its reference. The pivot comes from the gaps `w`,
+largest for `λ > 0` and smallest for `λ < 0`, so an overflowing product `λ wᵢ` cannot choose it. The normalizer is
 `log Σ exp(zᵢ - z_pivot)` over its strategies and its reference (`centered_logit`). Each logit enters as `λ (wᵢ - w_pivot)`,
-which keeps its relative accuracy at a large common logit.
+which keeps its relative accuracy at a large common logit. No centered logit is positive, so the normalizer is finite.
 """
 function log_normalizer(point::AbstractVector{E}, range::UnitRange{Int})::Tuple{Int, E} where {E <: Real}
-    pivot, largest = 0, zero(E)
+    pivot, direction = 0, sign(last(point))
     for index in range
-        if last(point) * point[index] > largest
-            pivot, largest = index, last(point) * point[index]
+        if direction * point[index] > direction * strategy_gap(point, pivot)
+            pivot = index
         end
     end
     total = iszero(pivot) ? zero(E) : exp(centered_logit(point, 0, pivot))
@@ -40,20 +46,24 @@ end
 One strategy's share `π_from (eᵈ - 1 - d)` of a player's KL, `d = log π_to - log π_from`, from the log probabilities
 `from` and `to`. The shares sum to the KL as both distributions sum to one. Each share is second order in `d`, so the sum
 keeps its relative accuracy at a small KL. Past `|d| = 1/2`, where `log1pmx` loses nothing to cancellation, the share is
-`π_to - π_from (1 + d)`, which stays finite where `eᵈ` overflows.
+`π_to - π_from (1 + d)`, which stays finite where `eᵈ` overflows. Where `π_from` rounds to 0, the share is `π_to`, its
+limit as `π_from → 0`, also at an infinite `d`.
 """
 function kl_share(from::E, to::E)::E where {E <: Real}
-    gap = to - from
-    if abs(gap) <= one(E) / 2
-        return -exp(from) * log1pmx(expm1(gap))
+    probability, gap = exp(from), to - from
+    if iszero(probability)
+        return exp(to)
+    elseif abs(gap) <= one(E) / 2
+        return -probability * log1pmx(expm1(gap))
     end
-    return exp(to) - exp(from) * (one(E) + gap)
+    return exp(to) - probability * (one(E) + gap)
 end
 
 """
 `KL(π_from ‖ π_to)` of one player's mixed strategy, its logits `z = λ w[range]` at two points `[w; λ]`: the sum of each
 strategy's `kl_share`, its reference's included, from log probabilities centered on each point's pivot (`log_normalizer`).
-It keeps its relative accuracy at large common logits and stays finite where a probability rounds to 0.
+It keeps its relative accuracy at large common logits and stays finite where a probability rounds to 0. It is infinite
+only where a logit at `to` lies past `-floatmax` and that strategy's probability at `from` does not round to 0.
 """
 function player_kl(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::E where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)

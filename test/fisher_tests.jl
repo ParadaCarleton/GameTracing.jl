@@ -196,3 +196,27 @@ end
         end
     end
 end
+
+@testset "the pivot comes from the gaps, and centered logits stay exact where gaps or products overflow ($element)" for element in (Float32, widen(Float32))
+    huge = floatmax(element) / 2
+    wide = huge + huge / 8
+    # `λ wᵢ` overflows for both strategies: a pivot chosen from those products was strategy 1, and the normalizer infinite.
+    @test GameTracing.log_normalizer(element[huge, wide, 4], 1:2) == (2, zero(element))
+    # `w₁ - w₂` overflows, and `λ w₁ - λ w₂` does not. The KL of a point against itself was NaN.
+    spread = element[-wide, wide, 1 // 2]
+    @test GameTracing.centered_logit(spread, 1, 2) == -wide
+    @test iszero(player_kl(spread, spread, 1:2))
+    # At precision `1 / huge` the logits are near -9/8 and 9/8: an overflowed difference gave strategy 1 probability 0.
+    moderate, doubled = element[-wide, wide, inv(huge)], element[-wide, wide, 2 / huge]
+    exact = direct_kl(last(moderate) .* big.(moderate[1:2]), last(doubled) .* big.(doubled[1:2]))
+    @test abs(player_kl(moderate, doubled, 1:2) - exact) <= 8 * eps(element) * (sqrt(exact) + exact)
+    # At precision 4 strategy 1's and the reference's logits lie past -floatmax: probability 0.
+    extreme = element[-wide, wide, 4]
+    @test player_kl(moderate, extreme, 1:2) == typemax(element)
+    exact = -log(inv(1 + sum(exp, big(last(moderate)) .* [-big(wide); -2 * big(wide)])))
+    @test player_kl(extreme, moderate, 1:2) ≈ exact rtol = 8 * eps(element)
+    # A negative precision flips the logits to 1 and 3: the pivot is the smallest gap.
+    flipped = element[-1, -3, -1]
+    @test GameTracing.log_normalizer(flipped, 1:2)[1] == 2
+    @test GameTracing.log_normalizer(flipped, 1:2)[2] ≈ log(1 + exp(-big(3)) + exp(-big(2))) rtol = 4 * eps(element)
+end

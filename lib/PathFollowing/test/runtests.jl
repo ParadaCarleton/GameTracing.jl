@@ -459,6 +459,18 @@ end
         @test (failure.cause, failure.last_refusal) == (TooManyRefusals, FarFromPredictor)
     end
 
+    @testset "the settle move is measured in the step metric frozen at the accepted point" begin
+        # `CountingMetric` weighs each coordinate by 1 + |xᵢ|, so the metric frozen at the start measures another length.
+        problem = CurveProblem(Circle(one(E)), E[1, 0], E[0, 1])
+        tracer = unwrap(init(problem, algorithm(E; tolerance = one(E) / 100, metric = CountingMetric(Ref(0))); first_step = E(1) / 2))
+        unwrap(step!(tracer))
+        scratch = similar(tracer.point)
+        at_point = PathFollowing.metric_distance(tracer.metric, scratch, tracer.previous, tracer.point)
+        at_start = PathFollowing.metric_distance(frozen_metric(CountingMetric(Ref(0)), problem.start), scratch, tracer.previous, tracer.point)
+        @test tracer.settle_move ≈ at_point
+        @test !(at_point ≈ at_start)
+    end
+
     @testset "a first-correction refusal past the distance's largest length cannot fire, and throws" begin
         capped(target) = algorithm(
             E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = CappedMove()),

@@ -135,11 +135,11 @@ end
     step!(tracer[, bound])
 
 Advance `tracer` by one accepted point and return its `AcceptedStep`, or the `StepFailure` that ends the trace. A
-refused attempt shrinks the step and tries again. With a `Bound`, the step stays on the point's side of the bound or
-stops on it. A predictor that reaches the bound is cut where its line meets it, and Newton's method corrects at the
-bound's value, under every test of a step. A corrected point past the bound refuses as `PastBound`. The step sees the
-bound only at its predictor and corrected point: a curve that passes the bound and comes back within one step goes
-unseen. The point must lie off the bound.
+refused attempt shrinks the predictor it took, cut or not, and tries again. With a `Bound`, the step stays on the
+point's side of the bound or stops on it. A predictor that reaches the bound is cut where its line meets it, and
+Newton's method corrects at the bound's value, under every test of a step. A corrected point past the bound refuses as
+`PastBound`. The step sees the bound only at its predictor and corrected point: a curve that passes the bound and
+comes back within one step goes unseen. The point must lie off the bound.
 """
 function CommonSolve.step!(
         tracer::Tracer{E},
@@ -168,9 +168,9 @@ function CommonSolve.step!(
         if refusals > algorithm.max_refusals
             break
         end
-        # An infinite factor measured nothing usable, so that refusal shrinks like an unmeasured one.
+        # The retry shrinks the predictor taken, cut or not; an infinite factor shrinks like an unmeasured one.
         shrink = inv(algorithm.step_control.shrink)
-        tracer.step_length /= ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
+        tracer.step_length = taken / ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
     end
     return Err(StepFailure(TooManyRefusals, last_refusal, tracer.step_length, refusals))
 end

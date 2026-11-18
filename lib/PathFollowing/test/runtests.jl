@@ -449,6 +449,23 @@ end
         @test tracer.point == E[-7, -24] ./ 25
     end
 
+    @testset "a refused landing shrinks from the cut predictor's length" begin
+        # A first step of 100 is cut to 9/10 at y = 9/10 and turns too fast. Shrinking 100 repeated that cut until
+        # TooManyRefusals.
+        control = StepControl(;
+            target_contraction = one(E) / 4, target_correction = one(E) / 10, target_turn = one(E) / 10,
+            max_step_growth = E(2), max_step = E(100),
+        )
+        settings = algorithm(E; step_control = control, max_refusals = 2)
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(100)))
+        bound = Bound(2, E(9) / 10)
+        accepted = unwrap(step!(tracer, bound))
+        @test accepted.refusals >= 1
+        @test accepted.step_length < E(9) / 10
+        bounded_steps(tracer, bound, 40)
+        @test tracer.point ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
+    end
+
     @testset "a bounded step over a fold's top stops at the first crossing" begin
         # From (3/5, 4/5) a step of 4/5 passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
         tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)

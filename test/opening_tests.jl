@@ -28,6 +28,15 @@ function rounded_residual(game::LogitGame, point::AbstractVector{E}, pin::E)::Ve
     return GameTracing.GameResidual(game)(number.(point), number(pin))
 end
 
+"""`frozen` with each value it holds as an exact `number` (`Rounded`), so its products bound their own rounding."""
+function rounded_frozen(frozen::GameTracing.FrozenFisher{M, E}, number::Type{Rounded{E, W}})::GameTracing.FrozenFisher where {M, E, W}
+    point = number.(frozen.point)
+    return GameTracing.FrozenFisher{M, number, typeof(point), typeof(frozen.pivots)}(
+        frozen.metric, point, number.(frozen.probabilities), number.(frozen.references), frozen.pivots,
+        number(frozen.state_weight), number(frozen.palc_state_weight), number.(frozen.root),
+    )
+end
+
 """
     rounding_explanation(gains, failure, settings, target_precision)
 
@@ -68,8 +77,9 @@ function rounding_explanation(gains::NormalFormGains, failure::TraceFailure, set
         palc.dot, stalled_iterate, start, stalled_pin - precision, tangent, tangent_precision, state_weight, stalled_arclength,
     )
     number = Rounded{element, widen(element)}
+    rounded_dot = GameTracing.BifurcationKit.DotTheta(GameTracing.MetricDot(rounded_frozen(palc.dot.dot.frozen, number)))
     rounded_arclength_row = GameTracing.BifurcationKit.arc_length_eq(
-        palc.dot, number.(stalled_iterate), number.(start), number(stalled_pin) - number(precision),
+        rounded_dot, number.(stalled_iterate), number.(start), number(stalled_pin) - number(precision),
         number.(tangent), number(tangent_precision), number(state_weight), number(stalled_arclength),
     )
     noise = [rounding_bound.(rounded_residual(game, stalled_iterate, stalled_pin)); rounding_bound(rounded_arclength_row)]
@@ -100,6 +110,15 @@ struct StopAtPrecision{E <: Real}
 end
 
 (stop::StopAtPrecision)(::AbstractVector, precision::Real)::Bool = precision < stop.precision
+
+@testset "a frozen Fisher metric in Rounded numbers computes the engine's products ($element)" for element in (Float32, widen(Float32))
+    frozen = PathFollowing.frozen_metric(GameTracing.FisherMetric((1:2, 3:3), one(element), LogPrecisionTerm, element(10), element(127 // 128)), element[1, -1, 2, 3])
+    left, right = element[1, 2, -1, 3], element[-1, 1, 2, 2]
+    number = Rounded{element, widen(element)}
+    rounded = PathFollowing.metric_inner(rounded_frozen(frozen, number), number.(left), number.(right))
+    @test rounded.value == PathFollowing.metric_inner(frozen, left, right)
+    @test rounding_bound(rounded) > 0
+end
 
 const FAR_TARGET = 1.0f6
 """`BifurcationKitSettings` in `E` that step in the Fisher distance with the log precision term."""

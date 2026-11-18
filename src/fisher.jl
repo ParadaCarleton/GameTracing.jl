@@ -127,12 +127,14 @@ struct FisherMetric{R, E <: Real} <: PathFollowing.Metric
 end
 
 """
-    FrozenFisher(metric, point, probabilities, references, pivots)
+    FrozenFisher(metric, point, probabilities, references, pivots, state_weight, palc_state_weight, root)
 
 `metric` (`FisherMetric`) frozen at `point = [w; λ]`: each strategy's probability by its logit, each player's reference
 probability, and each player's pivot, its most probable strategy's logit index or 0 for its reference. The products
 center each player's logit moves on its pivot's move. A move common to every strategy but an extinct reference then
 keeps its Fisher length `√p_ref`, which a raw `Σ qᵢΔzᵢ² - (Σ qᵢΔzᵢ)²` rounds away. The buffers follow `point`'s storage.
+`state_weight` and `palc_state_weight` are `metric`'s, and `root` holds `precision_dot_root` at `point` as its only
+entry. The products read these values in `E` and `metric`'s ranges, nothing else.
 """
 struct FrozenFisher{M <: FisherMetric, E <: Real, V <: AbstractVector{E}, I <: AbstractVector{Int}}
     metric::M
@@ -140,13 +142,19 @@ struct FrozenFisher{M <: FisherMetric, E <: Real, V <: AbstractVector{E}, I <: A
     probabilities::V
     references::V
     pivots::I
+    state_weight::E
+    palc_state_weight::E
+    root::V
 end
 
 function PathFollowing.frozen_metric(metric::FisherMetric{R, E}, point::AbstractVector{E})::FrozenFisher{FisherMetric{R, E}, E} where {R, E <: Real}
     players = length(metric.ranges)
     copied, pivots = copyto!(similar(point), point), fill!(similar(point, Int, players), 0)
     probabilities, references = fill!(similar(copied, length(point) - 1), zero(E)), fill!(similar(copied, players), zero(E))
-    frozen = FrozenFisher{FisherMetric{R, E}, E, typeof(copied), typeof(pivots)}(metric, copied, probabilities, references, pivots)
+    (; state_weight, palc_state_weight) = metric
+    frozen = FrozenFisher{FisherMetric{R, E}, E, typeof(copied), typeof(pivots)}(
+        metric, copied, probabilities, references, pivots, state_weight, palc_state_weight, fill!(similar(copied, 1), zero(E)),
+    )
     return PathFollowing.freeze_metric!(frozen, point)
 end
 
@@ -160,6 +168,7 @@ function PathFollowing.freeze_metric!(frozen::F, point::AbstractVector{E})::F wh
             frozen.probabilities[index] = exp(log_probability(point, index, normalizer))
         end
     end
+    frozen.root[begin] = precision_dot_root(frozen.metric, last(point))
     return frozen
 end
 
@@ -201,29 +210,29 @@ function share_complement(palc_state_weight::E, (high, low)::NTuple{2, E})::E wh
 end
 
 """
-The root `√(ω(λ) - (1 - θ))` of the weight of `Δλ²` in `frozen`'s dot, before PALC's `θ` divides it (`FisherMetric`).
+The root `√(ω(λ) - (1 - θ))` of the weight of `Δλ²` in `metric`'s dot at precision `precision`, before PALC's `θ`
+divides it (`FisherMetric`).
 While `c(λ) ≥ c(P)` the weight is `c(λ) - (1 - θ)`. Past `P` PALC's share shrinks with the log term, to
 `(1 - θ) c(λ) / c(P)`. Both are `c(λ) (1 - (1 - θ) / max(c(λ), c(P)))`, whose root `√c(λ) √(1 - …)` is positive for
 every finite `λ`, as `1 - θ < c(P)`. The products apply the root to each side, `(root Δλ) (root Δλ')`.
 `share_complement` gives `1 - …` within `eps |1 - …| + 8 eps²`. While `1 - …` is far above `8 eps²`, and each side's
 `root Δλ` and their product are normal floats, the dot's precision term keeps its relative accuracy.
 """
-function precision_dot_root(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
-    (; precision_term, target_precision, palc_state_weight) = frozen.metric
-    precision = last(frozen.point)
+function precision_dot_root(metric::FisherMetric{<:Any, E}, precision::E)::E where {E <: Real}
+    (; precision_term, target_precision, palc_state_weight) = metric
     root = precision_term_root(precision_term, precision, target_precision)
     return root * sqrt(share_complement(palc_state_weight, weight_denominator(precision_term, precision, target_precision)))
 end
 
 """The logit move `Δzᵢ = λ Δwᵢ + wᵢ Δλ` of the displacement `vector = [Δw; Δλ]` at `frozen`'s point."""
-function logit_move(frozen::FrozenFisher, vector::AbstractVector{T}, index::Integer)::T where {T <: Real}
+function logit_move(frozen::FrozenFisher{<:FisherMetric, E}, vector::AbstractVector{E}, index::Integer)::E where {E <: Real}
     return last(frozen.point) * vector[index] + frozen.point[index] * last(vector)
 end
 
 """`vector`'s logit move of player `player`'s pivot (`FrozenFisher`), zero for its reference."""
-function pivot_move(frozen::FrozenFisher, vector::AbstractVector{T}, player::Integer)::T where {T <: Real}
+function pivot_move(frozen::FrozenFisher{<:FisherMetric, E}, vector::AbstractVector{E}, player::Integer)::E where {E <: Real}
     pivot = frozen.pivots[player]
-    return iszero(pivot) ? zero(T) : logit_move(frozen, vector, pivot)
+    return iszero(pivot) ? zero(E) : logit_move(frozen, vector, pivot)
 end
 
 """
@@ -231,12 +240,12 @@ Player `player`'s mean logit move under its mixed strategy, less its pivot's mov
 its strategies in `range` and its reference, whose logit does not move.
 """
 function centered_mean(
-        frozen::FrozenFisher,
-        vector::AbstractVector{T},
+        frozen::FrozenFisher{<:FisherMetric, E},
+        vector::AbstractVector{E},
         player::Integer,
         range::UnitRange{Int},
-        pivot::T,
-    )::T where {T <: Real}
+        pivot::E,
+    )::E where {E <: Real}
     total = -frozen.references[player] * pivot
     for index in range
         total += frozen.probabilities[index] * (logit_move(frozen, vector, index) - pivot)
@@ -249,12 +258,12 @@ Player `player`'s `Δz_leftᵀ G Δz_right` in `range`: `Σ πᵢ dᵢ dᵢ'` ov
 logit move less the player's mean move, both measured from its pivot's move (`FrozenFisher`).
 """
 function player_inner(
-        frozen::FrozenFisher,
-        left::AbstractVector{T},
-        right::AbstractVector{T},
+        frozen::FrozenFisher{<:FisherMetric, E},
+        left::AbstractVector{E},
+        right::AbstractVector{E},
         player::Integer,
         range::UnitRange{Int},
-    )::T where {T <: Real}
+    )::E where {E <: Real}
     left_pivot, right_pivot = pivot_move(frozen, left, player), pivot_move(frozen, right, player)
     left_mean, right_mean = centered_mean(frozen, left, player, range, left_pivot), centered_mean(frozen, right, player, range, right_pivot)
     # The reference's move is zero: its deviation is `-(pivot + mean)` on each side.
@@ -266,39 +275,14 @@ function player_inner(
     return total
 end
 
-"""`left' M right` under `frozen`, in `frozen`'s values and the vectors' type `T` (`metric_inner`)."""
-function fisher_inner(frozen::FrozenFisher, left::AbstractVector{T}, right::AbstractVector{T})::T where {T <: Real}
-    total = zero(T)
+function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
+    total = zero(E)
     for (player, range) in enumerate(frozen.metric.ranges)
         total += player_inner(frozen, left, right, player, range)
     end
-    (; state_weight, palc_state_weight) = frozen.metric
-    root = precision_dot_root(frozen)
+    (; state_weight, palc_state_weight) = frozen
+    root = only(frozen.root)
     return (state_weight * total + (root * last(left)) * (root * last(right))) / palc_state_weight
-end
-
-"""Whether every value of `frozen` that its inner product reads converts to `T` exactly."""
-function holds_frozen(frozen::FrozenFisher, ::Type{T})::Bool where {T <: Real}
-    (; state_weight, palc_state_weight) = frozen.metric
-    exact = value -> T(value) == value
-    return all(exact, frozen.point) && all(exact, frozen.probabilities) && all(exact, frozen.references) &&
-        exact(state_weight) && exact(palc_state_weight) && exact(precision_dot_root(frozen))
-end
-
-function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
-    return fisher_inner(frozen, left, right)
-end
-
-"""
-`left' M right` under `frozen` for vectors of another number type `T`: it computes in `T`, with `frozen`'s values as
-constants, so a type that tracks rounding measures the product's own. A value that `T` cannot hold exactly throws
-(`holds_frozen`).
-"""
-function PathFollowing.metric_inner(frozen::FrozenFisher, left::AbstractVector{T}, right::AbstractVector{T})::T where {T <: Real}
-    if !holds_frozen(frozen, T)
-        throw(ArgumentError("$T cannot hold every value of the frozen metric exactly"))
-    end
-    return fisher_inner(frozen, left, right)
 end
 
 """
@@ -346,13 +330,13 @@ function PathFollowing.metric_apply!(
         frozen::FrozenFisher{<:FisherMetric, E},
         vector::AbstractVector{E},
     )::AbstractVector{E} where {E <: Real}
-    (; state_weight, palc_state_weight) = frozen.metric
+    (; state_weight, palc_state_weight) = frozen
+    root = only(frozen.root)
     gap_scale = state_weight * last(frozen.point) / palc_state_weight
     pulled = zero(E)
     for (player, range) in enumerate(frozen.metric.ranges)
         pulled += player_apply!(out, frozen, vector, player, range, gap_scale)
     end
-    root = precision_dot_root(frozen)
     out[end] = (state_weight * pulled + root * (root * last(vector))) / palc_state_weight
     return out
 end

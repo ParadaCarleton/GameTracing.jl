@@ -249,20 +249,16 @@ end
     @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
 end
 
-@testset "the Fisher inner product takes vectors whose type holds every frozen value exactly; another throws ($element)" for element in (Float32, widen(Float32))
-    frozen = PathFollowing.frozen_metric(FisherMetric((1:2,), one(element), TargetPrecisionTerm, one(element), one(element)), element[1, -1, 1])
-    left, right = element[1, 2, 3], element[-1, 1, 2]
-    wide = PathFollowing.metric_inner(frozen, widen.(left), widen.(right))
-    @test wide isa widen(element)
-    @test wide ≈ PathFollowing.metric_inner(frozen, left, right) rtol = sqrt(eps(element))
-    @test_throws ArgumentError PathFollowing.metric_inner(frozen, Float16.(left), Float16.(right))
-    # An 8-bit BigFloat is a wider type, but it rounds the probabilities at logits 1 and -1.
-    setprecision(BigFloat, 8) do
-        @test_throws ArgumentError PathFollowing.metric_inner(frozen, big.(left), big.(right))
+@testset "a Fisher metric frozen again holds what a fresh freeze at the new point holds ($element)" for element in (Float32, widen(Float32))
+    metric = FisherMetric((1:2,), element(2), LogPrecisionTerm, element(10), element(127 // 128))
+    # The pivot moves from the first strategy to the reference.
+    refrozen = PathFollowing.freeze_metric!(PathFollowing.frozen_metric(metric, element[1, -1, 1]), element[-1, -2, 3])
+    fresh = PathFollowing.frozen_metric(metric, element[-1, -2, 3])
+    for field in fieldnames(typeof(fresh))
+        @test getfield(refrozen, field) == getfield(fresh, field)
     end
-    # At logit 0 every frozen value is exact in Float16: 0, 1 and the probabilities 1/2.
-    exact = PathFollowing.frozen_metric(FisherMetric((1:1,), one(element), TargetPrecisionTerm, one(element), one(element)), element[0, 1])
-    @test PathFollowing.metric_inner(exact, Float16[1, 2], Float16[3, 4]) == PathFollowing.metric_inner(exact, element[1, 2], element[3, 4])
+    @test fresh.root == [GameTracing.precision_dot_root(metric, element(3))]
+    @test (fresh.state_weight, fresh.palc_state_weight) == (metric.state_weight, metric.palc_state_weight)
 end
 
 @testset "PALC weighs Δλ² by the documented ω(λ), positive at every finite λ; PathFollowing by the log term ($element)" for element in (Float32, widen(Float32))
@@ -272,12 +268,12 @@ end
         palc, path = (FisherMetric((1:1,), one(element), LogPrecisionTerm, target, weight) for weight in (palc_state_weight, one(element)))
         # Past `√2 (1 + P) - 1`, `c(λ) - (1 - θ)` would turn negative and PALC's dot indefinite.
         for precision in element[0, target / 2, target, sqrt(element(2)) * (1 + target), 10 * target, 10^6 * target]
-            @test GameTracing.precision_dot_root(PathFollowing.frozen_metric(palc, element[1, precision])) > 0
+            @test only(PathFollowing.frozen_metric(palc, element[1, precision]).root) > 0
             # At a zero gap `Δz = 0`, so PALC's norm of a unit `Δλ` is its weight of `Δλ²`.
             palc_norm = GameTracing.palc_product(GameTracing.metric_dot(palc, element[0, precision]), palc_state_weight, unit, unit)
             @test palc_norm ≈ documented_precision_weight(LogPrecisionTerm, precision, target, palc_state_weight) rtol = 8 * eps(element)
             root = GameTracing.precision_term_root(LogPrecisionTerm, precision, target)
-            @test GameTracing.precision_dot_root(PathFollowing.frozen_metric(path, element[1, precision])) == root
+            @test PathFollowing.frozen_metric(path, element[1, precision]).root == [root]
         end
     end
     # P = 1, θ = 7/8, λ = 3: ω = 1/16 + (1/8) (1 - (1/16) / (1/4)) = 5/32.
@@ -287,7 +283,7 @@ end
     # gave a step `Δλ = λ` there length 0. Past `P = 1` the dot's weight is `c(λ) (1 - (1 - θ) / c(P))`, `c(P) = 1/4`.
     for precision in (4 / sqrt(nextfloat(zero(element))), floatmax(element)), weight in (one(element), element(7 // 8))
         frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(element), LogPrecisionTerm, one(element), weight), element[1, precision])
-        @test GameTracing.precision_dot_root(frozen) > 0
+        @test only(frozen.root) > 0
         exact_weight = inv(1 + big(precision))^2 * (1 - 4 * (1 - big(weight)))
         step = element[0, precision]
         @test PathFollowing.metric_inner(frozen, step, step) ≈ exact_weight * big(precision)^2 / big(weight) rtol = 8 * eps(element)
@@ -306,7 +302,7 @@ end
             @test abs(computed - complement) <= eps(element) * complement + 8 * eps(element)^2
             frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(element), term, target, weight), element[1, precision])
             exact = sqrt(complement) / (term == LogPrecisionTerm ? 1 + abs(big(precision)) : big(target))
-            @test abs(GameTracing.precision_dot_root(frozen) - exact) <= eps(element) * (3 + 4 * eps(element) / complement) * exact
+            @test abs(only(frozen.root) - exact) <= eps(element) * (3 + 4 * eps(element) / complement) * exact
         end
     end
 end

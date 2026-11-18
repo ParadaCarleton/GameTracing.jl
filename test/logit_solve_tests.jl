@@ -64,13 +64,6 @@ end
 # mixed equilibrium (λ ≈ 47) and the (2, 2, 2) game at the pure profile (2, 1, 2) (λ ≈ 1.5).
 const STUCK_BRANCH_SEED = 0x126798e4d8bed9ec
 
-# A fresh draw of a CI run: its branch folds (λ peaks near 2.72) before it meets maxregret. Its λ-fixed map is singular
-# at the fold, and Gambit's `logit_solve_lambda` returns the first crossing of the end's λ, so neither check holds there.
-const FOLDING_BRANCH_GAME = (
-    Float32[-1.7090197f0 3.4388857f0 4.108635f0; 1.6385761f0 -2.7659307f0 5.6244125f0; -2.6847887f0 -0.8351383f0 -6.3075285f0],
-    Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
-)
-
 # A fresh draw of a CI run: PathFollowing ends it at logits near ±300, where every strategy has settled but the logits
 # sit about 1000 ulps off the map. Its points settle in strategies, PathFollowing's measure, and fail in logits.
 const SATURATED_BRANCH_GAME = (
@@ -79,8 +72,9 @@ const SATURATED_BRANCH_GAME = (
     Float32[-1.675467f0 -0.60522515f0; 0.72147083f0 -0.13347721f0;;; -5.2404265f0 3.434299f0; 2.0519495f0 3.9997408f0],
 )
 
-# A fresh draw of a CI run: BifurcationKit lands a point at its branch's fold peak, λ ≈ 2.7237. There `I - ∂T/∂z` is
-# singular, so a Newton step at fixed λ grows past the settle bound; `branch_step` frees λ and stays bounded.
+# A fresh draw of a CI run: its branch folds at λ ≈ 2.7237 before it meets maxregret, and BifurcationKit lands a point on
+# the peak. There `I - ∂T/∂z` is singular, so a Newton step at fixed λ grows past the settle bound (`branch_step` frees
+# λ), and the λ-fixed checks fail: Gambit's `logit_solve_lambda` returns the first crossing of the end's λ.
 const FOLD_PEAK_GAME = (
     Float32[-1.7090197f0 3.4388857f0 4.108635f0; 1.6385761f0 -2.7659307f0 5.6244125f0; -2.6847887f0 -0.8351383f0 -6.3075285f0],
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
@@ -110,7 +104,7 @@ end
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, FOLD_EXHAUSTED_GAME, branch_games(fresh_rng())...)
+    for payoffs in (stuck_games..., SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, FOLD_EXHAUSTED_GAME, branch_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
         result = logit_solve_branch(gains; settings)
         @test !is_error(result)
@@ -127,10 +121,10 @@ end
         for profile in branch
             @test settled_point(gains, profile, settings)
         end
-        # A fold leaves the λ-fixed checks below without a unique answer (`FOLDING_BRANCH_GAME`), even past its peak.
+        # A fold leaves the λ-fixed checks below without a unique answer (`FOLD_PEAK_GAME`), even past its peak.
         folded = !issorted([profile.lam for profile in branch])
         # A fresh draw may fold too; the fixed game must.
-        @test folded || payoffs !== FOLDING_BRANCH_GAME
+        @test folded || payoffs !== FOLD_PEAK_GAME
         if folded
             continue
         end

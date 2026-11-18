@@ -148,8 +148,9 @@ function PathFollowingSettings{E}(;
         target_contraction::Union{Nothing, Real} = 0.25f0,
         # On hard_games.jl's 543 games, 0.3 left no endpoint off its branch to 1 rad's 3, at 15-62% more steps.
         target_turn::Union{Nothing, Real} = 1.0f0,
-        # Growth 4 left 8 endpoints off their branch to growth 2's 3. Results: benchmark/results/hard-b5a6b4d-summary.txt.
-        max_step_growth::Real = 2.0f0,
+        # Gambit's max_accel. Without the split check, all 10 jump games of logitnash_tests.jl leave their branch at
+        # growth 2 under StrategyDistance, and none at 1.1, in Float32 and Float64.
+        max_step_growth::Real = 1.1f0,
         # On unfolded pitchforks a step that jumped branches moved 4.2 or more of its lengths, one that kept it 1.86 at most.
         reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),

@@ -74,19 +74,21 @@ end
 `metric` (`FisherMetric`) frozen at `point = [w; λ]`: each strategy's probability by its logit, each player's reference
 probability, and each player's pivot, its most probable strategy's logit index or 0 for its reference. The products
 center each player's logit moves on its pivot's move. A move common to every strategy but an extinct reference then
-keeps its Fisher length `√p_ref`, which a raw `Σ qᵢΔzᵢ² - (Σ qᵢΔzᵢ)²` rounds away.
+keeps its Fisher length `√p_ref`, which a raw `Σ qᵢΔzᵢ² - (Σ qᵢΔzᵢ)²` rounds away. The buffers follow `point`'s storage.
 """
-struct FrozenFisher{M <: FisherMetric, E <: Real}
+struct FrozenFisher{M <: FisherMetric, E <: Real, V <: AbstractVector{E}, I <: AbstractVector{Int}}
     metric::M
-    point::Vector{E}
-    probabilities::Vector{E}
-    references::Vector{E}
-    pivots::Vector{Int}
+    point::V
+    probabilities::V
+    references::V
+    pivots::I
 end
 
 function PathFollowing.frozen_metric(metric::FisherMetric{R, E}, point::AbstractVector{E})::FrozenFisher{FisherMetric{R, E}, E} where {R, E <: Real}
     players = length(metric.ranges)
-    frozen = FrozenFisher(metric, collect(point), zeros(E, length(point) - 1), zeros(E, players), zeros(Int, players))
+    copied, pivots = copy(point), fill!(similar(point, Int, players), 0)
+    probabilities, references = fill!(similar(copied, length(point) - 1), zero(E)), fill!(similar(copied, players), zero(E))
+    frozen = FrozenFisher{FisherMetric{R, E}, E, typeof(copied), typeof(pivots)}(metric, copied, probabilities, references, pivots)
     return PathFollowing.freeze_metric!(frozen, point)
 end
 
@@ -230,11 +232,11 @@ end
     MetricApply(frozen, buffer)
 
 PALC's `dotθ.apply!` over the frozen metric `frozen` that `MetricDot` shares: `vector ← M vector` in place, through
-`buffer`, a vector of the points' length.
+`buffer`, a vector of the points' length and storage.
 """
-struct MetricApply{F, E <: Real}
+struct MetricApply{F, E <: Real, V <: AbstractVector{E}}
     frozen::F
-    buffer::Vector{E}
+    buffer::V
 end
 
 function (apply::MetricApply{F, E})(vector::AbstractVector{E})::AbstractVector{E} where {F, E <: Real}
@@ -248,5 +250,6 @@ freezes it at its own start (`MetricDot`, `MetricApply`).
 """
 function metric_dot(metric::PathFollowing.Metric, start::AbstractVector{E})::BifurcationKit.DotTheta where {E <: Real}
     frozen = PathFollowing.frozen_metric(metric, start)
-    return BifurcationKit.DotTheta(MetricDot(frozen), MetricApply(frozen, collect(start)))
+    buffer = copy(start)
+    return BifurcationKit.DotTheta(MetricDot(frozen), MetricApply{typeof(frozen), E, typeof(buffer)}(frozen, buffer))
 end

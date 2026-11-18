@@ -261,8 +261,12 @@ end
     checked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}()))
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
-    # The control: the same trace without the check ends elsewhere.
-    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing)))
+    # The split check at trigger 1 refuses the long step too, so each check alone keeps the branch.
+    for alone in ((; orientation_check = nothing), (; split_check = nothing))
+        @test largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; alone...))).profile, checked.profile) < 1 // 1000
+    end
+    # The control: the same trace without either check ends elsewhere.
+    unchecked = unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; orientation_check = nothing, split_check = nothing)))
     @test largest_gap(unchecked.profile, checked.profile) > 1 // 2
 end
 

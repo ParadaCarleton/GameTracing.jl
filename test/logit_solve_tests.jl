@@ -352,6 +352,19 @@ end
     @test_throws ArgumentError logit_solve(gains; maxregret = 0)
     @test_throws ArgumentError logit_solve(gains; first_step = 0)
     @test_throws ArgumentError logit_solve_lambda(gains, 1; max_accel = 0.5f0)
+    for (_, settings) in engine_settings(Float32), maximum_precision in (-1, 0)
+        @test_throws ArgumentError logit_solve_branch(gains; maximum_precision, maxregret = 10, settings)
+    end
+end
+
+@testset "PathFollowing's first step is finite and under max_step ($element)" for element in (Float32, widen(Float32))
+    gains = NormalFormGains((element[0, 1],))
+    capped = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; max_step = element(0.01f0))))
+    @test capped.step_length == element(0.01f0)
+    # The payoff range's inverse overflows.
+    flat = NormalFormGains((element[0, nextfloat(zero(element))],))
+    @test GameTracing.opening_step(flat, element) == 1
+    @test !is_error(logit_solve_lambda(flat, one(element); settings = PathFollowingSettings{element}()))
 end
 
 @testset "the solvers return profiles in the payoffs' element type and refuse settings in another" begin

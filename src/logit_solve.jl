@@ -183,6 +183,10 @@ function settled_points(
     if !(maxregret > 0)
         throw(ArgumentError("maxregret must be positive; got $maxregret"))
     end
+    # A trace rises from λ = 0, so it never reaches a lower cap.
+    if !(maximum_precision > 0)
+        throw(ArgumentError("maximum_precision must be positive; got $maximum_precision"))
+    end
     require_payoff_type(gains, settings)
     return engine_points(gains, settings, E(maximum_precision), E(maxregret) * E(payoff_range(gains)), (; maxregret))
 end

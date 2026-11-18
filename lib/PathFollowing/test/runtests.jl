@@ -211,6 +211,12 @@ end
         end
     end
 
+    @testset "the first step stays under max_step and must be finite" begin
+        problem = CurveProblem(Fold(), E[-1, 1], E[1, -1])
+        @test unwrap(init(problem, algorithm(E); first_step = E(10))).step_length == one(E) / 2
+        @test_throws ArgumentError init(problem, algorithm(E); first_step = typemax(E))
+    end
+
     @testset "point weights reweight at every accepted point" begin
         visits = Ref(0)
         scale! = (weights, point) -> (visits[] += 1; fill!(weights, one(eltype(point))))

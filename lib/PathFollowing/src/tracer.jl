@@ -77,14 +77,15 @@ end
     init(problem, algorithm; first_step)
 
 A `Tracer` at `problem.start`, its tangent oriented along `problem.direction`, its first step `first_step` long in the
-step metric; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that stops it there.
+step metric and at most the step control's `max_step`; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that
+stops it there. `first_step` must be positive and finite.
 """
 function CommonSolve.init(
         problem::CurveProblem{S, V},
         algorithm::PseudoArclength;
         first_step::Real,
     )::Result{<:Tracer{E}, StepFailure{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
-    first_step > 0 || throw(ArgumentError("first_step must be positive; got $first_step"))
+    0 < first_step < Inf || throw(ArgumentError("first_step must be positive and finite; got $first_step"))
     size = length(problem.start)
     length(problem.direction) == size || throw(DimensionMismatch("start and direction differ in length"))
     bordered = zeros(E, size, size)
@@ -92,7 +93,7 @@ function CommonSolve.init(
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), E(first_step), 0, Int8(0), zeros(E, size),
+        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zeros(E, size),
         zeros(E, size), zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size),
         zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size, size), zeros(LinearAlgebra.BlasInt, size), linear,
     )

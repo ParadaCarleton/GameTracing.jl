@@ -1,7 +1,6 @@
 using CommonSolve: CommonSolve
 using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
 using LinearSolve: LinearSolve
-using LogExpFunctions: logistic
 using Logging: @debug
 using PathFollowing: PathFollowing
 
@@ -66,8 +65,8 @@ end
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve`. The
 trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 
-- `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`GeometryWeights`), reweighted at each
-  accepted point.
+- `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`trace_metric`) at target precision
+  one, frozen at each accepted point.
 - `max_step`: the largest step in that norm; `Inf` sets none. The first step comes from the game (`opening_step`).
 - `max_steps`: accepted steps before the trace fails as `NoConvergence`.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
@@ -78,8 +77,8 @@ trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
 - `target_contraction`, `target_turn`, `max_step_growth`: PathFollowing's `StepControl`; `nothing` drops a target.
   The turn target is in radians under `step_metric`.
 - `orientation_check`: PathFollowing's orientation check. `DeterminantSign` refuses every step where
-  `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. On a game with an
-  exact pitchfork the trace then takes a side arm, as Gambit does. `nothing` switches the check off.
+  `sign det([J; tᵀ])` changes: the step ran back along the branch or crossed a bifurcation point. `nothing` switches
+  the check off.
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -119,6 +118,8 @@ function PathFollowingSettings{E}(;
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
+        # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
+        # on two-action games and 37% fewer on categorical ones, but stalls at battle of the sexes' exact pitchfork.
         step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
@@ -139,29 +140,6 @@ end
 optional_limit(::Type{<:Real}, ::Nothing)::Nothing = nothing
 function optional_limit(::Type{E}, limit::Real)::E where {E <: Real}
     return E(limit)
-end
-
-"""
-    GeometryWeights(geometry)
-
-PathFollowing's `PointWeights` for `geometry` over points `[w; λ]`, at target precision one
-(`StepDistance`). Each gap weighs `coordinate_weight`, or for a Fisher distance `state_weight σ(z)σ(-z)` at its logit
-`z = λ w`. The precision weighs `precision_weight`, or `1 / (1 + λ)²` for `FisherLogPrecisionDistance`.
-"""
-struct GeometryWeights{E <: Real}
-    geometry::TraceGeometry{E}
-end
-
-function (weighting::GeometryWeights{E})(weights::AbstractVector{E}, point::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    (; distance, state_weight) = weighting.geometry
-    precision, gaps = last(point), payoff_gaps(point)
-    if distance == FisherDistance || distance == FisherLogPrecisionDistance
-        payoff_gaps(weights) .= state_weight .* logistic.(precision .* gaps) .* logistic.(.-(precision .* gaps))
-    else
-        fill!(payoff_gaps(weights), coordinate_weight(weighting.geometry, length(gaps)))
-    end
-    weights[end] = ifelse(distance == FisherLogPrecisionDistance, inv(one(E) + abs(precision))^2, precision_weight(weighting.geometry))
-    return weights
 end
 
 """
@@ -239,25 +217,9 @@ function (change::FisherRaoChange)(from::AbstractVector{E}, to::AbstractVector{E
     return largest
 end
 
-"""
-The log normalizer `log(1 + Σ exp(z))` of a player's logits `z = λ w[range]` at a point `[w; λ]`, in two parts: the
-largest logit or zero, and the log of the sum shifted by it. Their sum rounds away the gaps between large logits.
-"""
-function log_normalizer(point::AbstractVector{E}, range::UnitRange{Int})::NTuple{2, E} where {E <: Real}
-    shift = zero(E)
-    for index in range
-        shift = max(shift, last(point) * point[index])
-    end
-    total = exp(-shift)
-    for index in range
-        total += exp(last(point) * point[index] - shift)
-    end
-    return (shift, log(total))
-end
-
-"""The square root of the probability of a strategy with logit `logit`, its player's `log_normalizer` `normalizer`."""
-function root_probability(logit::E, normalizer::NTuple{2, E})::E where {E <: Real}
-    return exp(((logit - first(normalizer)) - last(normalizer)) / 2)
+"""The square root of strategy `index`'s probability at `point` (`log_probability`), its player's `log_normalizer` `normalizer`."""
+function root_probability(point::AbstractVector{E}, index::Integer, normalizer::Tuple{Int, E})::E where {E <: Real}
+    return exp(log_probability(point, index, normalizer) / 2)
 end
 
 """
@@ -269,12 +231,12 @@ square `√(Σ π z²)` of the logits `z = λ w[range]` at `to` under their own 
 function fisher_rao_spread(from::AbstractVector{E}, to::AbstractVector{E}, range::UnitRange{Int})::NTuple{2, E} where {E <: Real}
     from_normalizer, to_normalizer = log_normalizer(from, range), log_normalizer(to, range)
     # The first strategy's logit is zero, so it adds nothing to the spread.
-    squared = (root_probability(zero(E), to_normalizer) - root_probability(zero(E), from_normalizer))^2
+    squared = (root_probability(to, 0, to_normalizer) - root_probability(from, 0, from_normalizer))^2
     spread = zero(E)
     for index in range
         logit = last(to) * to[index]
-        root = root_probability(logit, to_normalizer)
-        squared += (root - root_probability(last(from) * from[index], from_normalizer))^2
+        root = root_probability(to, index, to_normalizer)
+        squared += (root - root_probability(from, index, from_normalizer))^2
         # `√π z` stays finite where `π` underflows and `z²` overflows.
         spread += (root * logit)^2
     end
@@ -320,7 +282,8 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
             settings.target_contraction, settings.distance.target_correction, settings.target_turn,
             settings.max_step_growth, settings.max_step,
         ),
-        metric = PathFollowing.PointWeights(GeometryWeights(settings.step_metric)),
+        # PathFollowing measures the precision at target one, and has no PALC state weight to divide by.
+        metric = trace_metric(settings.step_metric, gains, logit_count(gains), one(E), one(E)),
         settings.orientation_check,
         accept = PositivePrecision(),
         settings.linear_solver,

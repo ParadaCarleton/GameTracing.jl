@@ -1,63 +1,48 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
-
-@testset "bernoulli_kl is the Bernoulli KL, zero only at equal logits, finite where probabilities round" begin
-    rng = fresh_rng()
-    for _ in 1:20
-        from, to = 4 .* randn(rng, Float32, 2)
-        # In double precision: in Float32 this direct form loses 1 - p to rounding once both logits are large, which
-        # failed rtol 1e-3 in about 1 of 1200 draws; bernoulli_kl's log1pexp form does not.
-        probability, other = inv(1 + exp(-from * float(1))), inv(1 + exp(-to * float(1)))
-        direct = probability * log(probability / other) + (1 - probability) * log((1 - probability) / (1 - other))
-        @test GameTracing.bernoulli_kl(from, to) ≈ direct rtol = 1.0f-3 atol = 1.0f-6
-        @test GameTracing.bernoulli_kl(from, to) >= 0
-    end
-    @test GameTracing.bernoulli_kl(0.3f0, 0.3f0) == 0
-    @test isfinite(GameTracing.bernoulli_kl(40.0f0, -40.0f0))
-end
+using LinearAlgebra: dot
 
 @testset "each distance weighs coordinates and precision as documented, the Fisher distances measuring in the summed norm" begin
     # Each coordinate is the old unit `[P w; λ / P]` displacement `[1, 2, 3]` in `(w, λ)`, at target precision 3.
     target = 3.0f0
     displacement = Float32[1, 2, 3] .* [inv(target), inv(target), target]
-    for (distance, expected) in (
-            (AveragedDistance, 0.4f0 * 5 / 2 + 0.6f0 * 9), (SummedDistance, 0.4f0 * 5 + 9), (FisherDistance, 0.4f0 * 5 + 9),
-            (FisherLogPrecisionDistance, 0.4f0 * 5 + 9),
+    for (distance, precision_term, expected) in (
+            (AveragedDistance, TargetPrecisionTerm, 0.4f0 * 5 / 2 + 0.6f0 * 9), (SummedDistance, TargetPrecisionTerm, 0.4f0 * 5 + 9),
+            (FisherDistance, TargetPrecisionTerm, 0.4f0 * 5 + 9), (FisherDistance, LogPrecisionTerm, 0.4f0 * 5 + 9),
         )
-        geometry = TraceGeometry{Float32}(; distance, state_weight = 0.4f0)
+        geometry = TraceGeometry{Float32}(; distance, state_weight = 0.4f0, precision_term)
         @test GameTracing.arclength_distance(zeros(Float32, 3), displacement, geometry, target)^2 ≈ expected
     end
 end
 
-@testset "PALC's norm in each distance is the trace's own" begin
-    # In `(w, λ)` at target precision 3: gaps `w / 3` and precision `3 × 0.3` of the point `(0.4, -1.2, 0.3)` and step `(0.2, -0.1, 0.05)`.
-    point = Float32[0.4f0 / 3, -1.2f0 / 3, 0.9f0]
-    displacement = Float32[0.2f0 / 3, -0.1f0 / 3, 0.15f0]
-    for distance in instances(StepDistance)
-        geometry = TraceGeometry{Float32}(; distance, state_weight = 0.3f0)
-        palc = GameTracing.palc_geometry(geometry, 2, 3.0f0)
+@testset "PALC's norm in each distance is the trace's own, on two-strategy and categorical games ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    categorical = NormalFormGains((randn(rng, element, 3, 4), randn(rng, element, 3, 4)))
+    for (pass, width) in ((GAME, WIDTH), (categorical, logit_count(categorical))), geometry in every_geometry(element(3 // 10)), _ in 1:5
+        target = element(3)
+        palc = GameTracing.palc_geometry(geometry, pass, width, target)
+        point, displacement = [randn(rng, element, width); 3 * rand(rng, element)], randn(rng, element, width + 1)
         GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(point, last(point)))
         # PALC's pin moves with the precision, so it repeats the displacement's last coordinate.
         palc_square = palc.dot(displacement, displacement, last(displacement), last(displacement), palc.palc_state_weight)
-        logits = GameTracing.logits_at(point)
-        frozen = distance in (FisherDistance, FisherLogPrecisionDistance)
-        weights = ifelse(frozen, inv.(1 .+ exp.(-logits)) .* inv.(1 .+ exp.(logits)), ones(Float32, 2))
-        # The log-precision distance measures the payoff gains `w`; the plain norm below weighs each by P² = 9.
-        weights = weights ./ ifelse(distance == FisherLogPrecisionDistance, 9.0f0, 1.0f0)
-        # A step in λ is a step in log(1 + λ) of 1 / (1 + λ) times its length to first order; the plain norm divides by P = 3.
-        precision_weight = ifelse(distance == FisherLogPrecisionDistance, 3 / (1 + last(point)), 1.0f0)
-        plain = TraceGeometry{Float32}(; distance = ifelse(frozen, SummedDistance, distance), state_weight = 0.3f0)
-        weighted = [sqrt.(weights) .* displacement[1:2]; precision_weight * last(displacement)]
-        @test palc_square ≈ GameTracing.arclength_distance(zeros(Float32, 3), weighted, plain, 3.0f0)^2 rtol = 1.0f-5
+        if geometry.distance == FisherDistance
+            precision_weight = geometry.precision_term == LogPrecisionTerm ? inv(1 + last(point))^2 : inv(target)^2
+            operator = fisher_operator(GameTracing.logit_ranges(pass), point, geometry.state_weight, precision_weight)
+            @test palc_square ≈ dot(displacement, operator, displacement) rtol = sqrt(eps(element))
+        else
+            @test palc_square ≈ GameTracing.arclength_distance(zeros(element, width + 1), displacement, geometry, target)^2 rtol = sqrt(eps(element))
+        end
     end
 end
 
-@testset "a log-precision trace weighs the precision positively over its range, at every target" begin
-    for target_precision in (0.01f0, 0.5f0, 1.0f0, 4.0f0, 100.0f0)
-        palc = GameTracing.palc_geometry(TraceGeometry{Float32}(distance = FisherLogPrecisionDistance), 2, target_precision)
+@testset "PALC's dot weighs the precision positively over the trace's range, at every target" begin
+    for target_precision in (0.01f0, 0.5f0, 1.0f0, 4.0f0, 100.0f0), geometry in every_geometry(0.01f0)
+        palc = GameTracing.palc_geometry(geometry, GAME, WIDTH, target_precision)
         @test 0 < palc.palc_state_weight < 1
-        weighting = GameTracing.FisherLogPrecisionWeights(1.0f0, palc.palc_state_weight)
+        unit = Float32[0, 0, 1]
         for precision in range(0.0f0, target_precision; length = 101)
-            @test GameTracing.precision_dot_weight(weighting, precision) > 0
+            # At zero gaps the precision moves no logit, so the dot holds the precision term alone.
+            GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(Float32[0, 0, precision], precision))
+            @test palc.dot.dot(unit, unit) > 0
         end
     end
 end
@@ -80,6 +65,7 @@ end
             start,
             predicted,
             1.0f0,
+            GameTracing.kl_ranges(corrector.max_kl, GAME, WIDTH),
         )
         GameTracing.restate!(check; predictor_move = GameTracing.logit_change(start, predicted))
         @test GameTracing.closing_accepted(check, predicted)
@@ -96,7 +82,7 @@ end
     quarter, half = element(0.25f0), element(0.5f0)
     start, predicted = zero(element):quarter:half, one(element):(-quarter):half
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element),
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), nothing,
     )
     @test check.predicted == predicted && check.iterate == start
     first_iterate = (; x = collect(predicted), res_f = zeros(element, 3), p = half, step = 0, residual = zero(element), z0 = (; u = collect(start), p = half))
@@ -110,7 +96,7 @@ end
     closing = (; x = predicted, res_f = zero(predicted), p = 0.5f0, step = 2, residual = 0.0f0, z0 = (; u = previous, p = 0.5f0), closing = true)
     for (settled, recorded) in ((false, 0.0f0), (true, 0.25f0))
         check = GameTracing.CorrectorReach(
-            GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), TARGET_PRECISION, previous, predicted, 1.0f0,
+            GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), TARGET_PRECISION, previous, predicted, 1.0f0, nothing,
         )
         GameTracing.restate!(check; predictor_move = GameTracing.logit_change(previous, predicted))
         GameTracing.restate!(check; correction = 0.25f0, settled_here = settled)
@@ -146,7 +132,7 @@ end
 @testset "every arm reaches the reference equilibrium on LogitNash's games, the overshot game and random games" begin
     rng = fresh_rng()
     random_games = [ntuple(_ -> 3 .* randn(rng, ntuple(_ -> 2, players)), players) for players in rand(rng, 2:4, 6)]
-    for (label, settings) in arm_variants()
+    for (label, settings) in arm_variants(ARM_WEIGHTS)
         for (name, payoffs) in pairs(LOGITNASH_GAMES)
             if !(name in PITCHFORK_GAMES)
                 @test reaches_reference(payoffs, 4, settings)
@@ -166,7 +152,7 @@ end
 end
 
 @testset "every arm crosses the fold game's fold" begin
-    for (_, settings) in arm_variants()
+    for (_, settings) in arm_variants(ARM_WEIGHTS)
         result = trace_endpoint(LogitGame(FOLD_GAME, 2.0f0), 1, settings)
         @test !is_error(result)
         if !is_error(result)
@@ -177,7 +163,7 @@ end
 end
 
 @testset "every arm stops short of a non-finite game as a stuck trace" begin
-    for (label, settings) in arm_variants()
+    for (label, settings) in arm_variants(ARM_WEIGHTS)
         result = trace_endpoint(LogitGame(PoisonedPass(GAME, 1.0f0), TARGET_PRECISION), WIDTH, settings)
         @test is_error(result)
         @test unwrap_error(result).cause == GameTracing.TraceStuck
@@ -189,8 +175,8 @@ end
 
 @testset "the redraw restart's border row gives PALC's product with the old tangent, in every distance" begin
     rng = fresh_rng()
-    for distance in instances(StepDistance), _ in 1:5
-        palc = GameTracing.palc_geometry(TraceGeometry{Float32}(; distance, state_weight = 0.3f0), 2, 3.0f0)
+    for geometry in every_geometry(0.3f0), _ in 1:5
+        palc = GameTracing.palc_geometry(geometry, GAME, WIDTH, 3.0f0)
         point = randn(rng, Float32, 3)
         GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(point, last(point)))
         old_tangent, tangent = randn(rng, Float32, 3), randn(rng, Float32, 3)

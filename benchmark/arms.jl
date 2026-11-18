@@ -1,6 +1,8 @@
-# The trace-geometry arms (test/arms.jl) and the shipped trace on GameTracing's games, each beside a fine-step Float64
-# reference (`branch_reference`), and LogitNash 0.3.0 on the normal-form games. Prints a ROW per game and variant, a
-# SIGNAL per pair of endpoints over 1e-3 apart and a SUMMARY per variant; writes rows to ARGS[1].
+# The trace-geometry arms (test/arms.jl) and the shipped traces on GameTracing's games, each beside a fine-step Float64
+# reference (`branch_reference`), and LogitNash 0.3.0 on the two-action normal-form games. BifurcationKit traces every
+# game; PathFollowing (`path_variants`) solves the fixed normal-form games through `logit_solve_lambda`. Prints a ROW
+# per game and variant, a SIGNAL per pair of endpoints over 1e-3 apart and a SUMMARY per group and variant; writes rows
+# to ARGS[1]. The scope `"tune"` sweeps `TUNING_WEIGHTS`.
 using GameTracing
 using ErrorTypes: Result, is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
@@ -39,6 +41,29 @@ logitnash_case(name::Symbol, payoffs::Tuple)::BenchmarkCase = normal_form_case(s
 function random_case(seed::Integer)::BenchmarkCase
     rng = Xoshiro(seed)
     return normal_form_case(string("random ", seed), random_payoffs(rng, rand(rng, 2:5)), 3)
+end
+
+"""A normal-form `Case` of any strategy counts (`NormalFormGains`) from float payoff tables."""
+function categorical_case(name::AbstractString, payoffs::Tuple, precision::Real)::BenchmarkCase
+    gains = NormalFormGains(map(single_precision, payoffs))
+    return Case(String(name), gains, NormalFormGains(map(float, payoffs)), logit_count(gains), Float32(precision))
+end
+
+# Strategy counts of the random categorical games, cycled by seed.
+const CATEGORICAL_SHAPES = ((3, 3), (3, 3, 3), (4, 4), (5, 5), (2, 3, 4), (3, 5))
+
+"""Draws a payoff table of scale 3 and size `shape` from `rng` at each call."""
+struct ShapedTable{R <: AbstractRNG, S <: Tuple}
+    rng::R
+    shape::S
+end
+
+(table::ShapedTable)(::Integer)::AbstractArray = 3 .* randn(table.rng, table.shape)
+
+"""A random game from seed `seed`, its strategy counts from `CATEGORICAL_SHAPES`, to precision 10."""
+function random_categorical_case(seed::Integer)::BenchmarkCase
+    shape = CATEGORICAL_SHAPES[mod1(seed, length(CATEGORICAL_SHAPES))]
+    return categorical_case(string("categorical ", seed), ntuple(ShapedTable(Xoshiro(2000 + seed), shape), length(shape)), 10)
 end
 
 """
@@ -95,7 +120,7 @@ shared_reference(case::Case)::NamedTuple = case_reference(case)
 shared_reference(::SwapCase)::Nothing = nothing
 
 """The reference of `case`'s trace under `settings`: the `shared` one, or for a swap its own (`case_reference`)."""
-variant_reference(::Case, ::BifurcationKitSettings, shared::NamedTuple)::NamedTuple = shared
+variant_reference(::Case, ::EngineSettings, shared::NamedTuple)::NamedTuple = shared
 variant_reference(swap::SwapCase, settings::BifurcationKitSettings, ::Nothing)::NamedTuple = case_reference(swap, settings)
 
 """The gap kind of `reference`: a branch that folds back past the target has no natural-continuation reference."""
@@ -116,6 +141,15 @@ function fixed_cases()::AbstractVector{BenchmarkCase}
         normal_form_case("overshot 3.1", OVERSHOT_GAME, 31 // 10),
         Case("fold", FOLD_GAME, widened(FOLD_GAME), 1, 2.0f0),
         map(random_case, 1:24)...,
+    ]
+end
+
+"""The `NormalFormGains` games: the folding 3x3 and 2x2x2 games, and random games of more strategies."""
+function categorical_cases()::AbstractVector{BenchmarkCase}
+    return BenchmarkCase[
+        categorical_case("folding 3x3", FOLDING_3X3_GAME, 30),
+        categorical_case("folding 2x2x2", FOLDING_2X2X2_GAME, 30),
+        map(random_categorical_case, 1:12)...,
     ]
 end
 
@@ -147,18 +181,30 @@ end
 const REFUSAL_CHECKS = (:reach, :kl, :angle, :nonfinite)
 const REFUSAL_MESSAGES = ("corrector refused", "corrector stopped")
 
-"""`case` traced under `settings`; a `SwapCase` redraws its map through `SwapAt`. A `Function`, as `with_logger` requires."""
-struct TraceRun{C, S <: BifurcationKitSettings} <: Function
+"""
+`case` traced under `settings`; a `SwapCase` redraws its map through `SwapAt`. PathFollowing solves a normal-form case
+at its precision (`logit_solve_lambda`). A `Function`, as `with_logger` requires.
+"""
+struct TraceRun{C, S <: EngineSettings} <: Function
     case::C
     settings::S
 end
 
-function (trace_run::TraceRun{C})()::GameTracing.TraceResult{Float32} where {C <: Case}
+function (trace_run::TraceRun{C, S})()::GameTracing.TraceResult{Float32} where {C <: Case, S <: BifurcationKitSettings}
     (; case, settings) = trace_run
     return trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings)
 end
 
-function (trace_run::TraceRun{C})()::GameTracing.TraceResult{Float32} where {C <: SwapCase}
+"""The gains PathFollowing solves for `pass`: a two-action `NormalFormPass` as `NormalFormGains` of its tables."""
+(path_gains(pass::NormalFormPass{N, A})::NormalFormGains{N, A}) where {N, A} = NormalFormGains(pass.payoffs)
+(path_gains(gains::G)::G) where {G <: NormalFormGains} = gains
+
+function (trace_run::TraceRun{C, S})()::GameTracing.BranchResult{Float32} where {C <: Case, S <: PathFollowingSettings}
+    (; case, settings) = trace_run
+    return logit_solve_lambda(path_gains(case.pass), case.precision; settings)
+end
+
+function (trace_run::TraceRun{C, S})()::GameTracing.TraceResult{Float32} where {C <: SwapCase, S <: BifurcationKitSettings}
     (; settings) = trace_run
     (; case, after, swap_precision) = trace_run.case
     return trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; redraw = SwapAt(LogitGame(after, case.precision), swap_precision))
@@ -168,6 +214,30 @@ end
 function first_choices(logits::AbstractVector{E})::AbstractVector{E} where {E <: Real}
     return inv.(one(E) .+ exp.(-logits))
 end
+
+"""
+The probabilities a row of `pass`'s game compares at `logits`: each logit's first-action probability, or for a
+`NormalFormGains` game each player's whole mixed strategy.
+"""
+function case_choices(::Any, logits::AbstractVector{E})::AbstractVector{E} where {E <: Real}
+    return first_choices(logits)
+end
+function case_choices(gains::NormalFormGains, logits::AbstractVector{E})::AbstractVector{E} where {E <: Real}
+    return reduce(vcat, mixed_strategies(gains, logits))
+end
+
+"""The probabilities of a trace's endpoint `endpoint` (BifurcationKit) or one-profile branch (PathFollowing) of `pass`'s game."""
+endpoint_choices(pass::Any, endpoint::Any)::AbstractVector = case_choices(pass, endpoint.logits)
+endpoint_choices(pass::NormalFormGains, branch::AbstractVector)::AbstractVector = case_choices(pass, only(branch).logits)
+endpoint_choices(::NormalFormPass, branch::AbstractVector)::AbstractVector = [first(strategy) for strategy in only(branch).profile]
+
+"""The pass whose probabilities a trace of `case` ends on (`case_choices`): a swap's map after."""
+ending_pass(case::Case)::Any = case.pass
+ending_pass(swap::SwapCase)::Any = swap.after
+
+"""The probabilities of `case`'s reference `reference` (`case_choices`)."""
+reference_choices(case::Case, reference::NamedTuple)::AbstractVector = case_choices(case.reference_pass, reference.logits)
+reference_choices(swap::SwapCase, reference::NamedTuple)::AbstractVector = case_choices(swap.reference_after, reference.logits)
 
 """Counts the refusals in `refusals` that a given check made."""
 struct RefusalCount{V <: AbstractVector{Symbol}}
@@ -194,16 +264,16 @@ struct Outcome
 end
 
 """`case` traced under `settings` (`TraceRun`), with its bytes and logged records."""
-function Outcome(case::C, settings::S)::Outcome where {C <: BenchmarkCase, S <: BifurcationKitSettings}
+function Outcome(case::C, settings::S)::Outcome where {C <: BenchmarkCase, S <: EngineSettings}
     trace_run = TraceRun(case, settings)
     trace_run()
     bytes = @allocated trace_run()
     sink = Channel{Pair{String, Symbol}}(typemax(Int))
-    return Outcome(with_logger(trace_run, TraceCounter(sink)), sink, bytes)
+    return Outcome(with_logger(trace_run, TraceCounter(sink)), sink, bytes, ending_pass(case))
 end
 
-"""The `Outcome` of a trace that returned `result`, allocated `bytes` and logged into `sink`, which this closes."""
-function Outcome(result::R, sink::AbstractChannel{Pair{String, Symbol}}, bytes::Integer)::Outcome where {R <: Result}
+"""The `Outcome` of a trace of `pass`'s game that returned `result`, allocated `bytes` and logged into `sink`, which this closes."""
+function Outcome(result::R, sink::AbstractChannel{Pair{String, Symbol}}, bytes::Integer, pass::Any)::Outcome where {R <: Result}
     close(sink)
     records = collect(sink)
     refusals = [last(record) for record in records if first(record) in REFUSAL_MESSAGES]
@@ -216,7 +286,7 @@ function Outcome(result::R, sink::AbstractChannel{Pair{String, Symbol}}, bytes::
     if is_error(result)
         return Outcome(Float32[], string(unwrap_error(result).cause), tally...)
     end
-    return Outcome(first_choices(unwrap(result).logits), "reached", tally...)
+    return Outcome(Float32.(endpoint_choices(pass, unwrap(result))), "reached", tally...)
 end
 
 """
@@ -230,28 +300,33 @@ function profile_gap(left::AbstractVector, right::AbstractVector{E})::E where {E
     return maximum(abs, E.(left) .- right)
 end
 
-"""One variant's `outcome` on game `case`: its reference kind, whether the game is a pitchfork or a swap, and the gap to that reference."""
+"""The summary group of `case`: `"swap"` for a map swap, `"categ"` for a `NormalFormGains` game, `"fixed"` for the rest."""
+case_group(::SwapCase)::AbstractString = "swap"
+case_group(::Case)::AbstractString = "fixed"
+case_group(::Case{<:NormalFormGains})::AbstractString = "categ"
+
+"""One variant's `outcome` on game `case`: its reference kind, whether the game is a pitchfork, its group (`case_group`) and the gap to that reference."""
 struct Row
     case::String
     label::String
     outcome::Outcome
     kind::String
     pitchfork::Bool
-    swapped::Bool
+    group::String
     gap::Float32
 end
 
 """Variant `label`'s row on `case`, with `outcome` at `gap` from `reference`."""
 function Row(case::C, label::AbstractString, outcome::Outcome, reference::NamedTuple, gap::Real)::Row where {C <: BenchmarkCase}
-    return Row(case_name(case), label, outcome, reference_kind(reference), Symbol(case_name(case)) in PITCHFORK_GAMES, case isa SwapCase, gap)
+    return Row(case_name(case), label, outcome, reference_kind(reference), Symbol(case_name(case)) in PITCHFORK_GAMES, case_group(case), gap)
 end
 
 """The row of variant `label => settings` on `case`, whose shared reference is `shared` (`shared_reference`)."""
-function Row(case::C, shared::H, (label, settings)::Pair{String, S})::Row where {C <: BenchmarkCase, H, S <: BifurcationKitSettings}
+function Row(case::C, shared::H, (label, settings)::Pair{String, S})::Row where {C <: BenchmarkCase, H, S <: EngineSettings}
     outcome = Outcome(case, settings)
     reference = variant_reference(case, settings, shared)
     # A folded branch has no reference: its gap is NaN.
-    return Row(case, label, outcome, reference, profile_gap(ifelse(reference.reached, outcome.choices, empty(outcome.choices)), reference.first_choices))
+    return Row(case, label, outcome, reference, profile_gap(ifelse(reference.reached, outcome.choices, empty(outcome.choices)), reference_choices(case, reference)))
 end
 
 """LogitNash's solve of `payoffs` to `precision`, with no regret stop: `(profile, status)`."""
@@ -281,7 +356,7 @@ function Row(case::C, (profile, status)::T, bytes::Integer)::Row where {C <: Cas
         ifelse(reached, choices, empty(choices)), ifelse(reached, "reached", "stalled"), status.iteration, 0, 0, bytes,
         map(Returns(0), REFUSAL_CHECKS), :none, ifelse(reached, :none, :stall),
     )
-    return Row(case, "logitnash", outcome, reference, profile_gap(ifelse(reached && reference.reached, choices, empty(choices)), reference.first_choices))
+    return Row(case, "logitnash", outcome, reference, profile_gap(ifelse(reached && reference.reached, choices, empty(choices)), reference_choices(case, reference)))
 end
 
 """Whether LogitNash runs on `case`: a fixed-map normal-form game, the only kind it takes."""
@@ -303,8 +378,8 @@ has_choices(row::Row)::Bool = !isempty(row.outcome.choices)
 """Whether `row` comes from variant `label`."""
 has_label(row::Any, label::AbstractString)::Bool = row.label == label
 
-"""Whether `row` is on a map-swap game exactly when `swapped`."""
-in_group(row::Row, swapped::Bool)::Bool = row.swapped == swapped
+"""Whether `row` is in summary group `group` (`case_group`)."""
+in_group(row::Row, group::AbstractString)::Bool = row.group == group
 
 """`row` as a printed ROW line."""
 function row_line(row::Row)::AbstractString
@@ -321,12 +396,12 @@ function csv_line(row::Row)::AbstractString
     (; outcome) = row
     fields = (
         row.case, row.label, outcome.status, outcome.steps, outcome.crossing_steps, outcome.iterations, outcome.refusals...,
-        outcome.last_refusal, outcome.stop_reason, row.gap, outcome.bytes, row.kind, row.swapped,
+        outcome.last_refusal, outcome.stop_reason, row.gap, outcome.bytes, row.kind, row.group,
     )
     return string(join(fields, ','), '\n')
 end
 
-const CSV_HEADER = "game,variant,status,steps,crossing_steps,iterations,refused_reach,refused_kl,refused_angle,refused_nonfinite,last_refusal,stop_reason,gap,bytes,reference,swapped\n"
+const CSV_HEADER = "game,variant,status,steps,crossing_steps,iterations,refused_reach,refused_kl,refused_angle,refused_nonfinite,last_refusal,stop_reason,gap,bytes,reference,group\n"
 
 """Whether the endpoints of the row pair `rows` lie over 1e-3 apart."""
 diverged(rows::Tuple)::Bool = profile_gap(first(rows).outcome.choices, last(rows).outcome.choices) > 1.0f-3
@@ -343,12 +418,23 @@ function signal_lines(reached::V)::AbstractVector{<:AbstractString} where {V <: 
     return map(signal_line, filter(diverged, ordered))
 end
 
+"""Whether PathFollowing solves `case`: a fixed-map normal-form game (`path_gains`)."""
+path_supported(::BenchmarkCase)::Bool = false
+path_supported(::Case{<:Union{NormalFormPass, NormalFormGains}})::Bool = true
+
+"""The rows of PathFollowing's `variants` on `case`, with shared reference `shared`, or none where it does not run (`path_supported`)."""
+path_rows(::BenchmarkCase, ::Any, ::AbstractVector)::AbstractVector{Row} = Row[]
+function path_rows(case::Case{<:Union{NormalFormPass, NormalFormGains}}, shared::NamedTuple, variants::AbstractVector)::AbstractVector{Row}
+    return Row.((case,), (shared,), variants)
+end
+
 """
-Every variant's row on `case` and LogitNash's (`logitnash_rows`), printed to `io`, with a SIGNAL for each pair of
-traced endpoints over 1e-3 apart.
+Every BifurcationKit variant's row on `case`, PathFollowing's (`path_rows`) and LogitNash's (`logitnash_rows`),
+printed to `io`, with a SIGNAL for each pair of traced endpoints over 1e-3 apart.
 """
-function case_rows(case::C, variants::V, io::IO)::AbstractVector{Row} where {C <: BenchmarkCase, V <: AbstractVector}
-    traced = Row.((case,), (shared_reference(case),), variants)
+function case_rows(case::C, variants::V, path_variants::P, io::IO)::AbstractVector{Row} where {C <: BenchmarkCase, V <: AbstractVector, P <: AbstractVector}
+    shared = shared_reference(case)
+    traced = vcat(Row.((case,), (shared,), variants), path_rows(case, shared, path_variants))
     rows = vcat(traced, logitnash_rows(case))
     print(io, join(map(row_line, rows)), join(signal_lines(filter(has_choices, traced))))
     flush(io)
@@ -410,7 +496,7 @@ end
 """The row of variant `label => settings` on draw `draw` at noise `scale`: game `case` with reference `reference`."""
 function UnfoldedRow(scale::Real, draw::Integer, case::C, reference::NamedTuple, (label, settings)::Pair{String, S})::UnfoldedRow where {C <: Case, S <: BifurcationKitSettings}
     outcome = Outcome(case, settings)
-    principal = reference.reached && profile_gap(outcome.choices, reference.first_choices) < 1.0f-3
+    principal = reference.reached && profile_gap(outcome.choices, reference_choices(case, reference)) < 1.0f-3
     return UnfoldedRow(scale, draw, label, outcome.status, outcome.steps, reference.crossings, principal)
 end
 
@@ -444,14 +530,29 @@ end
 """Whether `variant` runs in the pitchfork benchmark: the shipped settings and fisher_reach."""
 pitchfork_variant(variant::Pair)::Bool = first(variant) == "shipped" || startswith(first(variant), "fisher_reach ")
 
+# The state weights the `"tune"` scope sweeps, for both engines.
+const TUNING_WEIGHTS = (0.003f0, 0.01f0, 0.03f0, 0.1f0, 0.3f0, 0.9f0)
+
+"""The state weights of `scope`'s arms: `TUNING_WEIGHTS` for `"tune"`, else `weights`."""
+scope_weights(scope::AbstractString, weights::Tuple)::Tuple = ifelse(scope == "tune", TUNING_WEIGHTS, weights)
+
 """
 The shipped settings `shipped` and every arm (`arm_variants`) as `label => settings` pairs of one settings type,
 which an arm of another type fails to convert to; `"quick"` keeps the shipped settings and the first arm.
 """
 function benchmark_variants(scope::AbstractString, shipped::S)::AbstractVector{Pair{String, S}} where {S <: BifurcationKitSettings}
-    variants = Pair{String, S}["shipped" => shipped; arm_variants()]
+    variants = Pair{String, S}["shipped" => shipped; arm_variants(scope_weights(scope, ARM_WEIGHTS))]
     if scope == "quick"
         return variants[1:2]
+    end
+    return variants
+end
+
+"""PathFollowing's shipped settings and arms (`path_variants`); `"quick"` keeps the shipped settings alone."""
+function benchmark_path_variants(scope::AbstractString)::AbstractVector{Pair{String, PathFollowingSettings{Float32}}}
+    variants = path_variants(scope_weights(scope, PATH_WEIGHTS))
+    if scope == "quick"
+        return variants[1:1]
     end
     return variants
 end
@@ -472,37 +573,44 @@ function pitchfork_benchmark(output::AbstractString, io::IO, draws::Integer, see
     return rows
 end
 
-"""The games of `scope`: `"full"` every one, `"quick"` one fixed and one swapped game."""
+"""The games of `scope`: `"full"` and `"tune"` every one, `"quick"` one fixed, one categorical and one swapped game."""
 function scope_cases(scope::AbstractString)::AbstractVector{BenchmarkCase}
     if scope == "quick"
-        return BenchmarkCase[first(fixed_cases()), first(swap_cases())]
-    elseif scope == "full"
-        return vcat(fixed_cases(), swap_cases())
+        return BenchmarkCase[first(fixed_cases()), random_categorical_case(1), first(swap_cases())]
+    elseif scope in ("full", "tune")
+        return vcat(fixed_cases(), categorical_cases(), swap_cases())
     end
-    throw(ArgumentError("scope must be \"full\", \"quick\" or \"pitchfork\", got $(repr(scope))"))
+    throw(ArgumentError("scope must be \"full\", \"tune\", \"quick\" or \"pitchfork\", got $(repr(scope))"))
+end
+
+"""The variant labels with rows in summary group `group`: PathFollowing's and LogitNash's run on no swap, LogitNash's on no categorical game."""
+function group_labels(group::AbstractString, variants::V, path_variants::P)::AbstractVector{String} where {V <: AbstractVector, P <: AbstractVector}
+    path_labels = ifelse(group == "swap", String[], first.(path_variants))
+    return [first.(variants); path_labels; ifelse(group == "fixed", ["logitnash"], String[])]
 end
 
 """
-Every row of `cases` under `variants`, printed to `io` with a SUMMARY per group and variant, and written to `output`.
-Throws unless every game and variant gave a row.
+Every row of `cases` under the BifurcationKit `variants` and PathFollowing's `path_variants`, printed to `io` with a
+SUMMARY per group and variant, and written to `output`. Throws unless every game and variant gave a row.
 """
-function benchmark_rows(output::AbstractString, cases::C, variants::V, io::IO)::AbstractVector{Row} where {C <: AbstractVector, V <: AbstractVector}
-    rows::Vector{Row} = reduce(vcat, case_rows.(cases, (variants,), (io,)))
-    expected = length(cases) * length(variants) + count(logitnash_supported, cases)
+function benchmark_rows(output::AbstractString, cases::C, variants::V, path_variants::P, io::IO)::AbstractVector{Row} where {C <: AbstractVector, V <: AbstractVector, P <: AbstractVector}
+    rows::Vector{Row} = reduce(vcat, case_rows.(cases, (variants,), (path_variants,), (io,)))
+    expected = length(cases) * length(variants) + count(path_supported, cases) * length(path_variants) + count(logitnash_supported, cases)
     if length(rows) != expected
         error("expected $expected rows, got $(length(rows))")
     end
     write(output, string(CSV_HEADER, join(map(csv_line, rows))))
-    # Fixed-map and map-swap games are summarized apart: a swap's refusals come from the redraw, not the geometry.
-    for (group, swapped) in (("fixed", false), ("swap", true)), label in [first.(variants); ifelse(swapped, String[], ["logitnash"])]
-        print(io, summary_line(group, label, filter(Base.Fix2(in_group, swapped), rows)))
+    # Groups are summarized apart: a swap's refusals come from the redraw, and a categorical game meets the full Fisher block.
+    for group in unique(map(case_group, cases)), label in group_labels(group, variants, path_variants)
+        print(io, summary_line(group, label, filter(Base.Fix2(in_group, group), rows)))
     end
     return rows
 end
 
 """
-Run the benchmark over `scope`, printing to `io`: `"full"` every game and variant, `"quick"` one fixed and one swapped
-game under the shipped settings and the first arm, the load check CI runs; `"pitchfork"` the unfolded pitchforks
+Run the benchmark over `scope`, printing to `io`: `"full"` every game and variant, `"tune"` every game at each of
+`TUNING_WEIGHTS`, `"quick"` one fixed, one categorical and one swapped game under the shipped settings and the first
+arm, the load check CI runs; `"pitchfork"` the unfolded pitchforks
 (`pitchfork_benchmark`, `UNFOLDING_DRAWS` draws per scale from `UNFOLDING_SEED`). Returns the rows it wrote to `output`.
 """
 function main(output::AbstractString, scope::AbstractString, io::IO)::AbstractVector
@@ -511,7 +619,7 @@ function main(output::AbstractString, scope::AbstractString, io::IO)::AbstractVe
     if scope == "pitchfork"
         return pitchfork_benchmark(output, io, UNFOLDING_DRAWS, UNFOLDING_SEED)
     end
-    return benchmark_rows(output, scope_cases(scope), benchmark_variants(scope, BifurcationKitSettings{Float32}()), io)
+    return benchmark_rows(output, scope_cases(scope), benchmark_variants(scope, BifurcationKitSettings{Float32}()), benchmark_path_variants(scope), io)
 end
 
 # Run as a script; the code rules load this file as a module and run `main` themselves.

@@ -1,31 +1,59 @@
 using BifurcationKit: BifurcationKit
 using LinearAlgebra: dot
-using LogExpFunctions: log1pexp, logistic
+using PathFollowing: PathFollowing
 """
 The trace's step length in a state `x = [w; λ]` of `k` payoff gaps `w` at target precision `P`, at `state_weight` (the
-gaps' weight). Gaps and precision enter in the units `P w` and `λ / P`, so each distance weighs `Δwᵢ²` by `P²` and `Δλ²` by `1 / P²`:
+gaps' weight). Gaps and precision enter in the units `P w` and `λ / P`, so each plain distance weighs `Δwᵢ²` by `P²`
+and `Δλ²` by `1 / P²`:
 
 - `AveragedDistance`: `state_weight P² ‖Δw‖² / k + (1 - state_weight) (Δλ / P)²`.
 - `SummedDistance`: `state_weight P² ‖Δw‖² + (Δλ / P)²`.
-- `FisherDistance`: `state_weight P² Σ σ(zᵢ)σ(-zᵢ) Δwᵢ² + (Δλ / P)²`, with the Bernoulli Fisher weights of the logits `z = λ w`.
-- `FisherLogPrecisionDistance`: `state_weight Σ σ(zᵢ)σ(-zᵢ) Δwᵢ² + (Δλ / (1 + λ))²`: Fisher's payoff gains `w` beside the
-  step in `log(1 + λ)` to first order, LogitNash's path variable. Neither term depends on `P`, so the target only caps the trace.
+- `FisherDistance`: `state_weight Σₚ Δzₚᵀ Gₚ Δzₚ` plus a `PrecisionTerm`: the Fisher information of the strategy
+  profile at the logits `z = λ w`, pulled back to the state through `Δz = λ Δw + w Δλ`. Player `p`'s block
+  `Gₚ = diag(qₚ) - qₚqₚᵀ` spans its logits (`logit_ranges`); `FisherMetric` applies it.
 
-Both Fisher distances freeze their weights at each accepted point. The corrector's reach check measures in logits under
-every distance (`within_reach`).
+The Fisher distance freezes `G`, `w` and `λ` at each accepted point. The trace's plain products (`trace_dot`) measure it
+as `SummedDistance`. The corrector's reach check measures in logits under every distance (`within_reach`).
 """
-@enum StepDistance AveragedDistance SummedDistance FisherDistance FisherLogPrecisionDistance
+@enum StepDistance AveragedDistance SummedDistance FisherDistance
 
 """
-    TraceGeometry{E}(; distance, state_weight)
-
-The norm a trace steps in: its `StepDistance`, and `state_weight`, the gaps' weight against the precision's.
-The default is the Fisher distance at `state_weight = 0.01`: of the arms benchmarked, it took the fewest steps,
-corrector iterates and bytes, with every endpoint on the reference (`benchmark/results/arms-f3244ba-summary.txt`).
+The precision's term in `FisherDistance`: `TargetPrecisionTerm` `(Δλ / P)²`, or `LogPrecisionTerm`
+`(Δλ / (1 + λ))²`, the step in `log(1 + λ)` to first order, LogitNash's path variable. The log term does not depend on
+`P`, so the target only caps the trace. The plain distances weigh the precision at the target alone.
 """
-Base.@kwdef struct TraceGeometry{E <: Real}
-    distance::StepDistance = FisherDistance
-    state_weight::E = 0.01f0
+@enum PrecisionTerm TargetPrecisionTerm LogPrecisionTerm
+
+"""
+    TraceGeometry{E}(; distance, state_weight, precision_term)
+
+The norm a trace steps in: its `StepDistance`, `state_weight`, the gaps' weight against the precision's, and the
+Fisher distance's `PrecisionTerm`. A plain distance takes `TargetPrecisionTerm` only; another throws an
+`ArgumentError`. The default is the Fisher distance at `state_weight = 0.1` with the target's precision term.
+
+`state_weight = 0.1` serves both precision terms (`benchmark/results/tune-4dd74d7-summary.txt`, weights 0.003 to 0.9).
+Each term reached every categorical game at 0.1. The target term took its fewest steps there (304); the log term took
+408, against 396 at 0.3. Below 0.03 the log term exhausted at the folding 3x3 game and at `UNFOLDED_PITCHFORK_GAME`.
+"""
+struct TraceGeometry{E <: Real}
+    distance::StepDistance
+    state_weight::E
+    precision_term::PrecisionTerm
+
+    function TraceGeometry{E}(distance::StepDistance, state_weight::E, precision_term::PrecisionTerm)::TraceGeometry{E} where {E <: Real}
+        if distance != FisherDistance && precision_term != TargetPrecisionTerm
+            throw(ArgumentError("$distance weighs the precision at the target; $precision_term needs FisherDistance"))
+        end
+        return new{E}(distance, state_weight, precision_term)
+    end
+end
+
+function TraceGeometry{E}(;
+        distance::StepDistance = FisherDistance,
+        state_weight::Real = 0.1f0,
+        precision_term::PrecisionTerm = TargetPrecisionTerm,
+    )::TraceGeometry{E} where {E <: Real}
+    return TraceGeometry{E}(distance, E(state_weight), precision_term)
 end
 
 """The weight of each `Δwᵢ²` in `geometry`'s norm over `width` gaps, before the target's `P²` (`StepDistance`)."""
@@ -47,7 +75,7 @@ end
 """
 `(gap, precision)`: the weights of `Σ Δwᵢ²` and `Δλ²` in `geometry`'s plain norm over `width` gaps at target precision
 `target_precision` (`coordinate_weight`, `precision_weight`, `StepDistance`). A target whose square leaves `E`'s
-range throws `ArgumentError`; `FisherLogPrecisionDistance` does not square it.
+range throws `ArgumentError`; `FisherDistance` with `LogPrecisionTerm` does not square it.
 """
 @inline function plain_weights(geometry::TraceGeometry{E}, width::Integer, target_precision::Real)::NTuple{2, E} where {E <: Real}
     target = E(target_precision)
@@ -60,7 +88,7 @@ end
 
 """The `ArgumentError` of a target precision whose square leaves `E`'s range; out of line, so inlined `plain_weights` stays small."""
 @noinline function squared_out_of_range(target_precision::Real, ::Type{E})::Union{} where {E <: Real}
-    throw(ArgumentError("target precision $target_precision squares out of range in $E; use FisherLogPrecisionDistance or a wider type"))
+    throw(ArgumentError("target precision $target_precision squares out of range in $E; use FisherDistance with LogPrecisionTerm or a wider type"))
 end
 
 """The plain inner product of two displacements `[Δw; Δλ]` in `geometry` at `target_precision` (`plain_weights`)."""
@@ -89,127 +117,59 @@ function arclength_distance(
     return sqrt(gap * gap_square + precision * abs2(last(to) - last(from)))
 end
 
-"""`KL(Bernoulli(logistic(from)) ‖ Bernoulli(logistic(to)))`, from the logits, exact where a probability rounds to 0 or 1."""
-function bernoulli_kl(from::E, to::E)::E where {E <: Real}
-    probability = logistic(from)
-    return probability * (log1pexp(-to) - log1pexp(-from)) + (one(E) - probability) * (log1pexp(to) - log1pexp(from))
+"""
+PALC's state weight for a norm whose smallest weight of `Δλ²` over the trace is `smallest`
+(`smallest_precision_weight`): one minus half of the smaller of `smallest` and one. PALC's own `Δλ²` term then stays
+under the norm's, so the dot's precision weight stays positive.
+"""
+function palc_state_weight_under(smallest::E)::E where {E <: Real}
+    return one(E) - min(smallest, one(E)) / 2
 end
 
-"""The largest `bernoulli_kl` over the logits of two points `[w; λ]` (`logits_at`), one logit at a time."""
-function largest_kl(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    # Rounding can make a KL slightly negative, so the search starts below every value.
-    largest = typemin(E)
-    for index in firstindex(from):(lastindex(from) - 1)
-        largest = max(largest, bernoulli_kl(last(from) * from[index], last(to) * to[index]))
+"""The smallest weight `geometry`'s norm gives `Δλ²` over the precisions `[0, P]`, over `width` gaps at target precision `P`."""
+function smallest_precision_weight(geometry::TraceGeometry{E}, width::Integer, target_precision::E)::E where {E <: Real}
+    if geometry.distance == FisherDistance
+        return precision_term_root(geometry.precision_term, target_precision, target_precision)^2
     end
-    return largest
+    return last(plain_weights(geometry, width, target_precision))
 end
 
 """
-`weights!` of a `FisherDistance` trace's `PointWeightedDot`: each gap's Bernoulli Fisher weight `σ(z)σ(-z)` at the
-accepted point's logits `z` times `gap_scale`, and the constant `precision_weight` for the precision.
+The operator of `geometry`'s norm over `width` gaps of `pass!`'s game at target precision `target_precision`, divided by
+PALC's state weight `θ = palc_state_weight` past PALC's own `(1 - θ) Δλ²` (one for PathFollowing): a `FisherMetric`
+over the game's `logit_ranges`, or for a plain distance PathFollowing's `FixedWeights`, `gap / θ` per gap and
+`(precision - (1 - θ)) / θ` for the precision (`plain_weights`).
 """
-struct FisherWeights{E <: Real}
-    gap_scale::E
-    precision_weight::E
-end
-
-function (weighting::FisherWeights{E})(weights::AbstractVector{E}, point::BifurcationKit.BorderedArray)::AbstractVector{E} where {E <: Real}
-    precision, gaps = last(point.u), payoff_gaps(point.u)
-    payoff_gaps(weights) .= weighting.gap_scale .* logistic.(precision .* gaps) .* logistic.(.-(precision .* gaps))
-    weights[end] = weighting.precision_weight
-    return weights
-end
-
-"""`(Δλ / (1 + λ))²` per `Δλ²`, `1 / (1 + λ)²`, at precision `precision`."""
-function log_precision_scale(precision::E)::E where {E <: Real}
-    return inv(one(E) + precision)^2
-end
-
-"""
-PALC's state weight for a `FisherLogPrecisionDistance` trace to `target_precision`: one minus half of `1 / (1 + P)²`,
-the smallest `log_precision_scale` over λ ∈ [0, P]. PALC's own `Δλ²` term then stays under the distance's, so the
-dot's precision weight (`FisherLogPrecisionWeights`) stays positive.
-"""
-function log_precision_palc_state_weight(target_precision::E)::E where {E <: Real}
-    return one(E) - log_precision_scale(target_precision) / 2
+function trace_metric(
+        geometry::TraceGeometry{E},
+        pass::Any,
+        width::Integer,
+        target_precision::E,
+        palc_state_weight::E,
+    )::PathFollowing.Metric where {E <: Real}
+    if geometry.distance == FisherDistance
+        ranges = checked_ranges(logit_ranges(pass), width)
+        return FisherMetric(ranges, geometry.state_weight, geometry.precision_term, target_precision, palc_state_weight)
+    end
+    gap, precision = plain_weights(geometry, width, target_precision)
+    return PathFollowing.FixedWeights([fill(gap / palc_state_weight, width); (precision - (one(E) - palc_state_weight)) / palc_state_weight])
 end
 
 """
-PALC's state weight for a plain-norm trace whose precision weight is `precision` (`plain_weights`): one minus half of
-the smaller of `precision` and one. PALC's own `Δλ²` term then stays under the norm's, so the dot's precision weight
-stays positive.
+`(; palc_state_weight, dot)`: PALC's `θ` and `dotθ` for `geometry` over a trace of `width` gaps of `pass!`'s game to
+precision `target_precision`. PALC's norm of `[Δx; Δλ]`, `x = [w; λ]`, is `θ ⟨Δx, Δx⟩ + (1 - θ) Δλ²`, which `dotθ`
+(`trace_metric`) makes the trace's norm up to the target (`FisherMetric` past it). `θ` comes from the norm's smallest
+precision weight (`palc_state_weight_under`). Every `state_weight` in (0, 1) is valid, at every width; another throws
+an `ArgumentError`. A Fisher distance reads the game's `logit_ranges`.
 """
-function plain_palc_state_weight(precision::E)::E where {E <: Real}
-    return one(E) - min(precision, one(E)) / 2
-end
-
-"""
-`weights!` of a `FisherLogPrecisionDistance` trace's `PointWeightedDot`, under PALC state weight `palc_state_weight`
-(`log_precision_palc_state_weight`), both weights at the accepted point:
-
-- each gap: its Fisher weight `σ(z)σ(-z)` times `gap_scale = state_weight / palc_state_weight`;
-- the precision: `(log_precision_scale - (1 - palc_state_weight)) / palc_state_weight`.
-
-PALC's `palc_state_weight ⟨Δx, Δx⟩ + (1 - palc_state_weight) Δλ²` is then the distance's norm.
-"""
-struct FisherLogPrecisionWeights{E <: Real}
-    gap_scale::E
-    palc_state_weight::E
-end
-
-"""The weight of `Δλ` in `weighting`'s dot at precision `precision`."""
-function precision_dot_weight(weighting::FisherLogPrecisionWeights{E}, precision::E)::E where {E <: Real}
-    scale = log_precision_scale(precision)
-    return (scale - (one(E) - weighting.palc_state_weight)) / weighting.palc_state_weight
-end
-
-function (weighting::FisherLogPrecisionWeights{E})(weights::AbstractVector{E}, point::BifurcationKit.BorderedArray)::AbstractVector{E} where {E <: Real}
-    precision, gaps = last(point.u), payoff_gaps(point.u)
-    payoff_gaps(weights) .= weighting.gap_scale .* logistic.(precision .* gaps) .* logistic.(.-(precision .* gaps))
-    weights[end] = precision_dot_weight(weighting, precision)
-    return weights
-end
-
-"""`weights!` of an `AveragedDistance` or `SummedDistance` trace's `PointWeightedDot`: its weights stay those it was built with."""
-struct FixedWeights end
-
-function (::FixedWeights)(weights::AbstractVector{E}, ::BifurcationKit.BorderedArray)::AbstractVector{E} where {E <: Real}
-    return weights
-end
-
-"""
-`(; palc_state_weight, dot)`: PALC's `θ` and `dotθ` for `geometry` over a trace of `width` gaps to precision
-`target_precision`. PALC's norm of `[Δx; Δλ]`, `x = [w; λ]`, is `palc_state_weight ⟨Δx, Δx⟩ + (1 - palc_state_weight) Δλ²`.
-A plain-norm distance (`plain_weights`: `gap`, `precision`) runs PALC at `plain_palc_state_weight(precision)`, and the
-inner product weighs each gap by `gap / palc_state_weight` (times its Fisher weight under `FisherDistance`) and the
-precision by `(precision - (1 - palc_state_weight)) / palc_state_weight`.
-
-A `FisherLogPrecisionDistance` trace runs PALC at `log_precision_palc_state_weight` instead (`FisherLogPrecisionWeights`).
-Every `state_weight` in (0, 1) is valid, at every width; another throws an `ArgumentError`.
-"""
-function palc_geometry(geometry::TraceGeometry{E}, width::Integer, target_precision::Real)::NamedTuple where {E <: Real}
+function palc_geometry(geometry::TraceGeometry{E}, pass::Any, width::Integer, target_precision::Real)::NamedTuple where {E <: Real}
     (; state_weight) = geometry
     if !(zero(E) < state_weight < one(E))
         throw(ArgumentError("the state weight $state_weight lies outside (0, 1), where PALC weights the gaps and the precision"))
     end
-    if geometry.distance == FisherLogPrecisionDistance
-        palc_state_weight = log_precision_palc_state_weight(E(target_precision))
-        weighting = FisherLogPrecisionWeights(state_weight / palc_state_weight, palc_state_weight)
-        # The flat start's logits are zero, where each Fisher weight is 1/4.
-        weights = [fill(weighting.gap_scale / 4, width); precision_dot_weight(weighting, zero(E))]
-        return (; palc_state_weight, dot = BifurcationKit.DotTheta(BifurcationKit.PointWeightedDot(weighting, weights)))
-    end
-    gap, precision = plain_weights(geometry, width, target_precision)
-    palc_state_weight = plain_palc_state_weight(precision)
-    gap_scale = gap / palc_state_weight
-    precision_weight = (precision - (one(E) - palc_state_weight)) / palc_state_weight
-    if geometry.distance in (AveragedDistance, SummedDistance)
-        weights = [fill(gap_scale, width); precision_weight]
-        return (; palc_state_weight, dot = BifurcationKit.DotTheta(BifurcationKit.PointWeightedDot(FixedWeights(), weights)))
-    end
-    weighted = BifurcationKit.PointWeightedDot(FisherWeights(gap_scale, precision_weight), [fill(gap_scale / 4, width); precision_weight])
-    return (; palc_state_weight, dot = BifurcationKit.DotTheta(weighted))
+    target = E(target_precision)
+    palc_state_weight = palc_state_weight_under(smallest_precision_weight(geometry, width, target))
+    return (; palc_state_weight, dot = metric_dot(trace_metric(geometry, pass, width, target, palc_state_weight), zeros(E, width + 1)))
 end
 
 """PALC's product `state_weight ⟨x, y⟩ + (1 - state_weight) λₓ λ_y` of two branch vectors `[x; λ]` under the trace's `dot`."""
@@ -227,7 +187,7 @@ The row `b` with `b ⋅ τ = palc_product(dot, state_weight, vector, τ)` for ev
 `dot` scales by its point weights, `⟨x, y⟩ = xᵀ A y`, and `palc_options` cannot replace it.
 """
 function palc_border(dot::BifurcationKit.DotTheta, state_weight::E, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    border = state_weight .* dot.apply!(copy(vector))
+    border = state_weight .* dot.apply!(copyto!(similar(vector), vector))
     border[end] += (one(E) - state_weight) * last(vector)
     return border
 end

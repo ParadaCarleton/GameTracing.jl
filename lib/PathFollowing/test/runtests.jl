@@ -1,5 +1,5 @@
 using PathFollowing
-using PathFollowing: AcceptAll, factored_sign, weighted_angle
+using PathFollowing: AcceptAll, factored_sign, metric_angle
 using CommonSolve: init, step!
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LinearAlgebra: det
@@ -95,6 +95,39 @@ function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVec
         largest = max(largest, abs(iterate[index] - previous[index]))
     end
     return scale * largest <= settled.tolerance
+end
+
+"""
+A metric that counts its freezes in `freezes` and weighs each coordinate by `1 + |xᵢ|` at the point `x` it is frozen at:
+a diagonal stand-in for a metric that depends on the point.
+"""
+struct CountingMetric <: PathFollowing.Metric
+    freezes::Base.RefValue{Int}
+end
+
+"""`CountingMetric`'s state: its counter and its weights at the point it is frozen at."""
+struct CountingFrozen{E <: Real}
+    freezes::Base.RefValue{Int}
+    weights::Vector{E}
+end
+
+function PathFollowing.frozen_metric(metric::CountingMetric, point::AbstractVector{E})::CountingFrozen{E} where {E <: Real}
+    return freeze_metric!(CountingFrozen(metric.freezes, zeros(E, length(point))), point)
+end
+
+function PathFollowing.freeze_metric!(frozen::CountingFrozen{E}, point::AbstractVector{E})::CountingFrozen{E} where {E <: Real}
+    frozen.freezes[] += 1
+    frozen.weights .= 1 .+ abs.(point)
+    return frozen
+end
+
+function PathFollowing.metric_inner(frozen::CountingFrozen{E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
+    return sum(frozen.weights .* left .* right)
+end
+
+function PathFollowing.metric_apply!(out::AbstractVector{E}, frozen::CountingFrozen{E}, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
+    out .= frozen.weights .* vector
+    return out
 end
 
 """A `PseudoArclength` in `E` with Euclidean metrics and the given overrides."""
@@ -220,14 +253,27 @@ end
         @test_throws ArgumentError init(problem, algorithm(E); first_step = floatmax(widen(E)))
     end
 
-    @testset "point weights reweight at every accepted point" begin
-        visits = Ref(0)
-        scale! = (weights, point) -> (visits[] += 1; fill!(weights, one(eltype(point))))
-        settings = algorithm(E; metric = PointWeights(scale!), turn_metric = FixedWeights(ones(E, 2)))
+    @testset "a point metric freezes at the start and at every accepted point, and the step uses it" begin
+        metric = CountingMetric(Ref(0))
+        settings = algorithm(E; metric, turn_metric = FixedWeights(ones(E, 2)))
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10))
-        before = visits[]
-        unwrap(step!(tracer))
-        @test visits[] == before + 1
+        @test metric.freezes[] == 1
+        for steps in 1:3
+            unwrap(step!(tracer))
+            @test metric.freezes[] == steps + 1
+            @test tracer.metric.weights == 1 .+ abs.(tracer.point)
+            # The tangent has unit length in the metric frozen at its point.
+            @test PathFollowing.metric_norm(tracer.metric, tracer.tangent) ≈ 1
+        end
+        @test abs(hypot(tracer.point...) - 1) <= 10 * tolerance
+    end
+
+    @testset "FixedWeights takes the points' element type and refuses a length that differs" begin
+        frozen = frozen_metric(FixedWeights([2, 3]), E[1, 1])
+        @test eltype(frozen.weights) == E
+        @test metric_inner(frozen, E[1, 2], E[3, 4]) == 2 * 3 + 3 * 8
+        @test metric_apply!(zeros(E, 2), frozen, E[1, 2]) == E[2, 6]
+        @test_throws DimensionMismatch frozen_metric(FixedWeights(ones(E, 3)), E[1, 1])
     end
 
     @testset "a refusing accept ends the trace Unresolved" begin
@@ -399,11 +445,12 @@ end
         @test_throws ArgumentError init(CurveProblem(Fold(), E[0, 0], E[1, 0]), algorithm(E); first_step = zero(E))
         @test_throws DimensionMismatch init(CurveProblem(Fold(), E[0, 0], E[1, 0, 0]), algorithm(E); first_step = one(E))
         @test AcceptAll()(E[0], E[0], E[0])
-        @test weighted_angle(ones(E, 2), E[1, 0], E[0, 1]) ≈ E(π) / 2
-        @test weighted_angle(ones(E, 2), E[1, 0], E[-1, 0]) ≈ E(π)
+        euclidean, scratch = FixedWeights(ones(E, 2)), zeros(E, 2)
+        @test metric_angle(euclidean, scratch, E[1, 0], E[0, 1]) ≈ E(π) / 2
+        @test metric_angle(euclidean, scratch, E[1, 0], E[-1, 0]) ≈ E(π)
         # A small angle keeps its digits: acos of the cosine would lose half of them.
-        @test weighted_angle(ones(E, 2), E[1, 0], [cos(E(1) / 10^4), sin(E(1) / 10^4)]) ≈ E(1) / 10^4 rtol = 8 * eps(E)
-        @test weighted_angle(E[4, 1], E[1, 0], E[1, 2]) ≈ E(π) / 4
+        @test metric_angle(euclidean, scratch, E[1, 0], [cos(E(1) / 10^4), sin(E(1) / 10^4)]) ≈ E(1) / 10^4 rtol = 8 * eps(E)
+        @test metric_angle(FixedWeights(E[4, 1]), scratch, E[1, 0], E[1, 2]) ≈ E(π) / 4
         @test factored_sign(E[1 0; 0 NaN32], [1, 2]) == 0
     end
 

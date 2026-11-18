@@ -162,9 +162,9 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
 
 - `corrector`: a `Newton`.
 - `step_control`: a `StepControl`.
-- `metric`: the step metric (`FixedWeights` or `PointWeights`). Step lengths, the corrector's hyperplane and the
-  tangent's unit length are in it.
-- `turn_metric`: the metric that orients each tangent along the one before and measures their turn.
+- `metric`: the step `Metric`, such as `FixedWeights`. Step lengths, the corrector's hyperplane and
+  the tangent's unit length are in it.
+- `turn_metric`: the `Metric` that orients each tangent along the one before and measures their turn.
 - `orientation_check`: a `DeterminantSign`, or `nothing` to orient each tangent by the turn metric alone. Without it, a long
   step near a fold can land where the oriented tangent runs back along the curve.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -173,7 +173,7 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
   as `Unresolved`; smaller steps cannot add a point.
 - `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
 """
-struct PseudoArclength{C <: Newton, S <: StepControl, M, T, O <: Union{Nothing, DeterminantSign}, L, A}
+struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}
     corrector::C
     step_control::S
     metric::M
@@ -193,7 +193,7 @@ struct AcceptAll end
 function PseudoArclength(;
         corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation_check::O, linear_solver::L,
         accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
-    )::PseudoArclength{C, S, M, T, O, L, A} where {C <: Newton, S <: StepControl, M, T, O <: Union{Nothing, DeterminantSign}, L, A}
+    )::PseudoArclength{C, S, M, T, O, L, A} where {C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}
     min_step_ulps >= 0 || throw(ArgumentError("min_step_ulps must be non-negative; got $min_step_ulps"))
     max_refusals >= 0 || throw(ArgumentError("max_refusals must be non-negative; got $max_refusals"))
     return PseudoArclength{C, S, M, T, O, L, A}(

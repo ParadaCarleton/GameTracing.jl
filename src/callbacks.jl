@@ -7,8 +7,9 @@ using Logging: @debug
 
 The corrector's controls (`CorrectorReach`); `nothing` switches a limit off. `reach`: a corrector that moves a logit
 further from the predictor than this times the predictor's own largest logit move is refused. `shift_share`: the share
-of that reach a redraw's predicted root shift may use (`RootShift`). `max_kl`: a corrected point whose largest per-logit probability KL from
-the predictor passes this is refused. A step's turn is limited by `StepControl`'s `turn_limit`.
+of that reach a redraw's predicted root shift may use (`RootShift`). `max_kl`: a corrected point that moves any player's mixed
+strategy further from the predictor's than this KL is refused (`largest_kl`); the game's pass must define `logit_ranges`.
+A step's turn is limited by `StepControl`'s `turn_limit`.
 
 Convergence is scale-free, as in Gambit's tracer (path.cc:372, `c_tol` in log probabilities): a Newton correction that
 moves no logit more than `logit_tolerance`, at a precision within the relative `pin_tolerance` of its pin.
@@ -141,7 +142,7 @@ function restated(
 end
 
 """
-    CorrectorReach(accept_corrected, settings, geometry, target_precision, start, predicted, step_length)
+    CorrectorReach(accept_corrected, settings, geometry, target_precision, start, predicted, step_length, ranges)
 
 The trace's BifurcationKit `callback_newton`, which also decides the corrector's convergence: a `settled` iterate
 ends Newton's method converged (`NewtonConverged`), and a correction that fails to contract stops it (`corrected!`).
@@ -153,15 +154,16 @@ largest logit move (`within_reach`); the step then halves. A predictor within `R
 point's coordinates (`step_unresolved`) refuses that corrector and every later one (`unresolved`): no smaller step can
 add a point, so the trace ends as `TraceStuck`, or as `PrecisionExhausted` when the corrector before it stopped past its
 reach (`unresolved_noise`). On a smooth branch that distance is the branch's curvature
-times `ds² / 2`, so halving brings any step under it, while an iterate that lands on another branch is far from it. A converged closing point is refused the same way past `reach`, past a largest probability KL
-`KL(corrected ‖ predicted)` of `settings.max_kl` (`largest_kl`). A predictor that did not move has no reach to compare.
+times `ds² / 2`, so halving brings any step under it, while an iterate that lands on another branch is far from it. A converged closing point is refused the same way past `reach`, and past a
+player's KL `KL(corrected ‖ predicted)` of `settings.max_kl` over the players of `ranges` (`largest_kl`, `kl_ranges`). A
+predictor that did not move has no reach to compare.
 `accept_corrected(logits, λ, converged)` then sees every other closing point. `predicted` holds the current step's
 predictor, `iterate` the current solve's last iterate and `stalled` the iterate of the last stall or reach failure on
 record (`noise`, `reach_failure`, `record_stall!`), all updated in place, mutable copies of `predicted` and `start` in
 `similar(predicted)`; `state` (`CorrectorState`) holds the scalars that change between calls. `geometry` measures the
 step length at `target_precision`.
 """
-struct CorrectorReach{C, E <: Real, V <: AbstractVector{E}}
+struct CorrectorReach{C, E <: Real, V <: AbstractVector{E}, R}
     accept_corrected::C
     settings::CorrectorSettings{E}
     geometry::TraceGeometry{E}
@@ -170,6 +172,7 @@ struct CorrectorReach{C, E <: Real, V <: AbstractVector{E}}
     iterate::V
     stalled::V
     state::Base.RefValue{CorrectorState{E}}  # lint: ref # lint: non-public-access  by design: callback_newton returns a verdict, and its state between calls is one immutable value here (RefValue is a Ref's concrete type)
+    ranges::R
 end
 
 """`check`'s `CorrectorState` after replacing the fields named in `changes`."""
@@ -251,7 +254,8 @@ function CorrectorReach(
         start::AbstractVector{E},
         predicted::AbstractVector{E},
         step_length::E,
-    )::CorrectorReach{C, E} where {C, E <: Real}
+        ranges::R,
+    )::CorrectorReach{C, E} where {C, E <: Real, R}
     # `similar` gives mutable storage like `predicted`'s; `copy` keeps a range or static vector immutable.
     predicted_buffer, iterate_buffer = copyto!(similar(predicted), predicted), copyto!(similar(predicted), start)
     stalled_buffer = copy(iterate_buffer)
@@ -260,7 +264,7 @@ function CorrectorReach(
         step_length, E(NaN32), E(NaN32), 0, false, NoiseRecord(zero(E), nothing), false, no_reach_failure(E),
         (; pin = E(NaN32), arclength = E(NaN32)),
     )
-    return CorrectorReach{C, E, typeof(predicted_buffer)}(
+    return CorrectorReach{C, E, typeof(predicted_buffer), R}(
         accept_corrected,
         settings,
         geometry,
@@ -269,7 +273,21 @@ function CorrectorReach(
         iterate_buffer,
         stalled_buffer,
         Ref(initial),  # lint: ref  see `state`
+        ranges,
     )
+end
+
+"""
+The players' `logit_ranges` that `CorrectorReach`'s KL limit `limit` reads, over `width` logits of `pass!`'s game:
+`nothing` when the limit is off, so a pass without `logit_ranges` traces under it.
+"""
+kl_ranges(::Nothing, ::Any, ::Integer)::Nothing = nothing
+kl_ranges(::Real, pass::Any, width::Integer)::Union{Tuple, AbstractVector} = checked_ranges(logit_ranges(pass), width)
+
+"""Whether no player's KL from `predicted` to `corrected` over `ranges` passes `limit` (`largest_kl`); none passes an absent limit."""
+kl_within(::Nothing, ::Any, ::AbstractVector, ::AbstractVector)::Bool = true
+@inline function kl_within(limit::Real, ranges::Any, corrected::AbstractVector{E}, predicted::AbstractVector{E})::Bool where {E <: Real}
+    return largest_kl(ranges, corrected, predicted) <= limit
 end
 
 """Whether `check` accepts its corrector's converged closing point `corrected` (reach and KL)."""
@@ -282,7 +300,7 @@ function closing_accepted(
         @debug "corrector refused" _group = :trace reason = :reach predictor_move = check.state[].predictor_move
         return false
     end
-    if !within_limit(settings.max_kl, largest_kl(corrected, check.predicted))
+    if !kl_within(settings.max_kl, check.ranges, corrected, check.predicted)
         @debug "corrector refused" _group = :trace reason = :kl
         return false
     end
@@ -470,7 +488,7 @@ end
 """
 Whether `point` moved no logit further from the predictor's than `check.settings.reach` times the predictor's own
 largest logit move (`logit_change`). Logits are target-free, as the convergence test is; a weighted norm can shrink a
-branch jump (frozen Fisher weights) or swell a settled point (the norm's `P²` on the gaps at a far target).
+branch jump (a frozen Fisher metric) or swell a settled point (the norm's `P²` on the gaps at a far target).
 """
 function within_reach(check::CorrectorReach, point::AbstractVector)::Bool
     if !(check.state[].predictor_move > 0)

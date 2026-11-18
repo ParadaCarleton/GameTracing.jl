@@ -74,3 +74,18 @@ const REVERSAL_GAME = (
 
 # One logit whose branch folds back at precision about 1.4; target 2 lies past the fold.
 const FOLD_GAME = ThresholdPass(6.0f0, 3.0f0)
+
+# A random 3x3 draw whose principal branch folds back at precision about 21.57, turns again near 2.5, then rises.
+# Float32 BifurcationKit at the Gambit settings stalled at the first fold under per-logit Bernoulli weights.
+const FOLDING_3X3_GAME = (
+    Float32[0.8496506f0 -5.1560864f0 -5.0248613f0; -0.8010247f0 4.4318876f0 -5.6464076f0; 0.81554914f0 -3.3132758f0 -1.5674677f0],
+    Float32[-4.9134245f0 -2.9423323f0 1.9437922f0; -4.345395f0 -1.6042254f0 0.86286294f0; 3.2346768f0 1.2498221f0 -0.47711927f0],
+)
+
+# A 2x2x2 draw of `logit_solve_tests.jl`'s random games, whose principal branch folds back near 23.27 and turns near 3.35.
+# Float32 BifurcationKit at the Gambit settings stalled at the first fold under per-logit Bernoulli weights.
+const FOLDING_2X2X2_GAME = (
+    Float32[0.45097172f0 2.1065488f0; 0.25923342f0 5.8263507f0;;; 1.4212247f0 -3.3518772f0; -1.676609f0 -2.8861334f0],
+    Float32[-3.0872922f0 -4.762417f0; 0.25956222f0 0.17571005f0;;; -0.20159242f0 0.77131903f0; 2.1493049f0 -4.9243317f0],
+    Float32[2.896038f0 -3.6309934f0; 2.4591706f0 4.723743f0;;; -4.216482f0 -4.0223656f0; 0.52297986f0 2.3564496f0],
+)

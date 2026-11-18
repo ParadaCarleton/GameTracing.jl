@@ -53,8 +53,8 @@ point. Use it to stop at an exact parameter value that a step passed.
   `LastCorrection()` settles on the last correction, often one iteration later.
 - `StepControl`: the target contraction, first correction and turn, the largest growth (and the largest after the
   first step) and the largest step.
-- `FixedWeights`, `PointWeights`: the step metric and the turn metric. `PointWeights` reweights at each accepted
-  point.
+- `metric`, `turn_metric`: the step metric and the turn metric, each a symmetric positive semidefinite operator
+  frozen at every accepted point (`frozen_metric`). `FixedWeights` is the constant diagonal one.
 - `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.
 - `orientation_check`: `DeterminantSign` refuses a step where `sign det([J; tᵀ])` changes. A long step near a fold can
   land where the oriented tangent runs back along the curve; this check catches it. A persistent change is accepted

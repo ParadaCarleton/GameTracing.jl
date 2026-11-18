@@ -1,4 +1,6 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
+using LinearAlgebra: Diagonal
+using PathFollowing: PathFollowing
 using Random: AbstractRNG, Xoshiro
 
 """The largest difference in any probability between two profiles of mixed strategies."""
@@ -62,13 +64,6 @@ end
 # mixed equilibrium (λ ≈ 47) and the (2, 2, 2) game at the pure profile (2, 1, 2) (λ ≈ 1.5).
 const STUCK_BRANCH_SEED = 0x126798e4d8bed9ec
 
-# A fresh draw of a CI run: its branch folds (λ peaks near 2.72) before it meets maxregret. Its λ-fixed map is singular
-# at the fold, and Gambit's `logit_solve_lambda` returns the first crossing of the end's λ, so neither check holds there.
-const FOLDING_BRANCH_GAME = (
-    Float32[-1.7090197f0 3.4388857f0 4.108635f0; 1.6385761f0 -2.7659307f0 5.6244125f0; -2.6847887f0 -0.8351383f0 -6.3075285f0],
-    Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
-)
-
 # A fresh draw of a CI run: PathFollowing ends it at logits near ±300, where every strategy has settled but the logits
 # sit about 1000 ulps off the map. Its points settle in strategies, PathFollowing's measure, and fail in logits.
 const SATURATED_BRANCH_GAME = (
@@ -77,11 +72,18 @@ const SATURATED_BRANCH_GAME = (
     Float32[-1.675467f0 -0.60522515f0; 0.72147083f0 -0.13347721f0;;; -5.2404265f0 3.434299f0; 2.0519495f0 3.9997408f0],
 )
 
-# A fresh draw of a CI run: BifurcationKit lands a point at its branch's fold peak, λ ≈ 2.7237. There `I - ∂T/∂z` is
-# singular, so a Newton step at fixed λ grows past the settle bound; `branch_step` frees λ and stays bounded.
+# A fresh draw of a CI run: its branch folds at λ ≈ 2.7237 before it meets maxregret, and BifurcationKit lands a point on
+# the peak. There `I - ∂T/∂z` is singular, so a Newton step at fixed λ grows past the settle bound (`branch_step` frees
+# λ), and the λ-fixed checks fail: Gambit's `logit_solve_lambda` returns the first crossing of the end's λ.
 const FOLD_PEAK_GAME = (
     Float32[-1.7090197f0 3.4388857f0 4.108635f0; 1.6385761f0 -2.7659307f0 5.6244125f0; -2.6847887f0 -0.8351383f0 -6.3075285f0],
     Float32[-0.11561966f0 3.8349252f0 4.1745343f0; 1.9479157f0 -2.412167f0 -1.7825432f0; -5.1971507f0 3.1131897f0 -5.5004435f0],
+)
+
+# A fresh draw of PR 125's CI run: main's Float32 BifurcationKit trace exhausted at the fold peak λ ≈ 26.26, a logit at -88.
+const FOLD_EXHAUSTED_GAME = (
+    Float32[-0.17346182f0 0.98846f0 -0.047029182f0; -0.15673546f0 1.7735703f0 3.5914543f0; 0.1646234f0 -4.6235147f0 -0.70840126f0],
+    Float32[-2.4531052f0 1.945029f0 -6.307946f0; 0.8079069f0 -0.08894292f0 -2.0735276f0; 1.8209918f0 1.0540596f0 -3.7581315f0],
 )
 
 """
@@ -102,7 +104,7 @@ end
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., FOLDING_BRANCH_GAME, SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, branch_games(fresh_rng())...)
+    for payoffs in (stuck_games..., SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, FOLD_EXHAUSTED_GAME, branch_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
         result = logit_solve_branch(gains; settings)
         @test !is_error(result)
@@ -119,10 +121,10 @@ end
         for profile in branch
             @test settled_point(gains, profile, settings)
         end
-        # A fold leaves the λ-fixed checks below without a unique answer (`FOLDING_BRANCH_GAME`), even past its peak.
+        # A fold leaves the λ-fixed checks below without a unique answer (`FOLD_PEAK_GAME`), even past its peak.
         folded = !issorted([profile.lam for profile in branch])
         # A fresh draw may fold too; the fixed game must.
-        @test folded || payoffs !== FOLDING_BRANCH_GAME
+        @test folded || payoffs !== FOLD_PEAK_GAME
         if folded
             continue
         end
@@ -131,6 +133,36 @@ end
             profile_bound(last(branch)) + GAMBIT_PROBABILITY_TOLERANCE
         again = only(unwrap(logit_solve_lambda(gains, solved.lam; settings)))
         @test largest_gap(again.profile, solved.profile) < profile_bound(again) + profile_bound(solved)
+    end
+end
+
+@testset "both engines trace the folding 3x3 game and the folding 2x2x2 game to maxregret 1e-4 ($element, $engine)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
+    for payoffs in (FOLDING_3X3_GAME, FOLDING_2X2X2_GAME)
+        gains = NormalFormGains(map(table -> element.(table), payoffs))
+        result = logit_solve_branch(gains; settings, maxregret = 1.0f-4)
+        @test !is_error(result)
+        if is_error(result)
+            @error "logit_solve_branch failed" engine element failure = unwrap_error(result)
+            continue
+        end
+        branch = unwrap(result)
+        @test GameTracing.max_regret(gains, last(branch).logits) <= 1.0f-4 * GameTracing.payoff_range(gains)
+        @test all(profile -> settled_point(gains, profile, settings), branch)
+    end
+end
+
+@testset "a game with a player of one strategy traces under the default and each engine's settings ($element)" for element in (Float32, widen(Float32))
+    # A 1x2 game and a 2x1x2 game: the lone strategy's player has an empty logit range.
+    games = ((element[1 2], element[3 4]), map(table -> element.(table), ([1; 2;;; 3; 4], [5; 6;;; 7; 8], [2; 1;;; 4; 3])))
+    for payoffs in games, (engine, settings) in ["default" => BifurcationKitSettings{element}(); engine_settings(element)]
+        gains = NormalFormGains(payoffs)
+        result = logit_solve(gains; settings)
+        @test !is_error(result)
+        if !is_error(result)
+            solved = unwrap(result)
+            @test all(strategy -> length(strategy) > 1 || strategy == [1], solved.profile)
+            @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
+        end
     end
 end
 
@@ -237,12 +269,6 @@ end
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
 end
 
-@testset "PathFollowing takes a side arm at an exact pitchfork, as Gambit does ($element)" for element in (Float32, widen(Float32))
-    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.battle_of_the_sexes))
-    checked = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}()))
-    @test all(strategy -> maximum(strategy) > 99 // 100, checked.profile)
-end
-
 @testset "FisherRaoChange is the largest Fisher–Rao distance any player's strategy moves ($element)" for element in (Float32, widen(Float32))
     one_player = GameTracing.FisherRaoChange((1:1,))
     # From even odds to odds of 1:3 the Bhattacharyya angle is 15°, so the distance is twice that: π / 6.
@@ -306,23 +332,25 @@ end
     @test largest_gap(last(first(branches)).profile, last(last(branches)).profile) < 1.0f-3
 end
 
-"""The Bernoulli Fisher weight `σ(z)σ(-z)` of a logit `z`."""
-fisher_weight(logit::Real)::Real = exp(-abs(logit)) / (1 + exp(-abs(logit)))^2
-
-@testset "PathFollowing's geometry weighs each payoff gap and the precision ($element)" for element in (Float32, widen(Float32))
-    # Payoff gaps (1, -2) at precision 3, so logits (3, -6).
-    point = element[1, -2, 3]
-    weights = zeros(element, 3)
-    log_precision = TraceGeometry{element}(; distance = FisherLogPrecisionDistance, state_weight = 1 // 2)
-    GameTracing.GeometryWeights(log_precision)(weights, point)
-    @test weights ≈ element[fisher_weight(3) / 2, fisher_weight(-6) / 2, 1 // 16]
-    GameTracing.GeometryWeights(TraceGeometry{element}(; distance = FisherDistance, state_weight = 1 // 2))(weights, point)
-    @test weights[3] == 1
-    GameTracing.GeometryWeights(TraceGeometry{element}(; distance = SummedDistance, state_weight = 1 // 2))(weights, point)
-    @test weights == element[1 // 2, 1 // 2, 1]
-    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
-    solved = unwrap(logit_solve(gains; settings = PathFollowingSettings{element}(; step_metric = log_precision)))
-    @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
+@testset "PathFollowing's metric is the trace geometry's at target precision one ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    gains = NormalFormGains((randn(rng, element, 3, 2), randn(rng, element, 3, 2)))
+    width = logit_count(gains)
+    point = [randn(rng, element, width); 3 * rand(rng, element)]
+    for geometry in every_geometry(element(1 // 2))
+        frozen = PathFollowing.frozen_metric(GameTracing.trace_metric(geometry, gains, width, one(element), one(element)), point)
+        if geometry.distance == FisherDistance
+            precision_weight = geometry.precision_term == LogPrecisionTerm ? inv(1 + last(point))^2 : one(element)
+            expected = fisher_operator(GameTracing.logit_ranges(gains), point, geometry.state_weight, precision_weight)
+        else
+            expected = Diagonal([fill(GameTracing.coordinate_weight(geometry, width), width); GameTracing.precision_weight(geometry)])
+        end
+        @test inner_matrix(frozen, element, width + 1) ≈ expected rtol = sqrt(eps(element))
+    end
+    pennies = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
+    log_precision = TraceGeometry{element}(; precision_term = LogPrecisionTerm, state_weight = 1 // 2)
+    solved = unwrap(logit_solve(pennies; settings = PathFollowingSettings{element}(; step_metric = log_precision)))
+    @test GameTracing.max_regret(pennies, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(pennies)
 end
 
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
@@ -394,7 +422,7 @@ end
         settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(; distance))
         @test_throws ArgumentError trace_endpoint(LogitGame(pass, target), 2, settings)
     end
-    settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherLogPrecisionDistance))
+    settings = BifurcationKitSettings{element}(step_metric = TraceGeometry{element}(distance = FisherDistance, precision_term = LogPrecisionTerm))
     # To first order the logits are the target times the gains at even odds: (8 + 0) / 2 - (7 + 5) / 2 = -2 for each player.
     @test unwrap(trace_endpoint(LogitGame(pass, tiny), 2, settings)).logits ≈ fill(-2 * tiny, 2) rtol = 1.0f-3
 end

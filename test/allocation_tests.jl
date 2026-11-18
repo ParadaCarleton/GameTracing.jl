@@ -1,4 +1,5 @@
-using GameTracing: arclength_distance, corrected_accepted, logit_change, step_unresolved, largest_kl, max_regret, max_regret!, regret_workspace
+using GameTracing: FisherMetric, arclength_distance, corrected_accepted, logit_change, step_unresolved, largest_kl, max_regret, max_regret!, regret_workspace
+using PathFollowing: PathFollowing
 
 """The bytes a second call of `call` on `arguments` allocates, after a first call compiles it."""
 function warm_bytes(call::F, arguments...)::Integer where {F}
@@ -10,7 +11,7 @@ end
 function step_budget_settings(::Type{E}, max_steps::Integer)::BifurcationKitSettings{E} where {E <: Real}
     return BifurcationKitSettings{E}(;
         first_step = E(0.03f0), aggressiveness = E(0.1f0), max_steps,
-        step_metric = TraceGeometry{E}(; distance = FisherLogPrecisionDistance),
+        step_metric = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm),
     )
 end
 
@@ -41,9 +42,10 @@ end
     @test warm_bytes(max_regret!, work, gains, logits) == 0
     @test max_regret!(work, gains, logits) == max_regret(gains, logits)
     from, to = randn(rng, element, 6), randn(rng, element, 6)
-    for measure in (logit_change, step_unresolved, largest_kl)
+    for measure in (logit_change, step_unresolved)
         @test warm_bytes(measure, from, to) == 0
     end
+    @test warm_bytes(largest_kl, (1:2, 3:3, 4:5), from, to) == 0
     @test warm_bytes(corrected_accepted, GameTracing.AcceptAll(), to, one(element), true) == 0
     for distance in instances(GameTracing.StepDistance)
         geometry = TraceGeometry{element}(; distance)
@@ -51,4 +53,13 @@ end
         @test warm_bytes(arclength_distance, from, to, geometry, element(3)) == 0
         @test arclength_distance(from, to, geometry, element(3)) ≈ sqrt(GameTracing.trace_dot(displacement, displacement, geometry, element(3)))
     end
+end
+
+@testset "the frozen Fisher metric's products allocate nothing ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    point, left, right = randn(rng, element, 7), randn(rng, element, 7), randn(rng, element, 7)
+    frozen = PathFollowing.frozen_metric(FisherMetric((1:2, 3:3, 4:6), one(element), LogPrecisionTerm, one(element), one(element)), point)
+    @test warm_bytes(PathFollowing.freeze_metric!, frozen, point) == 0
+    @test warm_bytes(PathFollowing.metric_inner, frozen, left, right) == 0
+    @test warm_bytes(PathFollowing.metric_apply!, similar(point), frozen, left) == 0
 end

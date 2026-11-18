@@ -29,8 +29,9 @@ const BranchResult{E, N} = Result{Vector{QREProfile{E, N}}, TraceFailure}
     gambit_settings(first_step, max_accel)
 
 `BifurcationKitSettings` for pygambit's step arguments: `first_step` is the first arclength step and `max_accel` caps each
-step's growth (`aggressiveness = max_accel - 1`). The trace steps in `FisherLogPrecisionDistance`, whose precision
-term is the step in `log(1 + λ)`, so a trace to a far precision opens at the scale of a near one.
+step's growth (`aggressiveness = max_accel - 1`). The trace steps in `FisherDistance` with `LogPrecisionTerm`, the
+step in `log(1 + λ)`, so a trace to a far precision opens at the scale of a near one, at `TraceGeometry`'s default
+state weight.
 """
 function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings{E} where {E <: Real}
     if !(first_step > 0)
@@ -42,7 +43,7 @@ function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings
     return BifurcationKitSettings{E}(;
         first_step,
         aggressiveness = E(max_accel) - one(E),
-        step_metric = TraceGeometry{E}(; distance = FisherLogPrecisionDistance),
+        step_metric = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm),
     )
 end
 

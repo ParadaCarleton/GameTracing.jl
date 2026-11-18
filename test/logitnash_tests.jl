@@ -180,9 +180,8 @@ end
     @test doubled.logit_accuracy <= settle_bound(double_settings.corrector, double_logits)
     @test agreeing(first_choices(double_logits), oracle.first_choices)
     @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, double_logits, precision * float(1), double_settings)
-    # Every Float32 arm follows the double-precision branch within both traces' accuracy. Under growth 1.1 this includes
-    # fisher_log_precision_reach at state weight 0.01, which before exhausted near λ 0.808 (runs 40803122294, 40806444224).
-    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants()]
+    # Every Float32 arm follows the double-precision branch within both traces' accuracy.
+    for (_, settings) in ["default" => BifurcationKitSettings{Float32}(); arm_variants(ARM_WEIGHTS)]
         result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
         @test !is_error(result)
         if !is_error(result)
@@ -193,6 +192,14 @@ end
             @test maximum(abs, logits .- double_logits) <= logit_accuracy + doubled.logit_accuracy
             @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, logits, precision, settings)
         end
+    end
+    # The log term at state weight 0.01, below `ARM_WEIGHTS`, exhausted near λ 0.808 until the dot's precision weight
+    # took its root form, a change of rounding alone. It now reaches the (1, 1) arm.
+    edge = traced_result(UNFOLDED_PITCHFORK_GAME, precision, arm_settings(ARMS.fisher_log_precision_reach, 0.01f0))
+    @test !is_error(edge)
+    if !is_error(edge)
+        @test agreeing(first_choices(unwrap(edge).logits), oracle.first_choices)
+        @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, unwrap(edge).logits, precision, arm_settings(ARMS.fisher_log_precision_reach, 0.01f0))
     end
 end
 

@@ -13,6 +13,7 @@ export LogitGame,
     NormalFormGains,
     mixed_strategies,
     logit_count,
+    logit_ranges,
     pass_workspace,
     LogitQREProfile,
     logit_solve,
@@ -35,7 +36,9 @@ export LogitGame,
     AveragedDistance,
     SummedDistance,
     FisherDistance,
-    FisherLogPrecisionDistance,
+    PrecisionTerm,
+    TargetPrecisionTerm,
+    LogPrecisionTerm,
     BorderedSolver,
     MatrixSolve,
     BorderingSolve,
@@ -45,6 +48,7 @@ export LogitGame,
 include("failure.jl")
 include("bordered.jl")
 include("geometry.jl")
+include("fisher.jl")
 include("branch.jl")
 include("normal_form.jl")
 include("callbacks.jl")

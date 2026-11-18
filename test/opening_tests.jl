@@ -9,8 +9,10 @@ const MIXED_STALL_SEED = 0x233ce38d667063a1
 # The seed whose (3, 3) game's corrector made two zero-length Newton steps at λ ≈ 34: with tolerance 0 the step control's
 # contraction rate was 0 / 0, so the step length went NaN and the step halved forever.
 const ZERO_STEP_SEED = 0x4e6997513e7cba6d
-# Game 1 has logits near -27 at λ ≈ 9: Float32 rounding exceeds `logit_tolerance`, so only double precision reaches 50.
-const ROUNDING_EXHAUSTED_SEED = 0x4c03385ca80ab207
+# The seed whose (3, 3) game folds at λ ≈ 18.02, where the per-logit Bernoulli weights exhausted Float32.
+const FAR_FOLD_SEED = 0xe291aba5864127e0
+# Game 1's Float32 trace exhausts its precision at λ ≈ 26.1 by rounding, 2e-6 from Gambit; Float64 reaches 50.
+const ROUNDING_EXHAUSTED_SEED = 0x3ff2026d53896c44
 
 """Normal-form games with strategy counts `(3, 3)` and `(2, 2, 2)`, payoffs `3 randn`, drawn from `rng` in that order."""
 function far_opening_games(rng::AbstractRNG)::AbstractVector
@@ -24,6 +26,15 @@ end
 function rounded_residual(game::LogitGame, point::AbstractVector{E}, pin::E)::Vector where {E <: AbstractFloat}
     number = Rounded{E, widen(E)}
     return GameTracing.GameResidual(game)(number.(point), number(pin))
+end
+
+"""`frozen` with each value it holds as an exact `number` (`Rounded`), so its products bound their own rounding."""
+function rounded_frozen(frozen::GameTracing.FrozenFisher{M, E}, number::Type{Rounded{E, W}})::GameTracing.FrozenFisher where {M, E, W}
+    point = number.(frozen.point)
+    return GameTracing.FrozenFisher{M, number, typeof(point), typeof(frozen.pivots)}(
+        frozen.metric, point, number.(frozen.probabilities), number.(frozen.references), frozen.pivots,
+        number(frozen.state_weight), number(frozen.palc_state_weight), number.(frozen.root),
+    )
 end
 
 """
@@ -52,7 +63,7 @@ function rounding_explanation(gains::NormalFormGains, failure::TraceFailure, set
     end
     game = LogitGame(gains, element(target_precision))
     jacobian = GameTracing.GameJacobian(game, GameTracing.BranchWorkspace(game, stalled_iterate))(stalled_iterate, stalled_pin)
-    palc = GameTracing.palc_geometry(settings.step_metric, width, target_precision)
+    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!, width, target_precision)
     state_weight, start, tangent = element(palc.palc_state_weight), [gaps; precision], [gap_tangent; tangent_precision]
     # The step's weights are those of the point it starts from, the last accepted one.
     GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(start, precision))
@@ -66,8 +77,9 @@ function rounding_explanation(gains::NormalFormGains, failure::TraceFailure, set
         palc.dot, stalled_iterate, start, stalled_pin - precision, tangent, tangent_precision, state_weight, stalled_arclength,
     )
     number = Rounded{element, widen(element)}
+    rounded_dot = GameTracing.BifurcationKit.DotTheta(GameTracing.MetricDot(rounded_frozen(palc.dot.dot.frozen, number)))
     rounded_arclength_row = GameTracing.BifurcationKit.arc_length_eq(
-        palc.dot, number.(stalled_iterate), number.(start), number(stalled_pin) - number(precision),
+        rounded_dot, number.(stalled_iterate), number.(start), number(stalled_pin) - number(precision),
         number.(tangent), number(tangent_precision), number(state_weight), number(stalled_arclength),
     )
     noise = [rounding_bound.(rounded_residual(game, stalled_iterate, stalled_pin)); rounding_bound(rounded_arclength_row)]
@@ -99,8 +111,30 @@ end
 
 (stop::StopAtPrecision)(::AbstractVector, precision::Real)::Bool = precision < stop.precision
 
+@testset "a frozen Fisher metric in Rounded numbers computes the engine's products ($element)" for element in (Float32, widen(Float32))
+    frozen = PathFollowing.frozen_metric(GameTracing.FisherMetric((1:2, 3:3), one(element), LogPrecisionTerm, element(10), element(127 // 128)), element[1, -1, 2, 3])
+    left, right = element[1, 2, -1, 3], element[-1, 1, 2, 2]
+    number = Rounded{element, widen(element)}
+    rounded = PathFollowing.metric_inner(rounded_frozen(frozen, number), number.(left), number.(right))
+    @test rounded.value == PathFollowing.metric_inner(frozen, left, right)
+    @test rounding_bound(rounded) > 0
+end
+
 const FAR_TARGET = 1.0f6
-const LOG_PRECISION_SETTINGS = BifurcationKitSettings{Float32}(; step_metric = TraceGeometry{Float32}(; distance = FisherLogPrecisionDistance))
+"""`BifurcationKitSettings` in `E` that step in the Fisher distance with the log precision term."""
+function log_precision_settings(::Type{E})::BifurcationKitSettings{E} where {E <: Real}
+    return BifurcationKitSettings{E}(; step_metric = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
+end
+
+const LOG_PRECISION_SETTINGS = log_precision_settings(Float32)
+
+"""
+Whether a trace of `gains` to `FAR_TARGET` under `settings` that stopped with `failure` reached precision 50, or
+exhausted its precision short of it by rounding (`exhausted_by_rounding`).
+"""
+function reached_or_rounded(gains::NormalFormGains, failure::TraceFailure, settings::BifurcationKitSettings)::Bool
+    return failure.context.precision >= 50 || exhausted_by_rounding(gains, failure, settings, FAR_TARGET)
+end
 
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
     for payoffs in (far_opening_games(Xoshiro(FAR_OPENING_SEED))..., far_opening_games(fresh_rng())...)
@@ -141,9 +175,12 @@ end
     game_big = LogitGame(NormalFormGains(map(payoff -> big.(payoff), payoffs_32)), big(FAR_TARGET))
     measured = abs.(big.(computed) .- GameTracing.GameResidual(game_big)(big.(stalled_iterate), big(stalled_pin)))
     @test all(measured .<= rounding_bound.(bounded))
-    # A tenfold correction is no rounding noise, nor is an iterate 64 ulps or a whole gap off the root.
-    tenfold = TraceFailure(failure.cause, (; failure.context..., correction = 10 * correction))
-    @test !exhausted_by_rounding(gains_32, tenfold, LOG_PRECISION_SETTINGS, FAR_TARGET)
+    # A correction within the bound is rounding noise. One past it is not, nor is an iterate 64 ulps or a gap off the root.
+    explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
+    for (scale, noise) in ((2 // 3, true), (3 // 2, false))
+        scaled = TraceFailure(failure.cause, (; failure.context..., correction = Float32(scale * maximum(explained.bound))))
+        @test exhausted_by_rounding(gains_32, scaled, LOG_PRECISION_SETTINGS, FAR_TARGET) == noise
+    end
     for moved_gap in (nextfloat(first(stalled_iterate), 64), first(stalled_iterate) + 1)
         moved = TraceFailure(failure.cause, (; failure.context..., stalled_iterate = [moved_gap; stalled_iterate[2:end]]))
         @test !exhausted_by_rounding(gains_32, moved, LOG_PRECISION_SETTINGS, FAR_TARGET)
@@ -162,13 +199,12 @@ end
     @test all(abs.(off_step.residual[1:(end - 1)]) .<= off_step.residual_bound[1:(end - 1)])
     @test abs(last(off_step.residual)) > last(off_step.residual_bound)
     @test !exhausted_by_rounding(gains_32, elsewhere, LOG_PRECISION_SETTINGS, FAR_TARGET)
-    explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
     roundoff = eps(Float32) / 2
     @info "rounding explains the stall" correction bound = maximum(explained.bound) ratio = correction / maximum(explained.bound) residual_ratio = maximum(abs.(explained.residual) ./ explained.residual_bound) off_step_ratio = abs(last(off_step.residual)) / last(off_step.residual_bound) noise_roundoffs = round.(Tuple(explained.noise ./ roundoff); sigdigits = 3) measured_roundoffs = round.(Tuple(widen(Float32).(measured ./ roundoff)); sigdigits = 3)
     wide = typeof(float(1))
     payoffs_wide = map(payoff -> wide.(payoff), payoffs_32)
     gains_wide = NormalFormGains(payoffs_wide)
-    settings_wide = BifurcationKitSettings{wide}(; step_metric = TraceGeometry{wide}(; distance = FisherLogPrecisionDistance))
+    settings_wide = log_precision_settings(wide)
     reached = unwrap_error(
         trace_endpoint(
             LogitGame(gains_wide, wide(FAR_TARGET)),
@@ -187,28 +223,41 @@ end
     @test exhausted_by_rounding(gains_wide, resting, settings_wide, FAR_TARGET)
     shifted = TraceFailure(resting.cause, (; resting.context..., stalled_iterate = [first(root) * (1 + sqrt(eps(wide))); root[2:end]]))
     @test !exhausted_by_rounding(gains_wide, shifted, settings_wide, FAR_TARGET)
+    # A Float64 record short of 50 meets the far-target check in its own settings.
+    early = unwrap_error(
+        trace_endpoint(LogitGame(gains_wide, wide(FAR_TARGET)), GameTracing.logit_count(gains_wide), settings_wide; keep_going = StopAtPrecision(wide(5))),
+    ).context
+    stopped_early = TraceFailure(
+        GameTracing.PrecisionExhausted,
+        (; early..., stalled_iterate = [early.gaps; early.precision], stalled_pin = early.precision, stalled_arclength = zero(wide), correction = zero(wide)),
+    )
+    @test early.precision < 50
+    @test reached_or_rounded(gains_wide, stopped_early, settings_wide)
 end
 
 # Each comparison runs a Gambit trace; the mutation jobs skip it to stay under their time limit.
 if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
-    @testset "a trace to a far target stays on Gambit's branch" begin
+    @testset "a trace to a far target stays on Gambit's branch ($element)" for element in (Float32, widen(Float32))
         seeded = (
             far_opening_games(Xoshiro(FAR_OPENING_SEED))...,
             last(far_opening_games(Xoshiro(MIXED_STALL_SEED))),
             first(far_opening_games(Xoshiro(ZERO_STEP_SEED))),
+            first(far_opening_games(Xoshiro(FAR_FOLD_SEED))),
         )
-        for payoffs in (seeded..., far_opening_games(fresh_rng())...)
+        settings = log_precision_settings(element)
+        for payoffs_32 in (seeded..., far_opening_games(fresh_rng())...)
+            payoffs = map(payoff -> element.(payoff), payoffs_32)
             gains = NormalFormGains(payoffs)
             failure = unwrap_error(
                 trace_endpoint(
-                    LogitGame(gains, FAR_TARGET),
+                    LogitGame(gains, element(FAR_TARGET)),
                     GameTracing.logit_count(gains),
-                    LOG_PRECISION_SETTINGS;
-                    keep_going = StopAtPrecision(50.0f0),
+                    settings;
+                    keep_going = StopAtPrecision(element(50)),
                 )
             )
             (; precision, logits) = failure.context
-            @test precision >= 50 || exhausted_by_rounding(gains, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
+            @test reached_or_rounded(gains, failure, settings)
             if precision < 50
                 @info "a far-target trace stopped short" failure.cause failure.context
             end
@@ -228,6 +277,7 @@ end
         zeros(Float32, 3),
         zeros(Float32, 3),
         zero(Float32),
+        nothing,
     )
     # Gaps near 1 at half the far target: logits near 5e5, a pin offset of 4% and 25% of a target.
     point = Float32[1.0f0, -1.0f0, 0.5f0 * FAR_TARGET]
@@ -258,7 +308,7 @@ end
     # A small logit has no allowance to speak of: twice the tolerance stays past it.
     @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element), one(element))) > tolerance
     # The corrector settles the large logit's rounding at its first correction.
-    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element))
+    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element), nothing)
     GameTracing.restate!(check; predictor_move = one(element))
     verdicts = [GameTracing.corrected!(check, (; x = element[first, 0, 1], res_f = zeros(element, 3), step), true) for (step, first) in ((0, large), (1, rounded))]
     @test last(verdicts) isa GameTracing.BifurcationKit.NewtonConverged
@@ -268,7 +318,7 @@ end
 """A fresh `CorrectorReach` whose current step's predictor moved the logits `predictor_move`."""
 function fresh_check(predictor_move::E)::GameTracing.CorrectorReach{GameTracing.AcceptAll, E} where {E <: Real}
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E),
+        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E), nothing,
     )
     GameTracing.restate!(check; predictor_move = predictor_move)
     return check
@@ -362,7 +412,7 @@ end
 
 @testset "a pure equilibrium traced to λ 1e6 reaches it, its logits settled to their rounding ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    settings = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; distance = FisherLogPrecisionDistance))
+    settings = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; distance = FisherDistance, precision_term = LogPrecisionTerm))
     traced = unwrap(trace_endpoint(LogitGame(gains, element(FAR_TARGET)), GameTracing.logit_count(gains), settings))
     # Defecting gains 1 against a defector, so each logit is λ.
     @test traced.logits ≈ fill(element(FAR_TARGET), 2)
@@ -426,7 +476,7 @@ end
 """The factored bordered tangent of a restart (`restart_tangent`), up to positive scale: the opening tangent's reference."""
 function factored_opening_tangent(game, start, settings)
     width = length(start) - 1
-    palc = GameTracing.palc_geometry(settings.step_metric, width, game.target_precision)
+    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!, width, game.target_precision)
     direction = setindex!(zero(start), one(eltype(start)), lastindex(start))
     border = GameTracing.palc_border(palc.dot, eltype(start)(palc.palc_state_weight), direction)
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))

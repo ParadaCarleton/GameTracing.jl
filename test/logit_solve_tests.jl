@@ -3,22 +3,6 @@ using LinearAlgebra: Diagonal
 using PathFollowing: PathFollowing
 using Random: AbstractRNG, Xoshiro
 
-"""The largest difference in any probability between two profiles of mixed strategies."""
-function largest_gap(left::Tuple, right::Tuple)::eltype(first(left))
-    return maximum(maximum.(abs, left .- right))
-end
-
-# Gambit's corrector stops at c_tol = 1e-4 in log probabilities (src/solvers/nash/logit/path.cc), so ≤ 1e-4 in probability.
-const GAMBIT_PROBABILITY_TOLERANCE = 1.0f-4
-
-"""
-The largest probability error of the trace's `profile`: softmax slope 1/2 times its logit error, the corrector's
-`logit_tolerance` (a settled corrector's last Newton correction) plus 32 ulps of the largest logit.
-"""
-function profile_bound(profile::LogitQREProfile{E})::E where {E <: Real}
-    return (CorrectorSettings{E}().logit_tolerance + 32 * eps(E) * maximum(abs, profile.logits)) / 2
-end
-
 const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
 """Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and PathFollowing's."""

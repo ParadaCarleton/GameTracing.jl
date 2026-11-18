@@ -276,6 +276,17 @@ end
             @test maximum(abs, logits .- double_logits) <= logit_accuracy + doubled.logit_accuracy
             @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, logits, precision, settings)
         end
+        # Run to its regret-based end, the trace keeps the principal branch and meets Gambit at its own precision.
+        element = GameTracing.element_type(settings)
+        solved = logit_solve(NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME)); maxregret = 1.0f-4, settings)
+        @test !is_error(solved)
+        if !is_error(solved)
+            checked = unwrap(solved)
+            # The branch ends near the pure equilibrium (1, 1); the middle arm it passes ends mixed.
+            @test all(strategy -> first(strategy) > 99 // 100, checked.profile)
+            regret_oracle = gambit_strategies(UNFOLDED_PITCHFORK_GAME, checked.lam)
+            @test largest_gap(checked.profile, regret_oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
+        end
     end
     # The log term at state weight 0.01, below `ARM_WEIGHTS`, exhausted near λ 0.808 until the dot's precision weight
     # took its root form, a change of rounding alone. It now reaches the (1, 1) arm.

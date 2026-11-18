@@ -744,6 +744,10 @@ end
         # A step past the refusal factor 2 is refused before the check, so a trigger there never fires; one at 2 can.
         @test_throws ArgumentError algorithm(E; split_check = HalfStepCheck{E}(; trigger = nextfloat(E(2)), tolerance = one(E)))
         @test algorithm(E; split_check = HalfStepCheck{E}(; trigger = 2, tolerance = one(E))).split_check.trigger == 2
+        # A step at the trigger runs the check; one an ulp under it does not.
+        at_refusal = HalfStepCheck{E}(; trigger = 2, tolerance = one(E))
+        @test PathFollowing.split_fires(at_refusal, E(2))
+        @test !PathFollowing.split_fires(at_refusal, prevfloat(E(2)))
         # Without a type parameter, the check takes its numbers' promoted float type.
         @test HalfStepCheck(; trigger = 13 // 10, tolerance = one(E) / 1000) === HalfStepCheck{E}(; trigger = 13 // 10, tolerance = one(E) / 1000)
         @test HalfStepCheck(; trigger = 2, tolerance = 1) isa HalfStepCheck{float(Int)}

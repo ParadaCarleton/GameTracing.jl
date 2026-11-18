@@ -357,8 +357,14 @@ point within the check's tolerance, in `Newton`'s `distance`. The corrected poin
 `tracer.previous` come back as they were.
 """
 split_refused(::Tracer, ::Nothing, ::Real, ::Any, ::Bool, ::Real)::Bool = false
+
+"""Whether `check` runs a step of step factor `factor` again as two half steps: at its trigger or past it."""
+@inline function split_fires(check::HalfStepCheck{E}, factor::E)::Bool where {E <: Real}
+    return factor >= check.trigger
+end
+
 function split_refused(tracer::Tracer{E}, check::HalfStepCheck{E}, factor::E, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E)::Bool where {E <: Real}
-    factor >= check.trigger || return false
+    split_fires(check, factor) || return false
     copyto!(tracer.split_point, tracer.iterate)
     copyto!(tracer.split_tangent, tracer.candidate)
     copyto!(tracer.split_previous, tracer.previous)

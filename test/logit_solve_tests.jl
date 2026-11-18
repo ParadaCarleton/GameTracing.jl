@@ -213,6 +213,8 @@ end
     # A zero settle tolerance, where the corrector settles by ulps alone, gives the default split check no scale.
     for distance in (StrategyDistance{element}(; tolerance = 0), LogitDistance{element}(; tolerance = 0))
         @test_throws ArgumentError PathFollowingSettings{element}(; distance)
+        # HalfStepCheck's own zero-tolerance check throws an ArgumentError too; only the default's names the fix.
+        @test_throws "pass split_check" PathFollowingSettings{element}(; distance)
         @test isnothing(PathFollowingSettings{element}(; distance, split_check = nothing).split_check)
         check = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 13 // 10, tolerance = 1 // 1000)
         @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, split_check = check)))

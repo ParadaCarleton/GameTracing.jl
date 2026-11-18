@@ -27,7 +27,7 @@ end
 
 """
 `player_apply!`'s bound on the rounding of player `player`'s block sum of `applied = M vector`, in `applied`'s element
-type, from the exact frozen metric `exact`: `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))`.
+type, from the exact frozen metric `exact`: `eps ((n + L) Σᵢ |outᵢ| + |gap_scale| π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))`.
 """
 function block_sum_bound(
         exact::GameTracing.FrozenFisher{<:FisherMetric, BigFloat},
@@ -40,7 +40,7 @@ function block_sum_bound(
     largest_log = maximum(probability -> abs(log(probability)), [references[player]; probabilities[range]])
     gap_scale = metric.state_weight * last(point) / metric.palc_state_weight
     moves = sum(index -> probabilities[index] * (abs(last(point) * vector[index]) + abs(point[index] * last(vector))), range)
-    return eps(E) * ((length(range) + 1 + largest_log) * sum(entry -> abs(big(entry)), applied[range]) + gap_scale * references[player] * moves)
+    return eps(E) * ((length(range) + 1 + largest_log) * sum(entry -> abs(big(entry)), applied[range]) + abs(gap_scale) * references[player] * moves)
 end
 
 """A one-logit pass with zero gain and no `logit_ranges`."""
@@ -150,7 +150,9 @@ end
             exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
             reversed = PathFollowing.metric_apply!(similar(common), frozen, common)
             @test abs(dot(other, reversed) - exact) <= 64 * eps(element) * (abs(exact) + dot(abs.(other), abs.(reversed)))
-            @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
+            # Random moves can be near orthogonal, so the error scales with both Fisher lengths.
+            lengths = sqrt(PathFollowing.metric_inner(exact_frozen, big.(common), big.(common)) * PathFollowing.metric_inner(exact_frozen, big.(other), big.(other)))
+            @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * (abs(exact) + lengths)
         end
     end
     # Four strategies, a differential move: entries near 1/4 cannot hold M's sum -1.97e-28, so the block may sum to 0.
@@ -162,13 +164,13 @@ end
     exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
     @test abs(sum(big.(applied[1:3])) - exact) <= block_sum_bound(exact_frozen, applied, other, 1, 1:3)
     @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
-    # Outside the bound's domain only finiteness holds: a subnormal move, and a huge move of an underflowed probability.
+    # At precision -1 `gap_scale` is negative: the bound without its absolute value was negative for this zero block.
+    point, vector = element[1, -1], element[1, 1]
     metric = FisherMetric((1:1,), one(element), TargetPrecisionTerm, one(element), one(element))
-    tiny = (element[0, 1], element[nextfloat(zero(element)), 0])
-    huge = (element[log(nextfloat(zero(element))) - 1, 1], element[floatmax(element) / 4, 0])
-    for (point, vector) in (tiny, huge)
-        @test all(isfinite, PathFollowing.metric_apply!(similar(vector), PathFollowing.frozen_metric(metric, point), vector))
-    end
+    exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
+    applied = PathFollowing.metric_apply!(similar(vector), PathFollowing.frozen_metric(metric, point), vector)
+    exact = only(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[1:1])
+    @test abs(big(only(applied[1:1])) - exact) <= block_sum_bound(exact_frozen, applied, vector, 1, 1:1)
 end
 
 @testset "player_kl is each player's categorical KL, zero at equal logits, finite where probabilities round ($element)" for element in (Float32, widen(Float32))
@@ -262,6 +264,23 @@ end
         exact_weight = inv(1 + big(precision))^2 * (1 - 4 * (1 - big(weight)))
         step = element[0, precision]
         @test PathFollowing.metric_inner(frozen, step, step) ≈ exact_weight * big(precision)^2 / big(weight) rtol = 8 * eps(element)
+    end
+end
+
+@testset "PALC's weight of Δλ² keeps its relative accuracy near a share of one, against BigFloat ($element)" for element in (Float32, widen(Float32))
+    # Float64 at the first target and lowest weight is where `1 - share` cancelled: a root of 7.5e-9 for 3.7e-10.
+    for term in (TargetPrecisionTerm, LogPrecisionTerm), target in element[1402003200320032 // 10^15, 10, 1000]
+        smallest = term == LogPrecisionTerm ? inv(1 + big(target))^2 : inv(big(target))^2
+        lowest = element(1 - smallest, RoundUp)
+        for weight in filter(<=(1), nextfloat.(lowest, 0:20)), precision in (zero(element), target / 3, target, 2 * target)
+            denominator = term == LogPrecisionTerm ? 1 + min(abs(big(precision)), big(target)) : big(target)
+            complement = 1 - (1 - big(weight)) * denominator^2
+            computed = GameTracing.share_complement(weight, GameTracing.weight_denominator(term, precision, target))
+            @test abs(computed - complement) <= eps(element) * complement + 8 * eps(element)^2
+            frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(element), term, target, weight), element[1, precision])
+            exact = sqrt(complement) / (term == LogPrecisionTerm ? 1 + abs(big(precision)) : big(target))
+            @test abs(GameTracing.precision_dot_root(frozen) - exact) <= eps(element) * (3 + 4 * eps(element) / complement) * exact
+        end
     end
 end
 

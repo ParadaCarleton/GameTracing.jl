@@ -116,8 +116,9 @@ struct FisherMetric{R, E <: Real} <: PathFollowing.Metric
             target_precision::E,
             palc_state_weight::E,
         )::FisherMetric{R, E} where {R, E <: Real}
-        smallest = precision_term_root(precision_term, target_precision, target_precision)
-        if !(zero(E) < palc_state_weight <= one(E) && share_ratio(palc_state_weight, smallest) < one(E))
+        denominator = weight_denominator(precision_term, target_precision, target_precision)
+        if !(zero(E) < palc_state_weight <= one(E) && share_complement(palc_state_weight, denominator) > zero(E))
+            smallest = precision_term_root(precision_term, target_precision, target_precision)
             throw(ArgumentError("PALC's state weight $palc_state_weight lies outside (1 - c(P), 1] for √c(P) = $smallest"))
         end
         return new{R, E}(ranges, state_weight, precision_term, target_precision, palc_state_weight)
@@ -173,9 +174,37 @@ function precision_term_root(precision_term::PrecisionTerm, precision::E, target
     return inv(target_precision)
 end
 
-"""PALC's share `1 - θ`, `θ = palc_state_weight`, over the weight `c = root²`: divided by `root` twice, as `c` can underflow."""
-function share_ratio(palc_state_weight::E, root::E)::E where {E <: Real}
-    return ((one(E) - palc_state_weight) / root) / root
+"""
+`D` with `max(√c(λ), √c(P)) = 1 / D` at precision `precision` toward `target_precision` `P` (`precision_term_root`), as
+the unevaluated sum `(high, low)`: `TargetPrecisionTerm` `P`, `LogPrecisionTerm` `1 + min(|λ|, P)` by TwoSum.
+"""
+function weight_denominator(precision_term::PrecisionTerm, precision::E, target_precision::E)::NTuple{2, E} where {E <: Real}
+    if precision_term == LogPrecisionTerm
+        return two_sum(one(E), min(abs(precision), target_precision))
+    end
+    return (target_precision, zero(E))
+end
+
+"""Knuth's TwoSum: `left + right` rounded, and its rounding error. The two sum to `left + right` exactly."""
+function two_sum(left::E, right::E)::NTuple{2, E} where {E <: Real}
+    total = left + right
+    right_part = total - left
+    return (total, (left - (total - right_part)) + (right - right_part))
+end
+
+"""
+`1 - (1 - θ) D²` for `θ = palc_state_weight` and `D = high + low` (`weight_denominator`): one minus PALC's share of
+the weight of `Δλ²`. Near a share of one, the subtraction cancels. Fast2Sum keeps the rounding error of `1 - θ`, as
+`θ ≤ 1`, and FMA keeps the rounding error of each product. While `1 - θ ≤ 1 / D²`, every product is finite and the
+result is within `eps |r| + 8 eps²` of the exact value `r`.
+"""
+function share_complement(palc_state_weight::E, (high, low)::NTuple{2, E})::E where {E <: Real}
+    rest = one(E) - palc_state_weight
+    rest_error = (one(E) - rest) - palc_state_weight
+    partial = rest * high
+    share = partial * high
+    share_error = fma(partial, high, -share) + (fma(rest, high, -partial) + rest_error * high + 2 * rest * low) * high
+    return (one(E) - share) - share_error
 end
 
 """
@@ -183,13 +212,14 @@ The root `√(ω(λ) - (1 - θ))` of the weight of `Δλ²` in `frozen`'s dot, b
 While `c(λ) ≥ c(P)` the weight is `c(λ) - (1 - θ)`. Past `P` PALC's share shrinks with the log term, to
 `(1 - θ) c(λ) / c(P)`. Both are `c(λ) (1 - (1 - θ) / max(c(λ), c(P)))`, whose root `√c(λ) √(1 - …)` is positive for
 every finite `λ`, as `1 - θ < c(P)`. The products apply the root to each side, `(root Δλ) (root Δλ')`.
-The dot's precision term keeps its relative accuracy while each side's `root Δλ` and their product are normal floats.
+`share_complement` gives `1 - …` within `eps |1 - …| + 8 eps²`. While `1 - …` is far above `8 eps²`, and each side's
+`root Δλ` and their product are normal floats, the dot's precision term keeps its relative accuracy.
 """
 function precision_dot_root(frozen::FrozenFisher{<:FisherMetric, E})::E where {E <: Real}
     (; precision_term, target_precision, palc_state_weight) = frozen.metric
-    root = precision_term_root(precision_term, last(frozen.point), target_precision)
-    smallest = precision_term_root(precision_term, target_precision, target_precision)
-    return root * sqrt(one(E) - share_ratio(palc_state_weight, max(root, smallest)))
+    precision = last(frozen.point)
+    root = precision_term_root(precision_term, precision, target_precision)
+    return root * sqrt(share_complement(palc_state_weight, weight_denominator(precision_term, precision, target_precision)))
 end
 
 """The logit move `Δzᵢ = λ Δwᵢ + wᵢ Δλ` of the displacement `vector = [Δw; Δλ]` at `frozen`'s point."""
@@ -259,11 +289,11 @@ and return its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ
 pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
 against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
 
-The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + gap_scale π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))` of `M`'s, for `n`
+The block's sum is within `eps ((n + L) Σᵢ |outᵢ| + |gap_scale| π_ref Σᵢ qᵢ (|λ Δwᵢ| + |wᵢ Δλ|))` of `M`'s, for `n`
 strategies and `L` the largest `|log π|` among them. The first term is the entries' rounding and the second the logit
 moves'. The bound holds under Higham's standard model `fl(x ∘ y) = (x ∘ y) (1 + δ)`: while every probability, product
-and partial sum is a normal float or zero. Where one underflows, the block stays finite but loses the bound. Entries
-of size `s` hold no nonzero sum under about `eps s`, so a large differential move can sum to zero.
+and partial sum is a normal float or zero. Outside that domain, the function promises nothing. Entries of size `s`
+hold no nonzero sum under about `eps s`, so a large differential move can sum to zero.
 """
 function player_apply!(
         out::AbstractVector{E},

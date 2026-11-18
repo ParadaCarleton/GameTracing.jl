@@ -599,16 +599,20 @@ end
 
 """
 The confirmed stall at rounding noise of `corrector` (`noise_confirmed`): the noise record's `precision` and
-`correction`, with its stalled Newton iterate `stalled_iterate = [w; λ]`. A corrector without a confirmed stall throws.
+`correction`, its stalled Newton iterate `stalled_iterate = [w; λ]`, and its step's `stalled_pin` and
+`stalled_arclength` (`record_stall!`). A corrector without a confirmed stall throws.
 """
 function exhausted_record(
         corrector::CorrectorReach{C, E, V},
-    )::@NamedTuple{precision::E, correction::E, stalled_iterate::V} where {C, E <: Real, V <: AbstractVector{E}}
+    )::@NamedTuple{
+        precision::E, correction::E, stalled_iterate::V, stalled_pin::E, stalled_arclength::E,
+    } where {C, E <: Real, V <: AbstractVector{E}}
     if !noise_confirmed(corrector)
         throw(ArgumentError("the corrector has no confirmed stall at rounding noise"))
     end
     (; precision, correction) = corrector.state[].noise.suspect
-    return (; precision, correction, stalled_iterate = copy(corrector.stalled))
+    (; pin, arclength) = corrector.state[].stalled_step
+    return (; precision, correction, stalled_iterate = copy(corrector.stalled), stalled_pin = pin, stalled_arclength = arclength)
 end
 
 """How a guarded BifurcationKit call ended other than with its result: `Thrown` or `Ended`."""
@@ -794,7 +798,8 @@ end
 The `TraceResult` (`Ok(Traced)` or `Err(TraceFailure)`) of a trace whose `progress` holds the last accepted point and
 whose `outcome` (`guarded_trace`) is the last corrector's step length, its `exhausted` record, or the BifurcationKit
 exception that ended it. A corrector at rounding noise fails `PrecisionExhausted`. Its context carries the stalled Newton
-iterate `stalled_iterate = [w; λ]`, its precision `lambda` and its last `correction` in logits.
+iterate `stalled_iterate = [w; λ]`, its precision `lambda`, its last `correction` in logits, and its step's
+`stalled_pin` and `stalled_arclength`.
 """
 function reached_state(
         progress::TraceProgress{E},
@@ -805,12 +810,12 @@ function reached_state(
     )::TraceResult{E} where {E <: Real}
     target_precision = game.target_precision
     if !isnothing(outcome.exhausted)
-        (; precision, correction, stalled_iterate) = outcome.exhausted
+        (; precision, correction, stalled_iterate, stalled_pin, stalled_arclength) = outcome.exhausted
         @debug "trace stopped" _group = :trace reason = :precision_exhausted precision correction
         return Err(
             TraceFailure(
                 PrecisionExhausted,
-                stopped_context(progress, outcome, failure_context(context, (; lambda = precision, correction, stalled_iterate))),
+                stopped_context(progress, outcome, failure_context(context, (; lambda = precision, correction, stalled_iterate, stalled_pin, stalled_arclength))),
             )
         )
     end

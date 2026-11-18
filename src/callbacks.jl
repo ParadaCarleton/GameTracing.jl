@@ -103,12 +103,14 @@ struct NoiseRecord{E <: Real}
 end
 
 """
-    CorrectorState(step_length, predictor_move, correction, stalls, settled_here, noise, unresolved, reach_failure)
+    CorrectorState(step_length, predictor_move, correction, stalls, settled_here, noise, unresolved, reach_failure,
+        stalled_step)
 
 The scalars a `CorrectorReach` carries between BifurcationKit's calls: the current step's `step_length` and its
 predictor's largest logit change `predictor_move`; the current solve's last `correction` in logits, its
 non-contracting corrections in a row (`stalls`) and whether it settled (`settled_here`); and the trace's `noise`
-(`NoiseRecord`).
+(`NoiseRecord`). `stalled_step` holds the `pin` and `arclength` of the PALC step whose iterate `stalled` holds
+(`record_stall!`), NaN before any stall.
 """
 struct CorrectorState{E <: Real}
     step_length::E
@@ -119,6 +121,7 @@ struct CorrectorState{E <: Real}
     noise::NoiseRecord{E}
     unresolved::Bool
     reach_failure::@NamedTuple{precision::E, correction::E}
+    stalled_step::@NamedTuple{pin::E, arclength::E}
 end
 
 """`state` with the given fields replaced."""
@@ -132,8 +135,9 @@ function restated(
         noise::NoiseRecord{E} = state.noise,
         unresolved::Bool = state.unresolved,
         reach_failure::@NamedTuple{precision::E, correction::E} = state.reach_failure,
+        stalled_step::@NamedTuple{pin::E, arclength::E} = state.stalled_step,
     )::CorrectorState{E} where {E <: Real}
-    return CorrectorState{E}(step_length, predictor_move, correction, stalls, settled_here, noise, unresolved, reach_failure)
+    return CorrectorState{E}(step_length, predictor_move, correction, stalls, settled_here, noise, unresolved, reach_failure, stalled_step)
 end
 
 """
@@ -153,7 +157,7 @@ times `ds² / 2`, so halving brings any step under it, while an iterate that lan
 `KL(corrected ‖ predicted)` of `settings.max_kl` (`largest_kl`). A predictor that did not move has no reach to compare.
 `accept_corrected(logits, λ, converged)` then sees every other closing point. `predicted` holds the current step's
 predictor, `iterate` the current solve's last iterate and `stalled` the iterate of the last stall or reach failure on
-record (`noise`, `reach_failure`), all updated in place, mutable copies of `predicted` and `start` in
+record (`noise`, `reach_failure`, `record_stall!`), all updated in place, mutable copies of `predicted` and `start` in
 `similar(predicted)`; `state` (`CorrectorState`) holds the scalars that change between calls. `geometry` measures the
 step length at `target_precision`.
 """
@@ -220,6 +224,20 @@ function noise_floor(check::CorrectorReach{C, E})::E where {C, E <: Real}
     return max(check.settings.logit_tolerance, check.state[].noise.accuracy)
 end
 
+"""
+`check` with a PALC `iterate` of a stall or reach failure in `stalled`, and in `stalled_step` the `pin` and
+`arclength` of its step: with the last accepted point and its tangent, the constraint its corrector held it to. Only
+PALC stalls: a plain Newton iterate has no step and throws.
+"""
+function record_stall!(check::CorrectorReach{C, E}, iterate::NamedTuple)::CorrectorReach{C, E} where {C, E <: Real}
+    if !haskey(iterate, :ds)
+        throw(ArgumentError("a plain Newton iterate has no PALC step to record as a stall"))
+    end
+    copyto!(check.stalled, iterate.x)
+    restate!(check; stalled_step = (; pin = iterate.p, arclength = iterate.ds))
+    return check
+end
+
 """Whether `check`'s corrector met rounding noise, confirmed at a halved step (`corrected!`)."""
 function noise_confirmed(check::CorrectorReach)::Bool
     return !isnothing(check.state[].noise.suspect) && check.state[].noise.suspect.confirmed
@@ -238,6 +256,10 @@ function CorrectorReach(
     predicted_buffer, iterate_buffer = copyto!(similar(predicted), predicted), copyto!(similar(predicted), start)
     stalled_buffer = copy(iterate_buffer)
     # A plain Newton solve has no predictor move: NaN fails the noise test, so its stalls refuse.
+    initial = CorrectorState{E}(
+        step_length, E(NaN32), E(NaN32), 0, false, NoiseRecord(zero(E), nothing), false, no_reach_failure(E),
+        (; pin = E(NaN32), arclength = E(NaN32)),
+    )
     return CorrectorReach{C, E, typeof(predicted_buffer)}(
         accept_corrected,
         settings,
@@ -246,7 +268,7 @@ function CorrectorReach(
         predicted_buffer,
         iterate_buffer,
         stalled_buffer,
-        Ref(CorrectorState{E}(step_length, E(NaN32), E(NaN32), 0, false, NoiseRecord(zero(E), nothing), false, no_reach_failure(E))),  # lint: ref  see `state`
+        Ref(initial),  # lint: ref  see `state`
     )
 end
 
@@ -326,7 +348,7 @@ function (check::CorrectorReach{C, E})(
         if !reached
             correction = check.state[].correction
             @debug "corrector stopped" _group = :trace reason = :reach correction
-            copyto!(check.stalled, iterate.x)
+            record_stall!(check, iterate)
             restate!(check; reach_failure = (; precision = last(iterate.x), correction))
         end
         return verdict
@@ -412,7 +434,7 @@ function corrected!(check::CorrectorReach{C, E}, iterate::NamedTuple, proceed::B
     suspect = check.state[].noise.suspect
     confirmed = !isnothing(suspect) && correction >= check.settings.noise_ratio * suspect.correction
     @debug "corrector stopped" _group = :trace reason = :noise confirmed correction predictor_move = check.state[].predictor_move
-    copyto!(check.stalled, iterate.x)
+    record_stall!(check, iterate)
     restate!(
         check;
         noise = NoiseRecord(check.state[].noise.accuracy, (; precision = last(iterate.x), correction, confirmed)),

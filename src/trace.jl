@@ -28,7 +28,7 @@ The corrector's contraction rate (`CorrectorSettings`) also slows growth. `nothi
 """
 Base.@kwdef struct StepControl{E <: Real}
     distance_limit::Union{Nothing, E} = 0.4f0
-    max_step_growth::Union{Nothing, E} = 1.1f0
+    max_step_growth::Union{Nothing, E} = GAMBIT_MAX_ACCEL
     turn_limit::Union{Nothing, E} = 1.0f0
 end
 

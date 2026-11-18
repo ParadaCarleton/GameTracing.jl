@@ -56,6 +56,23 @@ function TraceGeometry{E}(;
     return TraceGeometry{E}(distance, E(state_weight), precision_term)
 end
 
+"""
+    default_step_metric(E)
+
+The step metric of both engines' defaults, `gambit_settings` and `PathFollowingSettings`, defined once so the two
+cannot drift: `FisherDistance` with `LogPrecisionTerm`, at `TraceGeometry`'s default state weight. The log term steps
+in `log(1 + λ)`, so a trace to a far precision opens at the scale of a near one.
+"""
+function default_step_metric(::Type{E})::TraceGeometry{E} where {E <: Real}
+    return TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm)
+end
+
+"""
+Gambit's largest step growth, `max_accel`: the default growth of both engines (`logit_solve`'s `max_accel`,
+BifurcationKit's `StepControl`, `PathFollowingSettings`), defined once so they cannot drift.
+"""
+const GAMBIT_MAX_ACCEL = 1.1f0
+
 """The weight of each `Δwᵢ²` in `geometry`'s norm over `width` gaps, before the target's `P²` (`StepDistance`)."""
 function coordinate_weight(geometry::TraceGeometry{E}, width::Integer)::E where {E <: Real}
     if geometry.distance == AveragedDistance

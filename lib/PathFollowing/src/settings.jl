@@ -202,8 +202,8 @@ every step measurement in range. The shorter half steps often keep the start's b
 step's point pass the check.
 
 A trigger of 1 checks every step that meets or passes a step-control target. A higher trigger fits the smallest jump
-seen, and more draws keep finding smaller ones: on random two-action games, `f` 1.52 in one sweep, then 1.23 and 1.1
-to 1.2.
+seen: on random two-action games at growth 2, more draws found `f` 1.52, then 1.23, then 1.1 to 1.2. A slow growth
+holds many steps at a target, where trigger 1 fires on most of them: GameTracing's growth 1.1 picks 1.3.
 
 Both numbers convert to `E` and must stay finite there: `trigger` non-negative and `tolerance` positive. Without `E`,
 the check takes the float type of the two numbers promoted. `PseudoArclength` also needs `trigger` at most the step

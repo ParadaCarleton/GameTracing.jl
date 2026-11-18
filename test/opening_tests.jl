@@ -11,8 +11,7 @@ const MIXED_STALL_SEED = 0x233ce38d667063a1
 const ZERO_STEP_SEED = 0x4e6997513e7cba6d
 # The seed whose (3, 3) game folds at λ ≈ 18.02, where the per-logit Bernoulli weights exhausted Float32.
 const FAR_FOLD_SEED = 0xe291aba5864127e0
-# Game 1's Float32 trace exhausts its precision at λ ≈ 26.1 by rounding, 2e-6 from Gambit; Float64 reaches 50. Its last
-# correction is 0.135 of the rounding bound, so a tenfold one is no noise.
+# Game 1's Float32 trace exhausts its precision at λ ≈ 26.1 by rounding, 2e-6 from Gambit; Float64 reaches 50.
 const ROUNDING_EXHAUSTED_SEED = 0x3ff2026d53896c44
 
 """Normal-form games with strategy counts `(3, 3)` and `(2, 2, 2)`, payoffs `3 randn`, drawn from `rng` in that order."""
@@ -110,6 +109,14 @@ end
 
 const LOG_PRECISION_SETTINGS = log_precision_settings(Float32)
 
+"""
+Whether a trace of `gains` to `FAR_TARGET` under `settings` that stopped with `failure` reached precision 50, or
+exhausted its precision short of it by rounding (`exhausted_by_rounding`).
+"""
+function reached_or_rounded(gains::NormalFormGains, failure::TraceFailure, settings::BifurcationKitSettings)::Bool
+    return failure.context.precision >= 50 || exhausted_by_rounding(gains, failure, settings, FAR_TARGET)
+end
+
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
     for payoffs in (far_opening_games(Xoshiro(FAR_OPENING_SEED))..., far_opening_games(fresh_rng())...)
         gains = NormalFormGains(payoffs)
@@ -149,9 +156,12 @@ end
     game_big = LogitGame(NormalFormGains(map(payoff -> big.(payoff), payoffs_32)), big(FAR_TARGET))
     measured = abs.(big.(computed) .- GameTracing.GameResidual(game_big)(big.(stalled_iterate), big(stalled_pin)))
     @test all(measured .<= rounding_bound.(bounded))
-    # A tenfold correction is no rounding noise, nor is an iterate 64 ulps or a whole gap off the root.
-    tenfold = TraceFailure(failure.cause, (; failure.context..., correction = 10 * correction))
-    @test !exhausted_by_rounding(gains_32, tenfold, LOG_PRECISION_SETTINGS, FAR_TARGET)
+    # A correction within the bound is rounding noise. One past it is not, nor is an iterate 64 ulps or a gap off the root.
+    explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
+    for (scale, noise) in ((2 // 3, true), (3 // 2, false))
+        scaled = TraceFailure(failure.cause, (; failure.context..., correction = Float32(scale * maximum(explained.bound))))
+        @test exhausted_by_rounding(gains_32, scaled, LOG_PRECISION_SETTINGS, FAR_TARGET) == noise
+    end
     for moved_gap in (nextfloat(first(stalled_iterate), 64), first(stalled_iterate) + 1)
         moved = TraceFailure(failure.cause, (; failure.context..., stalled_iterate = [moved_gap; stalled_iterate[2:end]]))
         @test !exhausted_by_rounding(gains_32, moved, LOG_PRECISION_SETTINGS, FAR_TARGET)
@@ -170,7 +180,6 @@ end
     @test all(abs.(off_step.residual[1:(end - 1)]) .<= off_step.residual_bound[1:(end - 1)])
     @test abs(last(off_step.residual)) > last(off_step.residual_bound)
     @test !exhausted_by_rounding(gains_32, elsewhere, LOG_PRECISION_SETTINGS, FAR_TARGET)
-    explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
     roundoff = eps(Float32) / 2
     @info "rounding explains the stall" correction bound = maximum(explained.bound) ratio = correction / maximum(explained.bound) residual_ratio = maximum(abs.(explained.residual) ./ explained.residual_bound) off_step_ratio = abs(last(off_step.residual)) / last(off_step.residual_bound) noise_roundoffs = round.(Tuple(explained.noise ./ roundoff); sigdigits = 3) measured_roundoffs = round.(Tuple(widen(Float32).(measured ./ roundoff)); sigdigits = 3)
     wide = typeof(float(1))
@@ -195,6 +204,16 @@ end
     @test exhausted_by_rounding(gains_wide, resting, settings_wide, FAR_TARGET)
     shifted = TraceFailure(resting.cause, (; resting.context..., stalled_iterate = [first(root) * (1 + sqrt(eps(wide))); root[2:end]]))
     @test !exhausted_by_rounding(gains_wide, shifted, settings_wide, FAR_TARGET)
+    # A Float64 record short of 50 meets the far-target check in its own settings.
+    early = unwrap_error(
+        trace_endpoint(LogitGame(gains_wide, wide(FAR_TARGET)), GameTracing.logit_count(gains_wide), settings_wide; keep_going = StopAtPrecision(wide(5))),
+    ).context
+    stopped_early = TraceFailure(
+        GameTracing.PrecisionExhausted,
+        (; early..., stalled_iterate = [early.gaps; early.precision], stalled_pin = early.precision, stalled_arclength = zero(wide), correction = zero(wide)),
+    )
+    @test early.precision < 50
+    @test reached_or_rounded(gains_wide, stopped_early, settings_wide)
 end
 
 # Each comparison runs a Gambit trace; the mutation jobs skip it to stay under their time limit.
@@ -219,7 +238,7 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
                 )
             )
             (; precision, logits) = failure.context
-            @test precision >= 50 || exhausted_by_rounding(gains, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
+            @test reached_or_rounded(gains, failure, settings)
             if precision < 50
                 @info "a far-target trace stopped short" failure.cause failure.context
             end

@@ -380,6 +380,27 @@ function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::
     return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * E(maximum(abs, logits))
 end
 
+"""
+The largest Newton correction, in logits, that PathFollowing's corrector leaves settled under `distance` at the logits
+`logits` of `gains`, to first order. A player settles once its strategy moves at most `tolerance` plus `settle_ulps` ulps
+of its logits' spread (`FisherRaoSettled`), doubled as in `settled_strategies`. A Fisher–Rao move `d` with the first
+logit fixed moves logit `j` at most `d √(1/πⱼ + 1/π₀)`, the root of the inverse Fisher matrix's diagonal.
+"""
+function settle_bound(distance::StrategyDistance{E}, gains::NormalFormGains, logits::AbstractVector)::E where {E <: Real}
+    # The probabilities read only the logits `z = λ w`, so `[z; 1]` serves at every precision.
+    point = [float.(collect(logits)) .* float(1); float(1)]
+    largest = zero(last(point))
+    for range in GameTracing.logit_ranges(gains)
+        normalizer = GameTracing.log_normalizer(point, range)
+        move = 2 * (distance.tolerance + distance.settle_ulps * eps(E) * last(GameTracing.fisher_rao_spread(point, point, range)))
+        first_share = exp(-GameTracing.log_probability(point, 0, normalizer))
+        for index in range
+            largest = max(largest, move * sqrt(exp(-GameTracing.log_probability(point, index, normalizer)) + first_share))
+        end
+    end
+    return E(largest)
+end
+
 """Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `settle_bound`."""
 function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool
     return newton_correction(pass, logits, precision) <= settle_bound(settings.corrector, logits)

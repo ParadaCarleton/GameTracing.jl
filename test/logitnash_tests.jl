@@ -79,6 +79,18 @@ function settled_endpoint(payoffs::Tuple, logits::AbstractVector{E}, precision::
     return settled_logits(NormalFormPass(map(table -> E.(table), payoffs)), logits, precision, settings)
 end
 
+"""
+The largest endpoint accuracy that `settings`' corrector allows at `logits` of `payoffs` (`settle_bound`): BifurcationKit's
+in logits, PathFollowing's in strategies, on `NormalFormGains`' logits, the negated `logits`.
+"""
+function endpoint_bound(::Tuple, logits::AbstractVector, settings::BifurcationKitSettings{E})::E where {E <: Real}
+    return settle_bound(settings.corrector, logits)
+end
+
+function endpoint_bound(payoffs::Tuple, logits::AbstractVector, settings::PathFollowingSettings{E})::E where {E <: Real}
+    return settle_bound(settings.distance, NormalFormGains(map(table -> E.(table), payoffs)), -logits)
+end
+
 """`settled_strategies` for the two-action payoff tables `payoffs`, on `NormalFormGains`' logits, the negated `logits`."""
 function settled_endpoint(payoffs::Tuple, logits::AbstractVector{E}, precision::Real, settings::PathFollowingSettings{E})::Bool where {E <: Real}
     return settled_strategies(NormalFormGains(map(table -> E.(table), payoffs)), -logits, precision, settings.distance)
@@ -244,10 +256,7 @@ end
         @test !is_error(result)
         if !is_error(result)
             (; logits, logit_accuracy) = unwrap(result)
-            # PathFollowing's accuracy is the Newton correction at its endpoint, which no corrector bound limits.
-            if settings isa BifurcationKitSettings
-                @test logit_accuracy <= settle_bound(settings.corrector, logits)
-            end
+            @test logit_accuracy <= endpoint_bound(UNFOLDED_PITCHFORK_GAME, logits, settings)
             @test agreeing(first_choices(logits), oracle.first_choices)
             @test agreeing(first_choices(logits), first_choices(double_logits))
             @test maximum(abs, logits .- double_logits) <= logit_accuracy + doubled.logit_accuracy

@@ -157,9 +157,8 @@ function PathFollowingSettings{E}(;
         split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = default_split_check(distance),
         max_refusals::Integer = 80,
         min_step_ulps::Integer = 4,
-        # Kept over the Fisher arms (benchmark/results/tune-4dd74d7-summary.txt): the log term at 0.1 took 27% fewer steps
-        # on two-action games and 37% fewer on categorical ones, but stalls at battle of the sexes' exact pitchfork.
-        step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = SummedDistance, state_weight = 1),
+        # The default engine's metric (gambit_settings): the Fisher distance with the log precision term, state weight 0.1.
+        step_metric::TraceGeometry{E} = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm),
         linear_solver::L = LinearSolve.LUFactorization(),
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(

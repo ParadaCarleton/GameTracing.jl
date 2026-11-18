@@ -322,6 +322,48 @@ end
     end
 end
 
+# The pitchfork sweep. In Float32 some first step stalls the log term at 0.003, 0.01 and 0.1, the target term at 0.003 and 0.01.
+const PITCHFORK_WEIGHTS = (0.003f0, 0.01f0, 0.03f0, 0.1f0, 0.3f0)
+const PITCHFORK_FIRST_STEPS = (0.01f0, 0.02f0, 0.025f0, 0.03f0, 0.035f0, 0.04f0, 0.05f0, 0.06f0, 0.08f0)
+
+"""
+Whether `logits` at `precision` lie within 1e-3 of `UNFOLDED_PITCHFORK_GAME`'s principal branch (`branch_reference`).
+Each measured Float32 stall's last accepted point lay within 3.5e-4 of it, and at λ 0.8079 it is the only root.
+"""
+function on_principal_branch(logits::AbstractVector{E}, precision::Real)::Bool where {E <: Real}
+    reference = branch_reference(NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME)), 2, precision)
+    return reference.reached && maximum(abs, logits .- reference.logits) < 1.0f-3
+end
+
+"""
+Whether a `PrecisionExhausted` failure's `context` is the stall near the pitchfork: its failed iterate's `lambda` and
+its last accepted `precision` both in (0.8, 0.81), and its last accepted `logits` on the principal branch.
+"""
+function pitchfork_stall(context::NamedTuple)::Bool
+    near = 0.8f0 < context.lambda < 0.81f0 && 0.8f0 < context.precision < 0.81f0
+    return near && on_principal_branch(context.logits, context.precision)
+end
+
+"""
+Where a BifurcationKit trace of `UNFOLDED_PITCHFORK_GAME` to `precision` under `settings` ends: "arm" on `oracle`'s
+(1, 1) arm and settled, "stall" for `PrecisionExhausted` near λ 0.808, or a description of any other end. The
+unperturbed game's pitchfork lies at λ 0.80814. At one stall point (λ 0.80785) the gap Jacobian's condition number was
+5600 and the last Float32 Newton correction 2.8e-4, above the logit tolerance. The step sequence decides whether a
+trace stalls (issue #132).
+"""
+function pitchfork_outcome(precision::E, settings::BifurcationKitSettings{E}, oracle::NamedTuple)::String where {E <: Real}
+    result = traced_result(UNFOLDED_PITCHFORK_GAME, precision, settings)
+    if is_error(result)
+        failure = unwrap_error(result)
+        lambda = get(failure.context, :lambda, NaN32)
+        stalled = failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(failure.context)
+        return stalled ? "stall" : "$(failure.cause) at λ $lambda"
+    end
+    logits = unwrap(result).logits
+    on_arm = agreeing(first_choices(logits), oracle.first_choices) && settled_endpoint(UNFOLDED_PITCHFORK_GAME, logits, precision, settings)
+    return on_arm ? "arm" : "off the arm at logits $logits"
+end
+
 @testset "a pitchfork unfolded by 1e-4: the reference, the default trace and every arm turn onto the (1, 1) arm" begin
     precision = logitnash_equilibrium(UNFOLDED_PITCHFORK_GAME, 4).precision
     pass = NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME))
@@ -367,14 +409,30 @@ end
             @test largest_gap(checked.profile, regret_oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
         end
     end
-    # The log term at state weight 0.01, below `ARM_WEIGHTS`, exhausted near λ 0.808 until the dot's precision weight
-    # took its root form, a change of rounding alone. It now reaches the (1, 1) arm.
-    edge = traced_result(UNFOLDED_PITCHFORK_GAME, precision, arm_settings(ARMS.fisher_log_precision_reach, 0.01f0))
-    @test !is_error(edge)
-    if !is_error(edge)
-        @test agreeing(first_choices(unwrap(edge).logits), oracle.first_choices)
-        @test settled_endpoint(UNFOLDED_PITCHFORK_GAME, unwrap(edge).logits, precision, arm_settings(ARMS.fisher_log_precision_reach, 0.01f0))
+end
+
+@testset "a pitchfork unfolded by 1e-4: Float64 traces settle on the (1, 1) arm; Float32 ones may stall, never leave it" begin
+    precision = logitnash_equilibrium(UNFOLDED_PITCHFORK_GAME, 4).precision
+    oracle = gambit_branch(UNFOLDED_PITCHFORK_GAME, precision)
+    # A stall passes only near the pitchfork on the principal branch: not 0.01 off it, nor last accepted at λ 0.5.
+    pass = NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME))
+    at_stall = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.8079f0))
+    early = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.5f0))
+    @test pitchfork_stall((; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
+    @test !pitchfork_stall((; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall .+ 0.01f0))
+    @test !pitchfork_stall((; lambda = 0.8079f0, precision = 0.5f0, logits = early))
+    stalls = 0
+    for element in (Float32, widen(Float32)), (name, arm) in pairs(ARMS), weight in PITCHFORK_WEIGHTS
+        outcomes = [
+            (name, element, weight, first_step) => pitchfork_outcome(element(precision), arm_settings(arm, element(weight); first_step), oracle)
+                for first_step in PITCHFORK_FIRST_STEPS
+        ]
+        allowed = element == Float32 ? ("arm", "stall") : ("arm",)
+        @test filter(outcome -> last(outcome) ∉ allowed, outcomes) == []
+        stalls += count(outcome -> last(outcome) == "stall", outcomes)
     end
+    # 14 of the 90 Float32 traces stalled when measured; twice that catches a wholesale regression.
+    @test stalls <= 28
 end
 
 @testset "a step past the target precision lands where the branch first reaches it ($engine)" for (engine, settings) in default_settings()

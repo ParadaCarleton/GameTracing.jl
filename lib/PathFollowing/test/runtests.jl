@@ -19,6 +19,16 @@ function (circle::Circle{E})(residual::AbstractVector{E}, jacobian::AbstractMatr
     return nothing
 end
 
+"""The line `x = y`: `H = x - y`."""
+struct Line end
+
+function (::Line)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+    residual[1] = point[1] - point[2]
+    jacobian[1, 1] = one(E)
+    jacobian[1, 2] = -one(E)
+    return nothing
+end
+
 """The curve `λ = u - u³` in `(u, λ)`: λ turns at a minimum, `u = -1/√3`, then at a maximum, `u = 1/√3`."""
 struct Wiggle end
 
@@ -466,6 +476,14 @@ end
         @test tracer.point ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
     end
 
+    @testset "a landing below min_step_ulps fails Unresolved" begin
+        # Up x = y from (1, 1), y = nextfloat(1) is one ulp away: the cut predictor moved each coordinate one ulp.
+        tracer = unwrap(init(CurveProblem(Line(), E[1, 1], E[1, 1]), algorithm(E); first_step = E(1) / 10))
+        failure = unwrap_error(step!(tracer, Bound(2, nextfloat(one(E)))))
+        @test failure.cause == Unresolved
+        @test tracer.point == E[1, 1]
+    end
+
     @testset "a bounded step over a fold's top stops at the first crossing" begin
         # From (3/5, 4/5) a step of 4/5 passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
         tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)
@@ -527,6 +545,11 @@ end
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = zero(E))
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), refusal_factor = 0)
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1)
+        # A shrink an eighth of eps under 1 rounds to 1 in `E`, and each retry repeated its step.
+        @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = one(E), shrink = 1 - big(eps(E)) / 8)
+        # A step control in a wider type computes its shrink there, where it can round back to the same step in `E`.
+        wide = StepControl(; targets..., max_step_growth = widen(E)(2), max_step = one(E))
+        @test_throws ArgumentError init(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E; step_control = wide); first_step = one(E) / 10)
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = E(Inf), max_step = E(Inf))
         @test StepControl(; targets..., max_step_growth = E(2), max_step = E(Inf)).max_step == E(Inf)
         @test_throws ArgumentError StepControl(;

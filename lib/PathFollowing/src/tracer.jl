@@ -90,6 +90,9 @@ function CommonSolve.init(
     )::Result{<:Tracer{E}, StepFailure{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
     # Checked in `E`, where a tiny or huge `first_step` rounds to 0 or Inf.
     0 < E(first_step) < Inf || throw(ArgumentError("first_step must be positive and finite in $E; got $first_step"))
+    # The step control computes in its own type: a shrink below 1 there can round back to the same step in `E`.
+    algorithm.step_control isa StepControl{E} ||
+        throw(ArgumentError("the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
     size = length(problem.start)
     length(problem.direction) == size || throw(DimensionMismatch("start and direction differ in length"))
     bordered = zeros(E, size, size)
@@ -153,11 +156,12 @@ function CommonSolve.step!(
     last_refusal = NoRefusal
     while true
         tracer.predicted .= tracer.point .+ tracer.step_length .* tracer.tangent
-        if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
-            return Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
-        end
         lands = reaches(bound, tracer.point, tracer.predicted)
         taken = lands ? cut_predictor!(tracer, bound) : tracer.step_length
+        # Checked after the cut, so a landing below the resolution fails too.
+        if unresolved(tracer.point, tracer.predicted, algorithm.min_step_ulps)
+            return Err(StepFailure(Unresolved, last_refusal, taken, refusals))
+        end
         attempt = attempt_step!(tracer, bound, lands)
         if attempt.refusal == NoRefusal
             accept_point!(tracer, attempt, taken)

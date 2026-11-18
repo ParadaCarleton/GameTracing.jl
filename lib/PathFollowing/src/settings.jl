@@ -121,7 +121,8 @@ function StepControl(;
     )::StepControl{E} where {E <: Real}
     max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
     refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
-    0 < shrink < 1 || throw(ArgumentError("shrink must lie in (0, 1); got $shrink"))
+    # Checked in `E`, where a shrink near 1 rounds to 1 and a retry would repeat its step.
+    zero(E) < E(shrink) < one(E) || throw(ArgumentError("shrink must lie in (0, 1) in $E; got $shrink"))
     max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
     # A straight stretch measures f = 0, so the growth bound or the cap must stop the step from going infinite.
     isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
@@ -169,8 +170,8 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
   step near a fold can land where the oriented tangent runs back along the curve.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
-- `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
-  as `Unresolved`; smaller steps cannot add a point.
+- `min_step_ulps`: a predictor, cut at a `Bound` or not, that moves no coordinate by more than this many ulps of
+  its size ends the trace as `Unresolved`; smaller steps cannot add a point.
 - `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
 """
 struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, L, A}

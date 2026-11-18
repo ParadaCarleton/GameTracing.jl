@@ -286,7 +286,7 @@ kl_ranges(::Real, pass::Any, width::Integer)::Union{Tuple, AbstractVector} = che
 
 """Whether no player's KL from `predicted` to `corrected` over `ranges` passes `limit` (`largest_kl`); none passes an absent limit."""
 kl_within(::Nothing, ::Any, ::AbstractVector, ::AbstractVector)::Bool = true
-function kl_within(limit::Real, ranges::Any, corrected::AbstractVector{E}, predicted::AbstractVector{E})::Bool where {E <: Real}
+@inline function kl_within(limit::Real, ranges::Any, corrected::AbstractVector{E}, predicted::AbstractVector{E})::Bool where {E <: Real}
     return largest_kl(ranges, corrected, predicted) <= limit
 end
 

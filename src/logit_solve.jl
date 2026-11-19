@@ -133,7 +133,7 @@ be non-negative and finite in the trace's element type (`ArgumentError` otherwis
 function logit_solve_lambda(
         gains::NormalFormGains{N},
         lam::AbstractVector{<:Real};
-        first_step::Real = 0.03f0,
+        first_step::Real = GAMBIT_FIRST_STEP,
         max_accel::Real = GAMBIT_MAX_ACCEL,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
     )::BranchResult{E, N} where {N, E <: Real}
@@ -183,7 +183,7 @@ The accepted points of `logit_solve_branch`'s trace of `gains`, as precisions an
 """
 function settled_points(
         gains::NormalFormGains;
-        first_step::Real = 0.03f0,
+        first_step::Real = GAMBIT_FIRST_STEP,
         max_accel::Real = GAMBIT_MAX_ACCEL,
         maximum_precision::Real = 1.0f6,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),

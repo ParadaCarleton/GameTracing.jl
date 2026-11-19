@@ -38,8 +38,8 @@ end
                      palc_options, continuation_options)
 
 BifurcationKit PALC controls for `trace_endpoint`, in `(w, λ)` with `w = logits / λ` the payoff gaps and `λ` the
-precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`). Each default matches
-`gambit_settings` at Gambit's `max_accel`, except `first_step`.
+precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`). The defaults are
+`gambit_settings(GAMBIT_FIRST_STEP, GAMBIT_MAX_ACCEL)`: Gambit's first step and growth limit.
 
 - `first_step`, `max_step`: first and largest arclength step. A step whose corrector fails halves; the trace ends as
   `TraceStuck` once its predictor moves the point no more than a few ulps of its size (`step_unresolved`).
@@ -93,7 +93,7 @@ end
 
 # Each keyword is named, not splatted: a splatted `keywords...` leaves the field conversions to runtime dispatch.
 function BifurcationKitSettings{E}(;
-        first_step::Real = 0.05f0,
+        first_step::Real = GAMBIT_FIRST_STEP,
         max_step::Real = 1000.0f0,
         aggressiveness::Real = E(GAMBIT_MAX_ACCEL) - one(E),
         step_metric::TraceGeometry{E} = default_step_metric(E),

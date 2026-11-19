@@ -262,10 +262,20 @@ end
     metric = GameTracing.default_step_metric(element)
     @test (metric.distance, metric.precision_term) == (FisherDistance, LogPrecisionTerm)
     @test TraceGeometry{element}(; state_weight = 3 // 10).precision_term == LogPrecisionTerm
-    gambit, bare = GameTracing.gambit_settings(element(3 // 100), GameTracing.GAMBIT_MAX_ACCEL), BifurcationKitSettings{element}()
-    @test gambit.step_metric == bare.step_metric == PathFollowingSettings{element}().step_metric == metric
-    @test (gambit.aggressiveness, gambit.step_control) == (bare.aggressiveness, bare.step_control)
+    gambit = GameTracing.gambit_settings(element(GameTracing.GAMBIT_FIRST_STEP), GameTracing.GAMBIT_MAX_ACCEL)
+    bare = BifurcationKitSettings{element}()
+    @test gambit.step_metric == PathFollowingSettings{element}().step_metric == metric
+    @test typeof(gambit) === typeof(bare)
+    @testset "bare BifurcationKitSettings field $name matches gambit_settings" for name in fieldnames(BifurcationKitSettings)
+        @test getfield(gambit, name) == getfield(bare, name)
+    end
     @test PathFollowingSettings{element}().max_step_growth == element(GameTracing.GAMBIT_MAX_ACCEL) == StepControl{element}().max_step_growth
+end
+
+@testset "the Gambit step constants are pygambit's defaults" begin
+    defaults = gambit_step_defaults()
+    @test GameTracing.GAMBIT_FIRST_STEP == defaults.first_step
+    @test GameTracing.GAMBIT_MAX_ACCEL == defaults.max_accel
 end
 
 @testset "Gambit's max_accel sets the growth limit ($element)" for element in (Float32, widen(Float32))

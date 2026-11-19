@@ -524,6 +524,19 @@ end
     @test !folds_before(Float32[0, 1, 3.5f0, 3.2f0, 4], 3)
 end
 
+@testset "Gambit's branch points stop at the first at or past the target, or where the branch settles" begin
+    lambdas = gambit_branch_lambdas(FOLD_PAST_ONE_GAME, Float32, first(GAMBIT_STEP_LADDER), 4)
+    @test last(lambdas) >= 4 > maximum(lambdas[1:(end - 1)])
+    # Matching pennies' uniform profile has no regret, so Gambit ends its branch at the start.
+    @test gambit_branch_lambdas(LOGITNASH_GAMES.matching_pennies, Float32, first(GAMBIT_STEP_LADDER), 4) == [0]
+    # The prisoners' dilemma settles to regret 1e-12 of its payoff range far below precision 1e6.
+    settled = gambit_branch_lambdas(LOGITNASH_GAMES.prisoners_dilemma, Float32, first(GAMBIT_STEP_LADDER), 10^6)
+    @test 1 < length(settled) && last(settled) < 10^6
+    gambit_strategies(FOLD_PAST_ONE_GAME, 4.0f0)
+    # 0.44 s on macdev; the branch to regret 1e-12 took 172 s.
+    @test (@elapsed gambit_strategies(SLOW_REGRET_GAME, 4.0f0)) < 20
+end
+
 @testset "on a game whose principal branch folds just past the target, the trace meets the reference ($engine)" for (engine, settings) in default_settings()
     precision = logitnash_equilibrium(FOLDED_GAMBIT_GAME, 3).precision
     reference = branch_reference(NormalFormPass(map(float, FOLDED_GAMBIT_GAME)), length(FOLDED_GAMBIT_GAME), precision)

@@ -13,7 +13,7 @@ end
 @testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision ($engine)" for (engine, settings) in engine_settings(Float32)
     rng = fresh_rng()
     random_games = [ntuple(_ -> 3 .* randn(rng, counts), length(counts)) for counts in ((3, 3), (2, 3, 2), (4, 2))]
-    games = [LOGITNASH_GAMES.prisoners_dilemma, LOGITNASH_GAMES.matching_pennies, ROCK_PAPER_SCISSORS, random_games...]
+    games = [LOGITNASH_GAMES.prisoners_dilemma, LOGITNASH_GAMES.matching_pennies, ROCK_PAPER_SCISSORS, FOLD_PAST_ONE_GAME, random_games...]
     for payoffs in games
         gains = NormalFormGains(map(table -> Float32.(table), payoffs))
         # Out of order, so a single trace must land on each precision in rising order and return them as given.
@@ -25,6 +25,15 @@ end
         end
     end
     @test length(unwrap(logit_solve_lambda(NormalFormGains(map(table -> Float32.(table), ROCK_PAPER_SCISSORS)), 2; settings))) == 1
+end
+
+@testset "Gambit's default steps round the fold of FOLD_PAST_ONE_GAME onto a later crossing; a finer rung shows the first" begin
+    @test gambit_folds_before(FOLD_PAST_ONE_GAME, 1.0f0)
+    @test first_crossing_steps(FOLD_PAST_ONE_GAME, 1.0f0) == GAMBIT_STEP_LADDER[2]
+    # The fold peaks below precision 4, so every rung folds before it and the finest stands.
+    @test first_crossing_steps(FOLD_PAST_ONE_GAME, 4.0f0) == last(GAMBIT_STEP_LADDER)
+    later = gambit_branch(FOLD_PAST_ONE_GAME, 1.0f0).first_choices
+    @test maximum(abs, later .- first.(gambit_strategies(FOLD_PAST_ONE_GAME, 1.0f0).strategies)) > 1.0f-1
 end
 
 @testset "logit_solve ends at the Nash equilibrium of games whose equilibrium is known ($engine)" for (engine, settings) in engine_settings(Float32)

@@ -31,6 +31,16 @@ const FOLD_SETTINGS = BifurcationKitSettings{Float32}()
     end
 end
 
+@testset "a millionth below the fold, the endpoint passes its pinned check ($element)" for element in (Float32, widen(Float32))
+    # The lower branch folds where `z = 1 + exp(z - 3)`, at λ 1.4106649; the pinned Jacobian nearly vanishes below it.
+    # Measured: the check's correction is at most 2.1e-5 in Float32 and 6.1e-6 in Float64, from 1e-1 to 1e-7 below.
+    target = element(big"1.4106635258075186")
+    settings = BifurcationKitSettings{element}()
+    result = trace_endpoint(LogitGame(ThresholdPass(element(6), element(3)), target), 1, settings)
+    @test !is_error(result)
+    @test unwrap(result).logit_accuracy <= settle_bound(settings.corrector, unwrap(result).logits)
+end
+
 @testset "below the fold the trace stays on the lower branch" begin
     # Precision 1 has three equilibria; the branch connected to the flat start is the lowest.
     result = trace_endpoint(LogitGame(FOLD_GAME, 1.0f0), 1, FOLD_SETTINGS)

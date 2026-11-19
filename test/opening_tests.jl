@@ -432,17 +432,16 @@ end
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
     # stalled the opening at λ ≈ 4e-14, whatever η: zero-slope gains whose every evaluation jumps leave no first step.
     pass, target = NoisyFlatPass(1.0f-4, 1.0f-7, 10.0f0, UInt(salt)), 1.0f5
-    # The opening `1 / gap_bound` is 1e4 here, so an uncapped trace can leap to the target, where a corrector may stop
-    # on a lucky draw (issue #134). Steps of at most 0.3 in `log(1 + λ)` walk into the noise; 0.1 to 1 pass.
-    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000, max_step = 0.3f0)
+    # The opening `1 / gap_bound` is 1e4 here, so a trace can leap to the target. A corrector may stop there on a lucky
+    # draw, and the endpoint's check fails it (issue #134).
+    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000)
     tolerance = settings.corrector.logit_tolerance
     failure = unwrap_error(trace_endpoint(LogitGame(pass, target), 1, settings))
     @test failure.cause == GameTracing.PrecisionExhausted
     (; lambda, correction) = failure.context
     # Corrections are at most 2 λ η, so every one settles below λ = tolerance / 2η.
     @test lambda > tolerance / (2 * pass.noise)
-    # Past 100 tolerance / η a correction settles about once in a hundred; the trace halves into the noise long before.
-    @test lambda < 100 * tolerance / pass.noise
+    @test lambda <= target
     # One draw, often under the tolerance (`unresolved_noise`); two roundings of the logit `λ level` add to it.
     @test 0 < correction <= 2 * lambda * pass.noise + 2 * eps(lambda * pass.level)
 end

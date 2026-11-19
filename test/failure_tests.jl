@@ -1,4 +1,4 @@
-using ErrorTypes: is_error, unwrap_error
+using ErrorTypes: is_error, unwrap, unwrap_error
 using Logging: Logging
 using LinearAlgebra: LAPACKException, SingularException
 
@@ -240,6 +240,51 @@ end
     )
     @test is_error(result)
     @test unwrap_error(result).cause == GameTracing.TraceStuck
+end
+
+"""The `guarded_trace` outcome of a segment that ran to its target, its accepted points settled within `accuracy`."""
+function ran_outcome(accuracy::E)::NamedTuple where {E <: Real}
+    return (; step_length = zero(E), accepted_step = zero(E), exhausted = nothing, logit_accuracy = accuracy, unresolved = false, exception = nothing)
+end
+
+"""`reached_state` of a trace of `game` to `gaps` on its target, its accepted points settled within `accuracy`."""
+function reached_at(game::LogitGame, gaps::AbstractVector{E}, accuracy::E)::GameTracing.TraceResult{E} where {E <: Real}
+    target = E(game.target_precision)
+    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false, false, target)
+    return GameTracing.reached_state(progress, ran_outcome(accuracy), game, BifurcationKitSettings{E}(), (;))
+end
+
+@testset "the endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
+    tolerance = BifurcationKitSettings{element}().corrector.logit_tolerance
+    # Under its onset the noise is off: the gain is `level`, the root `w = level`, and `δ / λ` off it a correction `δ`.
+    flat = LogitGame(NoisyFlatPass(element(1 // 2), element(1.0f-7), element(10), UInt(1)), one(element))
+    settled = unwrap(reached_at(flat, element[1 // 2 + tolerance / 2], zero(element)))
+    @test settled.logits == element[1 // 2 + tolerance / 2]
+    @test isapprox(settled.logit_accuracy, tolerance / 2; atol = 4 * eps(element))
+    # The corrector's own accuracy stands when it is the larger.
+    @test unwrap(reached_at(flat, element[1 // 2 + tolerance / 2], tolerance)).logit_accuracy == tolerance
+    unsettled = unwrap_error(reached_at(flat, element[1 // 2 + 2 * tolerance], zero(element)))
+    @test unsettled.cause == GameTracing.PrecisionExhausted
+    # The correction runs from the endpoint to a plain Newton iterate at the target.
+    @test unsettled.context.lambda == unsettled.context.stalled_pin == last(unsettled.context.stalled_iterate) == 1
+    @test unsettled.context.stalled_iterate[1] ≈ 1 // 2
+    @test unsettled.context.gaps == element[1 // 2 + 2 * tolerance]
+    @test isapprox(unsettled.context.correction, 2 * tolerance; atol = 4 * eps(element))
+    # A corrector can stop on a lucky draw of noise (issue #134). At the target `λ η` is 0.01, a hundred tolerances.
+    target = element(1.0f5)
+    noisy = LogitGame(NoisyFlatPass(element(1.0f-4), element(1.0f-7), element(10), UInt(3)), target)
+    lucky = unwrap_error(reached_at(noisy, element[1.0f-4], zero(element)))
+    @test lucky.cause == GameTracing.PrecisionExhausted
+    @test lucky.context.lambda == target
+    # One draw of at most `λ η`, plus the rounding of the logit `λ level`.
+    @test tolerance < lucky.context.correction <= target * noisy.pass!.noise + 2 * eps(target * noisy.pass!.level)
+    # `G = logistic(z) + b` has Jacobian `1 - λ/4` at `w = 0`, singular at λ = 4. With `b = -1/2`, `w = 0` is an exact
+    # root there and needs no correction; with `b = 0` it is no root, and Newton's method has no step.
+    exact = unwrap(reached_at(LogitGame(LinearGainPass(ones(element, 1, 1), element[-1 // 2]), element(4)), zeros(element, 1), tolerance))
+    @test exact.logits == zeros(element, 1)
+    @test exact.logit_accuracy == tolerance
+    singular = unwrap_error(reached_at(LogitGame(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), element(4)), zeros(element, 1), zero(element)))
+    @test singular.cause == GameTracing.Singular
 end
 
 """A `trace_record_point` record of BifurcationKit's branch at `step`: the point `(gaps, param)` and a unit tangent."""

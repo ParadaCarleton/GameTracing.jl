@@ -33,15 +33,15 @@ Base.@kwdef struct StepControl{E <: Real}
 end
 
 """
-    BifurcationKitSettings{E}(; first_step, max_step, aggressiveness, step_metric,
+    BifurcationKitSettings{E}(; max_step, aggressiveness, step_metric,
                      corrector, max_steps, tangent, bordered_solver, step_control, orientation_check, palc_corrector,
                      palc_options, continuation_options)
 
 BifurcationKit PALC controls for `trace_endpoint`, in `(w, λ)` with `w = logits / λ` the payoff gaps and `λ` the
 precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`). The defaults are
-`gambit_settings(GAMBIT_FIRST_STEP, GAMBIT_MAX_ACCEL)`: Gambit's first step and growth limit.
+`gambit_settings(E, GAMBIT_MAX_ACCEL)`: Gambit's growth limit. The first step comes from the game (`opening_step`).
 
-- `first_step`, `max_step`: first and largest arclength step. A step whose corrector fails halves; the trace ends as
+- `max_step`: the largest arclength step, which also caps the first. A step whose corrector fails halves; the trace ends as
   `TraceStuck` once its predictor moves the point no more than a few ulps of its size (`step_unresolved`).
   BifurcationKit's `dsmin` is zero: its halving stops at a zero step. After the predictor stops moving, BifurcationKit
   still halves to zero through the subnormals, about 150 halvings of one refused residual evaluation each.
@@ -76,7 +76,6 @@ struct BifurcationKitSettings{
         P <: NamedTuple,
         O <: NamedTuple,
     } <: EngineSettings{E}
-    first_step::E
     max_step::E
     aggressiveness::E
     step_metric::TraceGeometry{E}
@@ -93,7 +92,6 @@ end
 
 # Each keyword is named, not splatted: a splatted `keywords...` leaves the field conversions to runtime dispatch.
 function BifurcationKitSettings{E}(;
-        first_step::Real = GAMBIT_FIRST_STEP,
         max_step::Real = 1000.0f0,
         aggressiveness::Real = E(GAMBIT_MAX_ACCEL) - one(E),
         step_metric::TraceGeometry{E} = default_step_metric(E),
@@ -110,7 +108,7 @@ function BifurcationKitSettings{E}(;
         E <: Real, T <: BifurcationKit.AbstractTangentComputation, C, P <: NamedTuple, O <: NamedTuple,
     }
     return BifurcationKitSettings{E, T, C, P, O}(
-        E(first_step), E(max_step), E(aggressiveness), step_metric, corrector, Int(max_steps), tangent, bordered_solver,
+        E(max_step), E(aggressiveness), step_metric, corrector, Int(max_steps), tangent, bordered_solver,
         step_control, checked_orientation(orientation_check, bordered_solver), palc_corrector, palc_options,
         continuation_options,
     )
@@ -468,7 +466,7 @@ function trace_endpoint(
     finalise = TraceFinalise(
         keep_going,
         redraw,
-        RedrawSlot(game, false, settings.first_step),
+        RedrawSlot(game, false, opening_step(game, E, settings.max_step)),
         settings.corrector,
     )
     return redrawn_trace(

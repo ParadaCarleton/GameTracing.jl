@@ -7,7 +7,7 @@ const ROCK_PAPER_SCISSORS = ([0 -1 1; 1 0 -1; -1 1 0], [0 1 -1; -1 0 1; 1 -1 0])
 
 """Each engine's default settings in `E`, by name: BifurcationKit's as `logit_solve` builds them, and PathFollowing's."""
 function engine_settings(::Type{E})::Vector{Pair{String, EngineSettings{E}}} where {E <: Real}
-    return ["BifurcationKit" => GameTracing.gambit_settings(E(0.03f0), GameTracing.GAMBIT_MAX_ACCEL), "PathFollowing" => PathFollowingSettings{E}()]
+    return ["BifurcationKit" => GameTracing.gambit_settings(E, GameTracing.GAMBIT_MAX_ACCEL), "PathFollowing" => PathFollowingSettings{E}()]
 end
 
 @testset "logit_solve_lambda agrees with Gambit's logit_solve_lambda at each precision ($engine)" for (engine, settings) in engine_settings(Float32)
@@ -252,17 +252,13 @@ end
     # No step cap by default; the growth bound then must stay finite.
     @test PathFollowingSettings{element}().max_step == Inf32
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; max_step_growth = Inf32))
-    # The first step comes from the game: the precision where a logit moves by one, or one for equal payoffs.
-    @test GameTracing.opening_step(gains, element) == inv(element(GameTracing.payoff_range(gains)))
-    @test GameTracing.opening_step(NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), element) == 1
-    @test GameTracing.opening_step(poisoned, element) == 1
 end
 
 @testset "both engines default to one step metric and Gambit's step growth ($element)" for element in (Float32, widen(Float32))
     metric = GameTracing.default_step_metric(element)
     @test (metric.distance, metric.precision_term) == (FisherDistance, LogPrecisionTerm)
     @test TraceGeometry{element}(; state_weight = 3 // 10).precision_term == LogPrecisionTerm
-    gambit = GameTracing.gambit_settings(element(GameTracing.GAMBIT_FIRST_STEP), GameTracing.GAMBIT_MAX_ACCEL)
+    gambit = GameTracing.gambit_settings(element, GameTracing.GAMBIT_MAX_ACCEL)
     bare = BifurcationKitSettings{element}()
     @test gambit.step_metric == PathFollowingSettings{element}().step_metric == metric
     @test typeof(gambit) === typeof(bare)
@@ -272,17 +268,41 @@ end
     @test PathFollowingSettings{element}().max_step_growth == element(GameTracing.GAMBIT_MAX_ACCEL) == StepControl{element}().max_step_growth
 end
 
-@testset "the Gambit step constants are pygambit's defaults" begin
-    defaults = gambit_step_defaults()
-    @test GameTracing.GAMBIT_FIRST_STEP == defaults.first_step
-    @test GameTracing.GAMBIT_MAX_ACCEL == defaults.max_accel
+@testset "Gambit's growth constant is pygambit's default" begin
+    @test GameTracing.GAMBIT_MAX_ACCEL == gambit_max_accel()
+end
+
+@testset "both engines open one step from the game: 1 / gap_bound, else one, at most max_step ($element)" for element in (Float32, widen(Float32))
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
+    game = LogitGame(gains, one(element))
+    @test GameTracing.opening_step(game, element, Inf32) == inv(element(8))
+    @test GameTracing.opening_step(game, element, 1 // 10) == element(1 // 10)
+    flat = LogitGame(NormalFormGains(map(table -> zero(table) .+ element(3), LOGITNASH_GAMES.stag_hunt)), one(element))
+    @test GameTracing.opening_step(flat, element, Inf32) == 1
+    poisoned = LogitGame(NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0])), one(element))
+    @test GameTracing.opening_step(poisoned, element, Inf32) == 1
+    # Narrow integer payoffs: the range must not wrap (-1 in Int8) and fall back to a step of one.
+    for (low, high) in ((typemin(Int8), typemax(Int8)), (typemin(UInt8), typemax(UInt8)))
+        narrow = NormalFormGains(([low high; high low], [high low; low high]))
+        @test GameTracing.payoff_range(narrow) == 255
+        @test GameTracing.opening_step(LogitGame(narrow, one(element)), element, Inf32) == inv(element(255))
+    end
+    # PathFollowing's tracer starts at the same step.
+    tracer = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}()))
+    @test tracer.step_length == GameTracing.opening_step(game, element, Inf32)
+end
+
+@testset "a pass without gap_bound fails at the opening, naming the method to define" begin
+    game = LogitGame(UnboundedPass(GAME), TARGET_PRECISION)
+    @test_throws ArgumentError trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}())
+    @test_throws r"define GameTracing\.gap_bound\(::UnboundedPass" GameTracing.gap_bound(game.pass!)
 end
 
 @testset "Gambit's max_accel sets the growth limit ($element)" for element in (Float32, widen(Float32))
-    faster = GameTracing.gambit_settings(element(3 // 100), 2)
+    faster = GameTracing.gambit_settings(element, 2)
     @test (faster.step_control.max_step_growth, faster.aggressiveness) == (2, 1)
     # BifurcationKit's growth limit must exceed 1: at 1 the step control only refuses.
-    held = GameTracing.gambit_settings(element(3 // 100), 1)
+    held = GameTracing.gambit_settings(element, 1)
     @test isnothing(held.step_control.max_step_growth) && iszero(held.aggressiveness)
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
     steps = Dict(accel => length(unwrap(logit_solve_branch(gains; maxregret = 1.0f-4, max_accel = accel))) for accel in (1, 2))
@@ -430,7 +450,6 @@ end
 @testset "the solvers refuse Gambit's invalid arguments" begin
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.matching_pennies))
     @test_throws ArgumentError logit_solve(gains; maxregret = 0)
-    @test_throws ArgumentError logit_solve(gains; first_step = 0)
     @test_throws ArgumentError logit_solve_lambda(gains, 1; max_accel = 0.5f0)
     # A wider cap can round to 0 or Inf in Float32.
     huge = floatmax(widen(Float32))
@@ -485,7 +504,7 @@ end
     @test capped.step_length == element(0.01f0)
     # The payoff range's inverse overflows.
     flat = NormalFormGains((element[0, nextfloat(zero(element))],))
-    @test GameTracing.opening_step(flat, element) == 1
+    @test GameTracing.opening_step(LogitGame(flat, one(element)), element, Inf32) == 1
     @test !is_error(logit_solve_lambda(flat, one(element); settings = PathFollowingSettings{element}()))
 end
 

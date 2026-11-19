@@ -10,7 +10,7 @@ end
 """`gambit_settings`-like trace settings in `E` that allow `max_steps` steps."""
 function step_budget_settings(::Type{E}, max_steps::Integer)::BifurcationKitSettings{E} where {E <: Real}
     return BifurcationKitSettings{E}(;
-        first_step = E(0.03f0), aggressiveness = E(0.1f0), max_steps,
+        aggressiveness = E(0.1f0), max_steps,
         step_metric = TraceGeometry{E}(; distance = FisherDistance, precision_term = LogPrecisionTerm),
     )
 end

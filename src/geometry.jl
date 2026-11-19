@@ -74,9 +74,6 @@ BifurcationKit's `StepControl`, `PathFollowingSettings`), defined once so they c
 """
 const GAMBIT_MAX_ACCEL = 1.1f0
 
-"""Gambit's first arclength step, `first_step`: the default of `logit_solve` and `BifurcationKitSettings`."""
-const GAMBIT_FIRST_STEP = 0.03f0
-
 """The weight of each `Δwᵢ²` in `geometry`'s norm over `width` gaps, before the target's `P²` (`StepDistance`)."""
 function coordinate_weight(geometry::TraceGeometry{E}, width::Integer)::E where {E <: Real}
     if geometry.distance == AveragedDistance

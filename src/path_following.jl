@@ -367,19 +367,8 @@ function path_init(
     return CommonSolve.init(
         PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
         path_algorithm(settings, gains);
-        first_step = opening_step(gains, E),
+        first_step = opening_step(game, E, settings.max_step),
     )
-end
-
-"""
-The first step of a trace of `gains`: `1 / payoff_range(gains)` in `λ`, where no logit `z = λ w` has moved by more
-than one. Step control then grows it by up to `max_step_growth` per step, and `max_step` caps it. A range without a
-positive finite inverse (equal, non-finite or subnormal payoffs) steps one; a non-finite start fails anyway
-(`NotFiniteStart`).
-"""
-function opening_step(gains::NormalFormGains, ::Type{E})::E where {E <: Real}
-    step = inv(E(payoff_range(gains)))
-    return step > 0 && isfinite(step) ? step : one(E)
 end
 
 """The `TraceCause` of PathFollowing's start `failure`: `NotFinite` for a non-finite start, `Singular` otherwise."""

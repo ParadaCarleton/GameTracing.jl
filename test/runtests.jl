@@ -7,8 +7,9 @@ include("rounding.jl")
 include("arms.jl")
 include("gambit.jl")
 
-# A suite past 30 minutes is stuck: a separate process SIGQUITs it, printing every thread's backtrace.
-const WATCHDOG = run(`sh -c "timeout 1800 tail --pid=$(getpid()) -f /dev/null || kill -QUIT $(getpid())"`; wait = false)
+# The suite takes 25 to 36 minutes, so one past 50 is stuck. A separate process SIGQUITs it then, printing every
+# thread's backtrace before CI's 60-minute job timeout.
+const WATCHDOG = run(`sh -c "timeout 3000 tail --pid=$(getpid()) -f /dev/null || kill -QUIT $(getpid())"`; wait = false)
 
 const GAME = LinearGainPass(Float32[0 1; 1 0], Float32[0.5f0, -0.25f0])
 const TARGET_PRECISION = 2.0f0

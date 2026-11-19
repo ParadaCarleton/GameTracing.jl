@@ -95,7 +95,7 @@ The root of the weight of `Δλ²` in `geometry`'s norm at `λ = 0` toward `targ
 `λ` by at most its inverse; the state's terms only shorten the move. `LogPrecisionTerm` gives one; the target's unit
 `λ / P` gives `√precision_weight / P`. The root never overflows, though its inverse may.
 """
-function opening_root(geometry::TraceGeometry{E}, target_precision::Real)::E where {E <: Real}
+@inline function opening_root(geometry::TraceGeometry{E}, target_precision::Real)::E where {E <: Real}
     target = E(target_precision)
     if geometry.distance == FisherDistance
         return precision_term_root(geometry.precision_term, zero(E), target)

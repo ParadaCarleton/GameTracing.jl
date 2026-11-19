@@ -91,6 +91,19 @@ function precision_weight(geometry::TraceGeometry{E})::E where {E <: Real}
 end
 
 """
+The root of the weight of `Δλ²` in `geometry`'s norm at `λ = 0` toward `target_precision` `P`. A unit step there moves
+`λ` by at most its inverse; the state's terms only shorten the move. `LogPrecisionTerm` gives one; the target's unit
+`λ / P` gives `√precision_weight / P`. The root never overflows, though its inverse may.
+"""
+@inline function opening_root(geometry::TraceGeometry{E}, target_precision::Real)::E where {E <: Real}
+    target = E(target_precision)
+    if geometry.distance == FisherDistance
+        return precision_term_root(geometry.precision_term, zero(E), target)
+    end
+    return sqrt(precision_weight(geometry)) / target
+end
+
+"""
 `(gap, precision)`: the weights of `Σ Δwᵢ²` and `Δλ²` in `geometry`'s plain norm over `width` gaps at target precision
 `target_precision` (`coordinate_weight`, `precision_weight`, `StepDistance`). A target whose square leaves `E`'s
 range throws `ArgumentError`; `FisherDistance` with `LogPrecisionTerm` does not square it.

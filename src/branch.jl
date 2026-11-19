@@ -62,13 +62,13 @@ function gap_bound(pass!::Any)::Union{}
 end
 
 """
-The first arclength step of a trace of `game` in `E`, at most `max_step`: `1 / gap_bound(game.pass!)`. Under
-`LogPrecisionTerm` a step `h` from `λ = 0` moves `λ` by at most `h`, so no logit `z = λ w` moves by more than one.
-Step control grows or shrinks it from there. A bound without a positive finite inverse (zero, non-finite or
-subnormal) steps one; a non-finite start fails anyway (`NotFinite`).
+The first arclength step of a trace of `game` in `geometry`, at most `max_step`: `root / gap_bound(game.pass!)`.
+A step `h` from `λ = 0` moves `λ` by at most `h / root` (`opening_root`), so no logit `z = λ w` moves by more than one,
+whatever the target. Step control grows or shrinks it from there. The quotient overflows only for a tiny bound; a step
+that is not positive and finite (a zero, tiny or non-finite bound) is one, and a non-finite start fails (`NotFinite`).
 """
-function opening_step(game::LogitGame, ::Type{E}, max_step::Real)::E where {E <: Real}
-    step = inv(E(gap_bound(game.pass!)))
+function opening_step(game::LogitGame, geometry::TraceGeometry{E}, max_step::Real)::E where {E <: Real}
+    step = opening_root(geometry, game.target_precision) / E(gap_bound(game.pass!))
     return min(step > 0 && isfinite(step) ? step : one(E), E(max_step))
 end
 

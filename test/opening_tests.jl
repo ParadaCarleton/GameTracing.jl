@@ -148,7 +148,7 @@ end
             )
         )
         # A first step of length `h` in `log(1 + λ)` reaches at most `expm1(h)`.
-        opening = GameTracing.opening_step(LogitGame(gains, FAR_TARGET), Float32, LOG_PRECISION_SETTINGS.max_step)
+        opening = GameTracing.opening_step(LogitGame(gains, FAR_TARGET), LOG_PRECISION_SETTINGS.step_metric, LOG_PRECISION_SETTINGS.max_step)
         @test 0 < failure.context.precision <= 2 * expm1(opening)
     end
 end

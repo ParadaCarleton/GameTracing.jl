@@ -466,7 +466,7 @@ function trace_endpoint(
     finalise = TraceFinalise(
         keep_going,
         redraw,
-        RedrawSlot(game, false, opening_step(game, E, settings.max_step)),
+        RedrawSlot(game, false, opening_step(game, settings.step_metric, settings.max_step)),
         settings.corrector,
     )
     return redrawn_trace(

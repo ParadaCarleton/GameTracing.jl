@@ -275,21 +275,35 @@ end
 @testset "both engines open one step from the game: 1 / gap_bound, else one, at most max_step ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.stag_hunt))
     game = LogitGame(gains, one(element))
-    @test GameTracing.opening_step(game, element, Inf32) == inv(element(8))
-    @test GameTracing.opening_step(game, element, 1 // 10) == element(1 // 10)
+    @test GameTracing.opening_step(game, GameTracing.default_step_metric(element), Inf32) == inv(element(8))
+    @test GameTracing.opening_step(game, GameTracing.default_step_metric(element), 1 // 10) == element(1 // 10)
     flat = LogitGame(NormalFormGains(map(table -> zero(table) .+ element(3), LOGITNASH_GAMES.stag_hunt)), one(element))
-    @test GameTracing.opening_step(flat, element, Inf32) == 1
+    @test GameTracing.opening_step(flat, GameTracing.default_step_metric(element), Inf32) == 1
     poisoned = LogitGame(NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0])), one(element))
-    @test GameTracing.opening_step(poisoned, element, Inf32) == 1
+    @test GameTracing.opening_step(poisoned, GameTracing.default_step_metric(element), Inf32) == 1
     # Narrow integer payoffs: the range must not wrap (-1 in Int8) and fall back to a step of one.
     for (low, high) in ((typemin(Int8), typemax(Int8)), (typemin(UInt8), typemax(UInt8)))
         narrow = NormalFormGains(([low high; high low], [high low; low high]))
         @test GameTracing.payoff_range(narrow) == 255
-        @test GameTracing.opening_step(LogitGame(narrow, one(element)), element, Inf32) == inv(element(255))
+        @test GameTracing.opening_step(LogitGame(narrow, one(element)), GameTracing.default_step_metric(element), Inf32) == inv(element(255))
     end
+    # In the target's unit `λ / P`, a unit step moves `λ` by `P`, so the opening shrinks by `P` (issue #38).
+    far = LogitGame(gains, element(1000))
+    @test GameTracing.opening_step(far, GameTracing.default_step_metric(element), Inf32) == inv(element(8))
+    target = TraceGeometry{element}(; precision_term = TargetPrecisionTerm)
+    @test GameTracing.opening_step(far, target, Inf32) ≈ inv(element(8000)) rtol = 4eps(element)
+    averaged = TraceGeometry{element}(; distance = AveragedDistance, state_weight = 3 // 4)
+    @test GameTracing.opening_step(far, averaged, Inf32) ≈ inv(element(16000)) rtol = 4eps(element)
+    # Target times bound overflows, yet the step is a representable subnormal; and a target at floatmax has no finite inverse root.
+    sixteen = NormalFormGains((element[0 16; 0 0], element[0 0; 0 0]))
+    tiny = GameTracing.opening_step(LogitGame(sixteen, floatmax(element) / 4), target, Inf32)
+    @test 0 < tiny < floatmin(element)
+    @test tiny ≈ inv(4 * big(floatmax(element))) rtol = 1 // 10^4
+    narrow = NormalFormGains((element[0 1 // 1024; 0 0], element[0 0; 0 0]))
+    @test GameTracing.opening_step(LogitGame(narrow, floatmax(element)), target, Inf32) ≈ 1024 / big(floatmax(element)) rtol = 1 // 10^4
     # PathFollowing's tracer starts at the same step.
     tracer = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}()))
-    @test tracer.step_length == GameTracing.opening_step(game, element, Inf32)
+    @test tracer.step_length == GameTracing.opening_step(game, GameTracing.default_step_metric(element), Inf32)
 end
 
 @testset "a pass without gap_bound fails at the opening, naming the method to define" begin
@@ -504,7 +518,7 @@ end
     @test capped.step_length == element(0.01f0)
     # The payoff range's inverse overflows.
     flat = NormalFormGains((element[0, nextfloat(zero(element))],))
-    @test GameTracing.opening_step(LogitGame(flat, one(element)), element, Inf32) == 1
+    @test GameTracing.opening_step(LogitGame(flat, one(element)), GameTracing.default_step_metric(element), Inf32) == 1
     @test !is_error(logit_solve_lambda(flat, one(element); settings = PathFollowingSettings{element}()))
 end
 

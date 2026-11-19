@@ -329,7 +329,7 @@ end
         GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
         GameTracing.continuation_options(
             settings,
-            GameTracing.opening_step(game, Float32, settings.max_step),
+            GameTracing.opening_step(game, settings.step_metric, settings.max_step),
             settings.max_steps,
             TARGET_PRECISION,
         );
@@ -383,7 +383,7 @@ end
         problem,
         GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
         GameTracing.continuation_options(
-            settings, GameTracing.opening_step(LogitGame(GAME, TARGET_PRECISION), Float32, settings.max_step), settings.max_steps, TARGET_PRECISION,
+            settings, GameTracing.opening_step(LogitGame(GAME, TARGET_PRECISION), settings.step_metric, settings.max_step), settings.max_steps, TARGET_PRECISION,
         );
         verbosity = 0,
     )

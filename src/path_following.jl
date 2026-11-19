@@ -367,7 +367,7 @@ function path_init(
     return CommonSolve.init(
         PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
         path_algorithm(settings, gains);
-        first_step = opening_step(game, E, settings.max_step),
+        first_step = opening_step(game, settings.step_metric, settings.max_step),
     )
 end
 

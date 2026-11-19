@@ -2,7 +2,7 @@ using ErrorTypes: is_error, unwrap_error
 using Logging: Logging
 using LinearAlgebra: LAPACKException, SingularException
 
-const FAILURE_SETTINGS = BifurcationKitSettings{Float32}(first_step = 0.01f0, max_step = 0.05f0)
+const FAILURE_SETTINGS = BifurcationKitSettings{Float32}(max_step = 0.05f0)
 
 @testset "a non-finite response past a precision stops the trace short of it" begin
     result = trace_endpoint(
@@ -97,7 +97,6 @@ end
     result = trace_endpoint(
         LogitGame(FOLD_GAME, 2.0f0), 1, BifurcationKitSettings{Float32}(
             corrector = CorrectorSettings{Float32}(reach = 1.0f-6),
-            first_step = 0.05f0,
             max_step = 0.1f0,
         )
     )

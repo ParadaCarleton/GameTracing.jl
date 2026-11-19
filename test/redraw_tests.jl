@@ -3,7 +3,8 @@ using Logging: Debug
 using Random: RandomDevice, Xoshiro
 using Test: collect_test_logs
 
-const REDRAW_SETTINGS = BifurcationKitSettings{Float32}()
+# Steps of at most 0.05 put each swap point within 0.05 of the precision its fixture was built at.
+const REDRAW_SETTINGS = BifurcationKitSettings{Float32}(; max_step = 0.05f0)
 
 """The trace of `swap` that redraws its game from `before` to `after` at `swap.swap_precision`."""
 function swapped_trace(swap::MapSwap)::TraceResult{Float32}
@@ -322,7 +323,10 @@ end
 
 @testset "a redraw at the last step the budget allows fails NoConvergence there, with no segment after it" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    result = trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}(; max_steps = 3); redraw = EveryPointCopy(game))
+    # One step short of the steps the trace takes to reach the target.
+    needed = unwrap(trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}(); redraw = EveryPointCopy(game))).steps
+    @test needed >= 2
+    result = trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}(; max_steps = needed - 1); redraw = EveryPointCopy(game))
     @test is_error(result)
     @test unwrap_error(result).cause == GameTracing.NoConvergence
     @test unwrap_error(result).context.precision < TARGET_PRECISION

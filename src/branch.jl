@@ -9,6 +9,7 @@ slope `∂G/∂λ` into the three arrays, from one evaluation, and returns `noth
 trace's own residual and Jacobian (`BranchWorkspace`), so a pass allocates nothing of its own. A pass that needs work
 arrays of its own gets them from `pass_workspace`. `G` must be finite at `λ = 0`, where the flat logits are the only
 equilibrium. `target_precision` is the precision a trace ends at, non-negative and finite (`ArgumentError` otherwise).
+A traced pass also defines `logit_ranges` and `gap_bound`.
 """
 struct LogitGame{P, T <: Real}
     pass!::P
@@ -48,6 +49,28 @@ with two strategies has one logit; a player with one strategy has an empty range
 it. It has no default: a pass traced under either must define it.
 """
 function logit_ranges end
+
+"""
+    gap_bound(pass!)
+
+A bound on every payoff gap `|w|` of `pass!`'s game over the strategies the trace meets: the inverse of each trace's
+first step (`opening_step`). A normal-form game's is its payoff range (`payoff_range`). Every traced pass
+defines it; a pass without its own method throws an `ArgumentError` that names the method to define.
+"""
+function gap_bound(pass!::Any)::Union{}
+    throw(ArgumentError("$(typeof(pass!)) has no gap bound: define GameTracing.gap_bound(::$(typeof(pass!))), a bound on its payoff gaps"))
+end
+
+"""
+The first arclength step of a trace of `game` in `E`, at most `max_step`: `1 / gap_bound(game.pass!)`. Under
+`LogPrecisionTerm` a step `h` from `λ = 0` moves `λ` by at most `h`, so no logit `z = λ w` moves by more than one.
+Step control grows or shrinks it from there. A bound without a positive finite inverse (zero, non-finite or
+subnormal) steps one; a non-finite start fails anyway (`NotFinite`).
+"""
+function opening_step(game::LogitGame, ::Type{E}, max_step::Real)::E where {E <: Real}
+    step = inv(E(gap_bound(game.pass!)))
+    return min(step > 0 && isfinite(step) ? step : one(E), E(max_step))
+end
 
 """
 `ranges` (`logit_ranges`) when they tile the `width` logits in order, one range per player, else an `ArgumentError`. An

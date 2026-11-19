@@ -35,7 +35,7 @@ end
     result = trace_endpoint(
         LogitGame(GAME, TARGET_PRECISION),
         WIDTH,
-        BifurcationKitSettings{Float32}(max_steps = 1, first_step = 0.005f0, max_step = 0.01f0),
+        BifurcationKitSettings{Float32}(max_steps = 1, max_step = 0.01f0),
     )
     @test is_error(result)
     @test unwrap_error(result).cause in (GameTracing.NoConvergence, GameTracing.TraceStuck)
@@ -144,7 +144,7 @@ end
 @testset "BifurcationKit's smallest step is zero, so its halving ends only at a zero step" begin
     for element in (Float16, Float32, float(Int))
         settings = BifurcationKitSettings{element}()
-        @test GameTracing.continuation_options(settings, settings.first_step, 1, TARGET_PRECISION).dsmin ==
+        @test GameTracing.continuation_options(settings, one(element), 1, TARGET_PRECISION).dsmin ==
             zero(element)
     end
 end
@@ -172,7 +172,7 @@ end
     algorithm = GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH; orientation_check = true)
     @test algorithm.corrector === free
     @test algorithm._bothside && algorithm.orientation_check
-    options = GameTracing.continuation_options(settings, settings.first_step, 50, TARGET_PRECISION)
+    options = GameTracing.continuation_options(settings, one(element), 50, TARGET_PRECISION)
     @test options.detect_loop
     @test (options.max_steps, options.p_min, options.p_max) == (50, 0, TARGET_PRECISION)
 end
@@ -184,15 +184,15 @@ end
     end
     for continuation_options in ((; p_max = one(element) / 2), (; max_steps = 3), (; newton_options = BifurcationKit.NewtonPar()))
         settings = BifurcationKitSettings{element}(; continuation_options)
-        @test_throws ArgumentError GameTracing.continuation_options(settings, settings.first_step, 50, TARGET_PRECISION)
+        @test_throws ArgumentError GameTracing.continuation_options(settings, one(element), 50, TARGET_PRECISION)
     end
 end
 
 @testset "continuation options carry the settings and the trace's endpoint-only needs" begin
     rng = Random.Xoshiro(7)
     for _ in 1:20
+        step_length = rand(rng, Float32)
         settings = BifurcationKitSettings{Float32}(
-            first_step = rand(rng, Float32),
             max_step = 1 + rand(rng, Float32),
             aggressiveness = rand(rng, Float32),
             max_steps = rand(rng, 1:50),
@@ -203,13 +203,13 @@ end
         )
         options = GameTracing.continuation_options(
             settings,
-            settings.first_step,
+            step_length,
             settings.max_steps,
             TARGET_PRECISION,
         )
         @test (options.ds, options.dsmin, options.dsmax, options.a) ==
             (
-            settings.first_step,
+            step_length,
             zero(settings.max_step),
             settings.max_step,
             settings.aggressiveness,
@@ -329,7 +329,7 @@ end
         GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
         GameTracing.continuation_options(
             settings,
-            settings.first_step,
+            GameTracing.opening_step(game, Float32, settings.max_step),
             settings.max_steps,
             TARGET_PRECISION,
         );
@@ -382,7 +382,9 @@ end
     iterator = GameTracing.BifurcationKit.ContIterable(
         problem,
         GameTracing.palc_algorithm(settings, LogitGame(GAME, TARGET_PRECISION), WIDTH),
-        GameTracing.continuation_options(settings, settings.first_step, settings.max_steps, TARGET_PRECISION);
+        GameTracing.continuation_options(
+            settings, GameTracing.opening_step(LogitGame(GAME, TARGET_PRECISION), Float32, settings.max_step), settings.max_steps, TARGET_PRECISION,
+        );
         verbosity = 0,
     )
     state = GameTracing.opened_state(iterator, zeros(Float32, WIDTH + 1), Float32[0, 0, 1.0f-3])

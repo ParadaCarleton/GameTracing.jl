@@ -59,6 +59,8 @@ end
         @test against_first.response ≈ -against_second.response
         @test against_first.logit_slope ≈ against_second.logit_slope
     end
+    # NormalFormPass reads one logit per player, so a third action would be silently dropped.
+    @test_throws ArgumentError NormalFormPass((zeros(Float32, 3, 3), zeros(Float32, 3, 3)))
 end
 
 """Player `player`'s expected payoff of each of its strategies, summed over every pure profile."""
@@ -111,6 +113,22 @@ end
     pass = evaluated(gains, randn(rng, logit_count(gains)), 1)
     @test pass.response == payoff[2:end] .- first(payoff)
     @test iszero(pass.logit_slope)
+end
+
+@testset "a payoff span past the type throws where it is read, even after the payoffs change ($element)" for element in (Float32, widen(Float32))
+    large = floatmax(element) * (3 // 4)
+    # Whether the extremes belong to one player or to two, the range overflows.
+    across = NormalFormGains((element[large 0; 0 0], element[-large 0; 0 0]))
+    @test_throws ArgumentError GameTracing.payoff_range(across)
+    @test_throws ArgumentError GameTracing.gap_bound(across)
+    @test_throws ArgumentError GameTracing.gap_bound(NormalFormGains((element[large -large; 0 0], element[0 0; 0 0])))
+    # Payoffs mutated after construction are read afresh.
+    payoffs = (element[1 0; 0 0], element[0 0; 0 1])
+    mutated = NormalFormGains(payoffs)
+    payoffs[1][1, 1], payoffs[1][2, 2] = large, -large
+    @test_throws ArgumentError GameTracing.gap_bound(mutated)
+    # A non-finite payoff passes through: its trace fails NotFinite as a value.
+    @test isnan(GameTracing.payoff_range(NormalFormGains((element[NaN32 0; 0 0], element[-large 0; 0 0]))))
 end
 
 @testset "group_weights! takes adjacent axes as one, the first axis fastest ($element)" for element in (Float32, widen(Float32))

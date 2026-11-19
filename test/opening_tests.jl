@@ -147,8 +147,9 @@ end
                 keep_going = StopAtPrecision(zero(Float32)),
             )
         )
-        # A first step of length `first_step` in `log(1 + λ)` reaches at most `expm1(first_step)`.
-        @test 0 < failure.context.precision <= 2 * expm1(LOG_PRECISION_SETTINGS.first_step)
+        # A first step of length `h` in `log(1 + λ)` reaches at most `expm1(h)`.
+        opening = GameTracing.opening_step(LogitGame(gains, FAR_TARGET), Float32, LOG_PRECISION_SETTINGS.max_step)
+        @test 0 < failure.context.precision <= 2 * expm1(opening)
     end
 end
 
@@ -223,13 +224,19 @@ end
     @test exhausted_by_rounding(gains_wide, resting, settings_wide, FAR_TARGET)
     shifted = TraceFailure(resting.cause, (; resting.context..., stalled_iterate = [first(root) * (1 + sqrt(eps(wide))); root[2:end]]))
     @test !exhausted_by_rounding(gains_wide, shifted, settings_wide, FAR_TARGET)
-    # A Float64 record short of 50 meets the far-target check in its own settings.
+    # A Float64 record short of 50 meets the far-target check in its own settings. An accepted root is only within the
+    # corrector's tolerance, so three Newton steps at its pinned precision polish it to rounding.
     early = unwrap_error(
         trace_endpoint(LogitGame(gains_wide, wide(FAR_TARGET)), GameTracing.logit_count(gains_wide), settings_wide; keep_going = StopAtPrecision(wide(5))),
     ).context
+    game_wide = LogitGame(gains_wide, wide(FAR_TARGET))
+    residual = GameTracing.GameResidual(game_wide)
+    jacobian = GameTracing.GameJacobian(game_wide, GameTracing.BranchWorkspace(game_wide, [early.gaps; early.precision]))
+    newton = (point, _) -> point .- jacobian(point, early.precision) \ residual(point, early.precision)
+    polished = foldl(newton, 1:3; init = [early.gaps; early.precision])
     stopped_early = TraceFailure(
         GameTracing.PrecisionExhausted,
-        (; early..., stalled_iterate = [early.gaps; early.precision], stalled_pin = early.precision, stalled_arclength = zero(wide), correction = zero(wide)),
+        (; early..., gaps = polished[1:(end - 1)], stalled_iterate = polished, stalled_pin = early.precision, stalled_arclength = zero(wide), correction = zero(wide)),
     )
     @test early.precision < 50
     @test reached_or_rounded(gains_wide, stopped_early, settings_wide)
@@ -425,7 +432,9 @@ end
     # The noise starts at λ = 10, far under the predicted λ = tolerance / η = 1e3. Hashed noise from the flat start
     # stalled the opening at λ ≈ 4e-14, whatever η: zero-slope gains whose every evaluation jumps leave no first step.
     pass, target = NoisyFlatPass(1.0f-4, 1.0f-7, 10.0f0, UInt(salt)), 1.0f5
-    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000)
+    # The opening `1 / gap_bound` is 1e4 here, so an uncapped trace can leap to the target, where a corrector may stop
+    # on a lucky draw (issue #134). Steps of at most 0.3 in `log(1 + λ)` walk into the noise; 0.1 to 1 pass.
+    settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000, max_step = 0.3f0)
     tolerance = settings.corrector.logit_tolerance
     failure = unwrap_error(trace_endpoint(LogitGame(pass, target), 1, settings))
     @test failure.cause == GameTracing.PrecisionExhausted
@@ -495,7 +504,7 @@ end
     @test closed ./ last(closed) ≈ factored ./ last(factored) atol = 1.0f-5
 end
 
-# With noise 0.1 below precision 1e-3 the secant to a solve at first_step / 150 (the old opening) turned 1.16 rad from the branch, and
+# With noise 0.1 below precision 1e-3 the secant to a solve at a 150th of the first step (the old opening) turned 1.16 rad from the branch, and
 # BifurcationKit's turn test refused every step (TraceStuck, no accepted point), as on irv-extremism study draw 116.
 @testset "noise in the secant's solve does not stop the trace" begin
     clean = unwrap(trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, BifurcationKitSettings{Float32}()))

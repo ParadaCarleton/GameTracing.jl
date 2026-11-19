@@ -60,6 +60,8 @@ end
 
 # Each logit is one player's choice between two strategies.
 GameTracing.logit_ranges(pass::LinearGainPass)::Vector{UnitRange{Int}} = UnitRange.(eachindex(pass.stand_alone), eachindex(pass.stand_alone))
+# Each gain is its stand-alone term plus interaction weights on probabilities in (0, 1).
+GameTracing.gap_bound(pass::LinearGainPass)::Real = maximum(abs.(pass.stand_alone) .+ vec(sum(abs, pass.interaction; dims = 2)))
 
 function (pass::LinearGainPass)(
         gain::AbstractVector,
@@ -82,6 +84,7 @@ struct ThresholdPass{E <: Real}
 end
 
 GameTracing.logit_ranges(::ThresholdPass)::Tuple{UnitRange{Int}} = (1:1,)
+GameTracing.gap_bound(pass::ThresholdPass)::Real = abs(pass.amplitude)
 
 function (pass::ThresholdPass)(
         gain::AbstractVector,
@@ -104,6 +107,8 @@ struct DampedGainPass{E <: Real}
 end
 
 GameTracing.logit_ranges(pass::DampedGainPass)::Vector{UnitRange{Int}} = GameTracing.logit_ranges(pass.pass)
+# The damping is at most one.
+GameTracing.gap_bound(pass::DampedGainPass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::DampedGainPass)(
         gain::AbstractVector,
@@ -124,6 +129,8 @@ end
 struct PrecisionGainPass end
 
 GameTracing.logit_ranges(::PrecisionGainPass)::Tuple{UnitRange{Int}} = (1:1,)
+# The gain `λ` reaches one at the opening step this bound sets.
+GameTracing.gap_bound(::PrecisionGainPass)::Real = 1
 
 function (::PrecisionGainPass)(
         gain::AbstractVector,
@@ -151,6 +158,7 @@ struct NoisyFlatPass{E <: Real}
 end
 
 GameTracing.logit_ranges(::NoisyFlatPass)::Tuple{UnitRange{Int}} = (1:1,)
+GameTracing.gap_bound(pass::NoisyFlatPass)::Real = abs(pass.level) + abs(pass.noise)
 
 function (pass::NoisyFlatPass)(
         gain::AbstractVector,
@@ -173,6 +181,7 @@ struct PoisonedPass{P, E <: Real}
 end
 
 GameTracing.logit_ranges(pass::PoisonedPass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
+GameTracing.gap_bound(pass::PoisonedPass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::PoisonedPass)(
         gain::AbstractVector,
@@ -196,6 +205,7 @@ struct NaNSlopePass{P}
 end
 
 GameTracing.logit_ranges(pass::NaNSlopePass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
+GameTracing.gap_bound(pass::NaNSlopePass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::NaNSlopePass)(
         gain::AbstractVector,
@@ -215,6 +225,7 @@ struct ThrowingPass{P}
 end
 
 GameTracing.logit_ranges(pass::ThrowingPass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
+GameTracing.gap_bound(pass::ThrowingPass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::ThrowingPass)(
         gain::AbstractVector,
@@ -267,16 +278,34 @@ function picard_equilibrium(
     return logits
 end
 
+"""`pass`'s game under a type that defines `logit_ranges` but no `gap_bound`, as a pass written before it existed."""
+struct UnboundedPass{P}
+    pass::P
+end
+
+(wrapper::UnboundedPass)(arguments::Any...)::Nothing = wrapper.pass(arguments...)
+GameTracing.logit_ranges(wrapper::UnboundedPass)::Any = GameTracing.logit_ranges(wrapper.pass)
+
 """
 Payoff gains of a normal-form game in which every player has two actions: `G_p = U_p(1, π) - U_p(2, π)`,
 each rival `q` playing its first action with probability `logistic(z_q)`. `payoffs[p][profile]` is player `p`'s payoff.
+Payoffs with another action count throw an `ArgumentError`.
 """
 struct NormalFormPass{N, A <: AbstractArray{<:Real, N}}
     payoffs::NTuple{N, A}
+
+    function NormalFormPass(payoffs::NTuple{N, A})::NormalFormPass{N, A} where {N, A <: AbstractArray{<:Real, N}}
+        if any(table -> any(!=(2), size(table)), payoffs)
+            throw(ArgumentError("NormalFormPass takes two actions per player; got sizes $(size.(payoffs))"))
+        end
+        return new{N, A}(payoffs)
+    end
 end
 
 # Each player has two actions, so one logit.
 GameTracing.logit_ranges(pass::NormalFormPass)::Vector{UnitRange{Int}} = UnitRange.(eachindex(pass.payoffs), eachindex(pass.payoffs))
+# A gap is one payoff less another.
+GameTracing.gap_bound(pass::NormalFormPass)::Real = maximum(maximum, pass.payoffs) - minimum(minimum, pass.payoffs)
 
 """The probability that a player whose first action has probability `first_choice` plays `action`."""
 function action_probability(first_choice::E, action::Integer)::E where {E <: Real}
@@ -676,6 +705,7 @@ struct WindowNoisePass{P, E <: Real}
 end
 
 GameTracing.logit_ranges(pass::WindowNoisePass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
+GameTracing.gap_bound(pass::WindowNoisePass)::Real = GameTracing.gap_bound(pass.pass) + abs(pass.noise)
 
 function (pass::WindowNoisePass)(
         gain::AbstractVector,

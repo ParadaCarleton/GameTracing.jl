@@ -26,24 +26,20 @@ const ProfileResult{E, N} = Result{QREProfile{E, N}, TraceFailure}
 const BranchResult{E, N} = Result{Vector{QREProfile{E, N}}, TraceFailure}
 
 """
-    gambit_settings(first_step, max_accel)
+    gambit_settings(E, max_accel)
 
-`BifurcationKitSettings` for pygambit's step arguments: `first_step` is the first arclength step and `max_accel` caps each
-step's growth (`StepControl`'s `max_step_growth`, and `aggressiveness = max_accel - 1`). BifurcationKit's growth limit
-must exceed 1, so at `max_accel = 1` step control only refuses steps. Zero aggressiveness then holds an accepted step's
-length, where Gambit also shrinks it after a poor corrector.
+`BifurcationKitSettings` in `E` for pygambit's `max_accel`, which caps each step's growth (`StepControl`'s
+`max_step_growth`, and `aggressiveness = max_accel - 1`). BifurcationKit's growth limit must exceed 1, so at
+`max_accel = 1` step control only refuses steps. Zero aggressiveness then holds an accepted step's length, where Gambit
+also shrinks it after a poor corrector. The first step comes from the game (`opening_step`), as in `PathFollowingSettings`.
 The trace steps in `default_step_metric`, which `PathFollowingSettings` shares.
 """
-function gambit_settings(first_step::E, max_accel::Real)::BifurcationKitSettings{E} where {E <: Real}
-    if !(first_step > 0)
-        throw(ArgumentError("first_step must be positive; got $first_step"))
-    end
+function gambit_settings(::Type{E}, max_accel::Real)::BifurcationKitSettings{E} where {E <: Real}
     if !(max_accel >= 1)
         throw(ArgumentError("max_accel must be at least 1; got $max_accel"))
     end
     growth = E(max_accel)
     return BifurcationKitSettings{E}(;
-        first_step,
         aggressiveness = growth - one(E),
         step_metric = default_step_metric(E),
         step_control = StepControl{E}(; max_step_growth = growth > 1 ? growth : nothing),
@@ -82,9 +78,29 @@ function require_payoff_type(gains::NormalFormGains, ::EngineSettings{E})::Nothi
     return nothing
 end
 
-"""The largest payoff of `gains` less its smallest: Gambit's scale for `maxregret`."""
-function payoff_range(gains::NormalFormGains{N, A})::eltype(A) where {N, A}
-    return maximum(maximum, gains.payoffs) - minimum(minimum, gains.payoffs)
+"""
+`high - low` in floating point, so integer payoffs cannot wrap: `Int8` -128 and 127 give 255. Finite extremes whose
+difference overflows throw an `ArgumentError`. A non-finite extreme passes through, and its trace fails `NotFinite`.
+"""
+function payoff_span(low::E, high::E)::float(E) where {E <: Real}
+    span = float(high) - float(low)
+    if isfinite(low) && isfinite(high) && !isfinite(span)
+        throw(ArgumentError("the payoffs from $low to $high span past $(float(E)); use a wider element type"))
+    end
+    return span
+end
+
+"""The largest payoff of `gains` less its smallest, over every player (`payoff_span`): Gambit's scale for `maxregret`."""
+function payoff_range(gains::NormalFormGains{N, A})::float(eltype(A)) where {N, A}
+    return payoff_span(minimum(minimum, gains.payoffs), maximum(maximum, gains.payoffs))
+end
+
+"""
+A gap is one payoff less another, so the payoff range bounds it. A constant added to one player's payoffs widens the
+range, though the gaps stay; a per-player span is tighter but moves every step sequence (issue #136).
+"""
+function gap_bound(gains::NormalFormGains{N, A})::float(eltype(A)) where {N, A}
+    return payoff_range(gains)
 end
 
 """
@@ -121,21 +137,21 @@ function lambda_logits(gains::NormalFormGains, lam::E, settings::BifurcationKitS
 end
 
 """
-    logit_solve_lambda(gains, lam; first_step, max_accel, settings)
+    logit_solve_lambda(gains, lam; max_accel, settings)
 
 pygambit's `logit_solve_lambda`: the `LogitQREProfile` on the principal branch of the normal-form game `gains`
 (`NormalFormGains`) at each precision in `lam`, a number or a vector, in `lam`'s order, or the first trace's failure.
-`first_step` and `max_accel` set the trace's steps (`gambit_settings`); `settings`, an `EngineSettings`, replaces
-them whole. `PathFollowingSettings` trace once, their steps stopping at each precision in turn. Every precision must
-be non-negative and finite in the trace's element type (`ArgumentError` otherwise). Profiles take `float` of the payoffs' element type (Float64 for integer payoffs), and `settings` must share it
-(`ArgumentError` otherwise).
+`max_accel` caps the trace's step growth (`gambit_settings`); `settings`, an `EngineSettings`, replaces it. pygambit's
+`first_step` has no counterpart: every trace's first step comes from the game (`opening_step`).
+`PathFollowingSettings` trace once, their steps stopping at each precision in turn. Every precision must be
+non-negative and finite in the trace's element type (`ArgumentError` otherwise). Profiles take `float` of the payoffs'
+element type (Float64 for integer payoffs), and `settings` must share it (`ArgumentError` otherwise).
 """
 function logit_solve_lambda(
         gains::NormalFormGains{N},
         lam::AbstractVector{<:Real};
-        first_step::Real = GAMBIT_FIRST_STEP,
         max_accel::Real = GAMBIT_MAX_ACCEL,
-        settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
+        settings::EngineSettings{E} = gambit_settings(float(eltype(gains)), max_accel),
     )::BranchResult{E, N} where {N, E <: Real}
     require_payoff_type(gains, settings)
     precisions = E.(lam)
@@ -183,10 +199,9 @@ The accepted points of `logit_solve_branch`'s trace of `gains`, as precisions an
 """
 function settled_points(
         gains::NormalFormGains;
-        first_step::Real = GAMBIT_FIRST_STEP,
         max_accel::Real = GAMBIT_MAX_ACCEL,
         maximum_precision::Real = 1.0f6,
-        settings::EngineSettings{E} = gambit_settings(float(eltype(gains))(first_step), max_accel),
+        settings::EngineSettings{E} = gambit_settings(float(eltype(gains)), max_accel),
         maxregret::Real = sqrt(eps(element_type(settings))),
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
     if !(maxregret > 0)
@@ -224,12 +239,12 @@ function engine_points(
 end
 
 """
-    logit_solve_branch(gains; maxregret, first_step, max_accel, maximum_precision, settings)
+    logit_solve_branch(gains; maxregret, max_accel, maximum_precision, settings)
 
 pygambit's `logit_solve_branch`: every accepted point of the principal branch of the normal-form game `gains`, from
 the first step to the first point where no player's regret passes `maxregret` times the payoff range. The trace runs
 to `maximum_precision` at most, and fails `NoConvergence` with reason `:maximum_precision` if it ends there unsettled;
-any other failure of the trace is returned as is. `maxregret` defaults to `sqrt(eps(E))` in the trace's element type `E`. `first_step`, `max_accel` and `settings` are `logit_solve_lambda`'s.
+any other failure of the trace is returned as is. `maxregret` defaults to `sqrt(eps(E))` in the trace's element type `E`. `max_accel` and `settings` are `logit_solve_lambda`'s.
 """
 function logit_solve_branch(gains::NormalFormGains{N}; keywords...)::BranchResult{<:Real, N} where {N}
     return branch_profiles(gains, settled_points(gains; keywords...))
@@ -244,7 +259,7 @@ function branch_profiles(gains::NormalFormGains{N}, points::Result{BranchPoints{
 end
 
 """
-    logit_solve(gains; maxregret, first_step, max_accel, maximum_precision, settings)
+    logit_solve(gains; maxregret, max_accel, maximum_precision, settings)
 
 pygambit's `logit_solve`: the last point of `logit_solve_branch`, an approximate Nash equilibrium of the normal-form
 game `gains` at which no player's regret passes `maxregret` times the payoff range. Only that point's profile is built.

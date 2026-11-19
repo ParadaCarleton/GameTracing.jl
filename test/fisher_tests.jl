@@ -46,6 +46,9 @@ end
 """A one-logit pass with zero gain and no `logit_ranges`."""
 struct RangelessPass end
 
+# A zero bound: the opening falls back to one (`opening_step`).
+GameTracing.gap_bound(::RangelessPass)::Real = 0
+
 function (::RangelessPass)(
         gain::AbstractVector,
         gain_slope::AbstractMatrix,

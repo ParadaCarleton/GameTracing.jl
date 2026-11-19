@@ -49,31 +49,82 @@ function folds_before(lambdas::AbstractVector{E}, target::Real)::Bool where {E <
     return any(splat(>), zip(rising, Iterators.drop(rising, 1)))
 end
 
-"""The `λ` of each point of `pygambit.qre.logit_solve_branch` on `payoffs`, in order, in `E`."""
-function gambit_branch_lambdas(payoffs::Tuple, ::Type{E})::Vector{E} where {E <: Real}
+"""
+Gambit's step settings, coarse to fine (`first_crossing_steps`): its defaults, then each a tenth of the first step and
+of the growth past one. Near a fold, each rung's steps are about a tenth of the last one's.
+"""
+const GAMBIT_STEP_LADDER = (
+    (; first_step = 3 / float(100), max_accel = 11 / float(10)),
+    (; first_step = 3 / float(1000), max_accel = 101 / float(100)),
+    (; first_step = 3 / float(10000), max_accel = 1001 / float(1000)),
+)
+
+"""
+The `λ` of each point of `pygambit.qre.logit_solve_branch` on `payoffs` at `steps` (a `GAMBIT_STEP_LADDER` rung) to
+regret `maxregret` of the payoff range, in order, as Gambit's doubles.
+"""
+function gambit_regret_lambdas(payoffs::Tuple, steps::NamedTuple, maxregret::Real)::Vector{<:Real}
     gambit, numpy = pyimport("pygambit"), pyimport("numpy")
     game = gambit.Game.from_arrays((numpy.asarray(float.(table)) for table in payoffs)...)
-    # Regret 1e-12 of the payoff range ends the branch far past any precision these tests ask for.
-    return [pyconvert(E, point.lam) for point in gambit.qre.logit_solve_branch(game; maxregret = inv(float(10^12)))]
+    return [pyconvert(widen(Float32), point.lam) for point in gambit.qre.logit_solve_branch(game; maxregret = float(maxregret), steps...)]
 end
 
 """
-Whether Gambit's logit branch of `payoffs` folds back in `λ` before it first reaches `precision` (`folds_before`).
-`logit_solve_lambda` takes the same steps and finds a crossing only between consecutive points, so a step that rounds
-such a fold can hide the first crossing.
+The `λ` of each point of Gambit's branch of `payoffs` at `steps` (`gambit_regret_lambdas`), through the first point at
+or past `target`. They stay Gambit's doubles: rounding to a narrower target's type could lift a point onto `target`. The
+regret bound falls from `1e-3` by factors of `1000` until the branch reaches `target`: a far bound can take a million
+points. A branch that ends before `target` at `1e-12` has settled at a Nash equilibrium to that bound, and all its
+points come back. Past a strict equilibrium the branch converges without folding; past a degenerate one it is taken to
+stay. A single point is a branch Gambit ended at its start, where the uniform profile has no regret.
+"""
+function gambit_branch_lambdas(payoffs::Tuple, steps::NamedTuple, target::Real)::Vector{<:Real}
+    lambdas = widen(Float32)[]
+    for exponent in 3:3:12
+        lambdas = gambit_regret_lambdas(payoffs, steps, inv(float(10^exponent)))
+        reached = findfirst(>=(target), lambdas)
+        if !isnothing(reached)
+            return lambdas[1:reached]
+        end
+    end
+    return lambdas
+end
+
+"""
+Whether Gambit's logit branch of `payoffs` at its default steps folds back in `λ` before it first reaches `precision`
+(`folds_before`). `logit_solve_lambda` takes the same steps and finds a crossing only between consecutive points, so a
+step that rounds such a fold can hide the first crossing.
 """
 function gambit_folds_before(payoffs::Tuple, precision::Real)::Bool
-    return folds_before(gambit_branch_lambdas(payoffs, typeof(float(precision))), precision)
+    return folds_before(gambit_branch_lambdas(payoffs, first(GAMBIT_STEP_LADDER), precision), precision)
 end
 
 """
-Gambit's logit QRE of the normal-form game `payoffs` at `precision`, from `pygambit.qre.logit_solve_lambda`:
-`(; precision, strategies)`, each player's mixed strategy in `precision`'s type.
+The coarsest rung of `GAMBIT_STEP_LADDER` whose branch of `payoffs` reaches `precision` before it folds back
+(`folds_before`). That rung's `logit_solve_lambda` returns the first crossing, except past a fold too sharp to show
+between two points. Where every rung folds before `precision`, the fold peaks below it, and the finest rung stands.
+The finest rung can still round a fold that peaks just past `precision`; near a fold its steps are a hundredth of
+Gambit's defaults.
+"""
+function first_crossing_steps(payoffs::Tuple, precision::Real)::NamedTuple
+    for steps in GAMBIT_STEP_LADDER
+        if !folds_before(gambit_branch_lambdas(payoffs, steps, precision), precision)
+            return steps
+        end
+    end
+    return last(GAMBIT_STEP_LADDER)
+end
+
+"""
+Gambit's logit QRE of the normal-form game `payoffs` at the first crossing of `precision`, from
+`pygambit.qre.logit_solve_lambda`: `(; precision, strategies)`, each player's mixed strategy in `precision`'s type.
+Gambit finds a crossing only between consecutive points, so a step that rounds a fold peaking past `precision` hides the
+first crossing (`FOLD_PAST_ONE_GAME`). The steps come from `first_crossing_steps`.
 """
 function gambit_strategies(payoffs::Tuple, precision::E)::NamedTuple where {E <: Real}
     gambit, numpy = pyimport("pygambit"), pyimport("numpy")
     game = gambit.Game.from_arrays((numpy.asarray(float.(table)) for table in payoffs)...)
-    profile = first(gambit.qre.logit_solve_lambda(game; lam = [float(precision)]))
+    steps = first_crossing_steps(payoffs, precision)
+    profile = first(gambit.qre.logit_solve_lambda(game; lam = [float(precision)], steps...))
     strategies = Tuple([pyconvert(E, profile.profile[strategy]) for strategy in player.strategies] for player in game.players)
     return (; precision = pyconvert(E, profile.lam), strategies)
 end

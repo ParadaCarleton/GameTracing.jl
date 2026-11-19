@@ -38,6 +38,22 @@ const FOLDED_GAMBIT_GAME = (
     [-503395 -5503689; -4888492 2357340;;; -1217139 -3504025; -3129362 207368] .// 10^6,
 )
 
+# Three players of 2, 3 and 2 actions (seed 0x7d771e5515778fcd of the logit_solve_lambda agreement testset, rounded to
+# 1e-6). Its principal branch folds just past precision 1. Gambit's default steps round that fold, from 0.9992 to
+# 0.9743, so `logit_solve_lambda` at precision 1 returns a later crossing (CI run 44506024991).
+const FOLD_PAST_ONE_GAME = (
+    [1020534 -4195093 -3847093; 2187863 -4056740 3647491;;; -935116 1005626 -1354133; -4185190 3055487 -5356626] .// 10^6,
+    [6041366 -705927 90218; 2650821 3632445 4345817;;; 3410121 -515812 2551517; -49347 -3885990 1378177] .// 10^6,
+    [-2799332 3279993 -411480; -2686956 -3254749 1100361;;; -6313397 5003338 2269424; -1033173 -1135836 -1219361] .// 10^6,
+)
+
+# Two players, three actions each (a random draw, rounded to 1e-6). Gambit's branch takes 926199 points and 172 s on
+# macdev to reach regret 1e-12, near λ 3.5e10; 41 points reach precision 4.
+const SLOW_REGRET_GAME = (
+    [-5025192 -3796184 96451; -2017419 -290936 1101438; -1299614 522459 -2982700] .// 10^6,
+    [2802902 -2338006 -1788818; 1527677 -2060137 -303028; -2687319 805313 2589683] .// 10^6,
+)
+
 # Four players, two actions each (seed 0x2c06c04a5d81b3dc of the random-game testset, rounded to 1e-6). At precision
 # about 3.05, Gambit leaves its principal branch, ending at first choices (0.16, 0.36, 0.08, 0.14) (CI run 41370200196).
 const GAMBIT_LEAVES_GAME = (

@@ -1,6 +1,6 @@
 using BifurcationKit: BifurcationKit
 using ErrorTypes: Err, Ok
-using LinearAlgebra: LU
+using LinearAlgebra: LU, issuccess, lu!
 """
     EngineSettings{E}
 
@@ -415,9 +415,9 @@ Follow `game`'s branch of `width` logits from the flat start (zero logits, the o
 `keep_going(logits, λ)` runs at each accepted point before the next step's corrector, and `false` stops the trace.
 `accept_corrected(logits, λ, converged)` runs as each corrector ends, and `false` refuses a converged point, which
 halves the step. A trace that stops short fails with `NoConvergence` when it spends `settings.max_steps` and `TraceStuck` otherwise (a step below the float type's resolution, an unchanged accepted point, or a
-refusal); a non-finite start or a broken linear solve fails `NotFinite` or `Singular`. A zero target returns the
-flat start, with no step. `context` rides on
-every failure.
+refusal); a non-finite start or a broken linear solve fails `NotFinite` or `Singular`. The point at the target passes
+one more Newton correction there or fails (`verified_endpoint`). A zero target returns the flat start, with no step.
+`context` rides on every failure.
 
 `redraw(logits, λ, shift)` runs at each accepted point short of the target precision that `keep_going` passes, and returns
 `nothing`, a new game of the same type and target precision, or the `ShiftedGame` that `shift(game)` (`RootShift`)
@@ -800,7 +800,7 @@ The `TraceResult` (`Ok(Traced)` or `Err(TraceFailure)`) of a trace whose `progre
 whose `outcome` (`guarded_trace`) is the last corrector's step length, its `exhausted` record, or the BifurcationKit
 exception that ended it. A corrector at rounding noise fails `PrecisionExhausted`. Its context carries the stalled Newton
 iterate `stalled_iterate = [w; λ]`, its precision `lambda`, its last `correction` in logits, and its step's
-`stalled_pin` and `stalled_arclength`.
+`stalled_pin` and `stalled_arclength`. A point at the target passes one more Newton correction (`verified_endpoint`).
 """
 function reached_state(
         progress::TraceProgress{E},
@@ -821,7 +821,7 @@ function reached_state(
         )
     end
     if isnothing(outcome.exception) && progress.precision == E(target_precision)
-        return Ok(Traced(progress.precision .* progress.gaps, progress.steps, E(outcome.logit_accuracy)))
+        return verified_endpoint(progress, outcome, game, settings, context)
     end
     # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move, a loop of the branch,
     # spent steps, or else `keep_going` or a refusal (`STOP_CAUSES`).
@@ -847,6 +847,48 @@ function reached_state(
             stopped_context(progress, outcome, context),
         )
     )
+end
+
+"""
+    verified_endpoint(progress, outcome, game, settings, context)
+
+The `TraceResult` at `progress`, the last accepted point, on the target. One more iteration of the corrector that
+landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's method with `λ` pinned at the bound
+(`_corrector_at_bound`), so the check is that step: a dense LU solve of `game`'s branch Jacobian, as `DefaultLS`. That
+corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
+
+An exact root needs no correction, as BifurcationKit's own test passes it. A singular Jacobian fails `Singular`. An
+unsettled correction (as `settled`: past `logit_tolerance` beyond `settle_ulps` ulps of each logit; NaN included) fails
+`PrecisionExhausted`. Its `correction` runs from the endpoint (`gaps`, `precision`) to `stalled_iterate`, a plain
+Newton iterate at pin `lambda`, arclength zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the
+correction.
+"""
+function verified_endpoint(
+        progress::TraceProgress{E},
+        outcome::NamedTuple,
+        game::LogitGame,
+        settings::BifurcationKitSettings{E},
+        context::NamedTuple,
+    )::TraceResult{E} where {E <: Real}
+    (; gaps, precision) = progress
+    point = [gaps; precision]
+    system = branch_system!(BranchWorkspace(game, point), game, point, precision)
+    if all(iszero, system.residual)
+        return Ok(Traced(logits_at(point), progress.steps, E(outcome.logit_accuracy)))
+    end
+    factorization = lu!(system.jacobian; check = false)
+    if !issuccess(factorization)
+        return Err(TraceFailure(Singular, stopped_context(progress, outcome, context)))
+    end
+    corrected = point .- factorization \ system.residual
+    (; logit_tolerance, settle_ulps) = settings.corrector
+    correction, excess = logit_corrections(point, corrected, settle_ulps * eps(E), one(E))
+    if !(excess <= logit_tolerance)
+        @debug "trace stopped" _group = :trace reason = :unsettled_endpoint correction
+        stall = (; lambda = precision, correction, stalled_iterate = corrected, stalled_pin = precision, stalled_arclength = zero(E))
+        return Err(TraceFailure(PrecisionExhausted, stopped_context(progress, outcome, failure_context(context, stall))))
+    end
+    return Ok(Traced(logits_at(point), progress.steps, max(E(outcome.logit_accuracy), correction)))
 end
 
 # The cause a trace that stops short for each reason fails with.

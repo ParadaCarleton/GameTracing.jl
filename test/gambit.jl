@@ -60,19 +60,27 @@ const GAMBIT_STEP_LADDER = (
 )
 
 """
-The `λ` of each point of `pygambit.qre.logit_solve_branch` on `payoffs` at `steps` (a `GAMBIT_STEP_LADDER` rung), in
-order, in `E`, through the first point at or past `target`. The branch ends at a regret bound, which falls from `1e-3`
-by factors of `1000` until the branch reaches `target`: a far bound can take a million points. A branch that ends
-before `target` at `1e-12` has settled at a Nash equilibrium to `1e-12` of the payoff range, and all its points come
-back. Past a strict equilibrium the branch converges without folding; past a degenerate one it is taken to stay. A
-single point is a branch Gambit ended at its start, where the uniform profile has no regret.
+The `λ` of each point of `pygambit.qre.logit_solve_branch` on `payoffs` at `steps` (a `GAMBIT_STEP_LADDER` rung) to
+regret `maxregret` of the payoff range, in order, as Gambit's doubles.
 """
-function gambit_branch_lambdas(payoffs::Tuple, ::Type{E}, steps::NamedTuple, target::Real)::Vector{E} where {E <: Real}
+function gambit_regret_lambdas(payoffs::Tuple, steps::NamedTuple, maxregret::Real)::Vector{<:Real}
     gambit, numpy = pyimport("pygambit"), pyimport("numpy")
     game = gambit.Game.from_arrays((numpy.asarray(float.(table)) for table in payoffs)...)
-    lambdas = E[]
+    return [pyconvert(widen(Float32), point.lam) for point in gambit.qre.logit_solve_branch(game; maxregret = float(maxregret), steps...)]
+end
+
+"""
+The `λ` of each point of Gambit's branch of `payoffs` at `steps` (`gambit_regret_lambdas`), through the first point at
+or past `target`. They stay Gambit's doubles: rounding to a narrower target's type could lift a point onto `target`. The
+regret bound falls from `1e-3` by factors of `1000` until the branch reaches `target`: a far bound can take a million
+points. A branch that ends before `target` at `1e-12` has settled at a Nash equilibrium to that bound, and all its
+points come back. Past a strict equilibrium the branch converges without folding; past a degenerate one it is taken to
+stay. A single point is a branch Gambit ended at its start, where the uniform profile has no regret.
+"""
+function gambit_branch_lambdas(payoffs::Tuple, steps::NamedTuple, target::Real)::Vector{<:Real}
+    lambdas = widen(Float32)[]
     for exponent in 3:3:12
-        lambdas = [pyconvert(E, point.lam) for point in gambit.qre.logit_solve_branch(game; maxregret = inv(float(10^exponent)), steps...)]
+        lambdas = gambit_regret_lambdas(payoffs, steps, inv(float(10^exponent)))
         reached = findfirst(>=(target), lambdas)
         if !isnothing(reached)
             return lambdas[1:reached]
@@ -87,7 +95,7 @@ Whether Gambit's logit branch of `payoffs` at its default steps folds back in `�
 step that rounds such a fold can hide the first crossing.
 """
 function gambit_folds_before(payoffs::Tuple, precision::Real)::Bool
-    return folds_before(gambit_branch_lambdas(payoffs, typeof(float(precision)), first(GAMBIT_STEP_LADDER), precision), precision)
+    return folds_before(gambit_branch_lambdas(payoffs, first(GAMBIT_STEP_LADDER), precision), precision)
 end
 
 """
@@ -99,7 +107,7 @@ Gambit's defaults.
 """
 function first_crossing_steps(payoffs::Tuple, precision::Real)::NamedTuple
     for steps in GAMBIT_STEP_LADDER
-        if !folds_before(gambit_branch_lambdas(payoffs, typeof(float(precision)), steps, precision), precision)
+        if !folds_before(gambit_branch_lambdas(payoffs, steps, precision), precision)
             return steps
         end
     end

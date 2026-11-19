@@ -525,13 +525,17 @@ end
 end
 
 @testset "Gambit's branch points stop at the first at or past the target, or where the branch settles" begin
-    lambdas = gambit_branch_lambdas(FOLD_PAST_ONE_GAME, Float32, first(GAMBIT_STEP_LADDER), 4)
+    steps = first(GAMBIT_STEP_LADDER)
+    lambdas = gambit_branch_lambdas(FOLD_PAST_ONE_GAME, steps, 4)
     @test last(lambdas) >= 4 > maximum(lambdas[1:(end - 1)])
+    # Gambit's doubles, which no rounding lifts onto a Float32 target.
+    @test eltype(lambdas) == widen(Float32)
     # Matching pennies' uniform profile has no regret, so Gambit ends its branch at the start.
-    @test gambit_branch_lambdas(LOGITNASH_GAMES.matching_pennies, Float32, first(GAMBIT_STEP_LADDER), 4) == [0]
-    # The prisoners' dilemma settles to regret 1e-12 of its payoff range far below precision 1e6.
-    settled = gambit_branch_lambdas(LOGITNASH_GAMES.prisoners_dilemma, Float32, first(GAMBIT_STEP_LADDER), 10^6)
-    @test 1 < length(settled) && last(settled) < 10^6
+    @test gambit_branch_lambdas(LOGITNASH_GAMES.matching_pennies, steps, 4) == [0]
+    # The prisoners' dilemma settles to regret 1e-12 far below precision 1e6, past where regret 1e-3 ends.
+    settled = gambit_branch_lambdas(LOGITNASH_GAMES.prisoners_dilemma, steps, 10^6)
+    @test settled == gambit_regret_lambdas(LOGITNASH_GAMES.prisoners_dilemma, steps, inv(float(10^12)))
+    @test last(gambit_regret_lambdas(LOGITNASH_GAMES.prisoners_dilemma, steps, inv(float(10^3)))) < last(settled) < 10^6
     gambit_strategies(FOLD_PAST_ONE_GAME, 4.0f0)
     # 0.44 s on macdev; the branch to regret 1e-12 took 172 s.
     @test (@elapsed gambit_strategies(SLOW_REGRET_GAME, 4.0f0)) < 20

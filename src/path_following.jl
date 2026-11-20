@@ -200,20 +200,20 @@ end
 """
     QRESystem(game, workspace)
 
-`game`'s branch as PathFollowing's `system!` over points `[w; λ]`: `branch_system!` without
-its pin row, written into `workspace` first.
+`game`'s branch as PathFollowing's `system!!` over points `[w; λ]`: `branch_system!` without
+its pin row, written into `workspace` first, then copied into the tracer's arrays in place.
 """
 struct QRESystem{G <: LogitGame, W <: BranchWorkspace}
     game::G
     workspace::W
 end
 
-function (system::QRESystem)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+function (system::QRESystem)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     filled = branch_system!(system.workspace, system.game, point, last(point))
     width = length(residual)
     residual .= @view filled.residual[1:width]
     jacobian .= @view filled.jacobian[1:width, :]
-    return nothing
+    return (residual, jacobian)
 end
 
 """
@@ -399,33 +399,34 @@ function stopped_context(
 end
 
 """
-One accepted step of `tracer` (PathFollowing's `AcceptedStep`) that stops at precision `precision` (PathFollowing's
-`Bound`), or the `TraceFailure` that ends the trace: `NoConvergence` once it has taken `max_steps`, else `TraceStuck`
-for PathFollowing's `Unresolved` or `TooManyRefusals`. `context` rides on the failure.
+`tracer` advanced by one accepted step that stops at precision `precision` (PathFollowing's `step!!` toward a `Bound`),
+and the step (PathFollowing's `AcceptedStep`), or the `TraceFailure` that ends the trace: `NoConvergence` once it has
+taken `max_steps`, else `TraceStuck` for PathFollowing's `Unresolved` or `TooManyRefusals`. `context` rides on the
+failure. Use only the returned tracer.
 """
-function path_step!(
-        tracer::PathFollowing.Tracer{E},
+function path_step!!(
+        tracer::T,
         precision::E,
         max_steps::Integer,
         context::NamedTuple,
-    )::Result{PathFollowing.AcceptedStep{E}, TraceFailure} where {E <: Real}
+    )::Tuple{T, Result{PathFollowing.AcceptedStep{E}, TraceFailure}} where {E <: Real, T <: PathFollowing.Tracer{E}}
     if tracer.steps >= max_steps
-        return Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
+        return tracer, Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
     end
-    stepped = CommonSolve.step!(tracer, PathFollowing.Bound(length(tracer.point), precision))
+    tracer, stepped = PathFollowing.step!!(tracer, PathFollowing.Bound(length(tracer.point), precision))
     if is_error(stepped)
         failure = unwrap_error(stepped)
         reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
         details = (; failure.last_refusal, failure.step_length, failure.refusals)
-        return Err(TraceFailure(TraceStuck, stopped_context(reason, tracer.point, tracer.steps, context, details)))
+        return tracer, Err(TraceFailure(TraceStuck, stopped_context(reason, tracer.point, tracer.steps, context, details)))
     end
     @debug "trace point" _group = :trace step = tracer.steps precision = last(tracer.point) step_length = unwrap(stepped).step_length
-    return Ok(unwrap(stepped))
+    return tracer, Ok(unwrap(stepped))
 end
 
 """
 `settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
-at most `tolerance`. The steps stop at `maximum_precision` (`path_step!`), where the trace settles or fails
+at most `tolerance`. The steps stop at `maximum_precision` (`path_step!!`), where the trace settles or fails
 `NoConvergence` with reason `:maximum_precision`.
 """
 function engine_points(
@@ -451,7 +452,7 @@ function recorded_points(
         max_steps::Integer,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    stepped = path_step!(tracer, maximum_precision, max_steps, context)
+    tracer, stepped = path_step!!(tracer, maximum_precision, max_steps, context)
     while !is_error(stepped)
         point = tracer.point
         if !recorder(logits_at(point), last(point))
@@ -460,14 +461,14 @@ function recorded_points(
         if last(point) >= maximum_precision
             return Err(TraceFailure(NoConvergence, stopped_context(:maximum_precision, point, tracer.steps, context, (; maximum_precision))))
         end
-        stepped = path_step!(tracer, maximum_precision, max_steps, context)
+        tracer, stepped = path_step!!(tracer, maximum_precision, max_steps, context)
     end
     return Err(unwrap_error(stepped))
 end
 
 """
 `logit_solve_lambda` on PathFollowing: the logits of `gains`' principal branch at each precision of `precisions`, from
-one trace whose steps stop at each in rising order (`stepped_landing!`), or the first failure.
+one trace whose steps stop at each in rising order (`stepped_landing!!`), or the first failure.
 """
 function engine_lambdas(
         gains::NormalFormGains,
@@ -490,7 +491,7 @@ function landed_lambdas(
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
     points = Vector{Vector{E}}(undef, length(precisions))
     for index in sortperm(precisions)
-        landed = stepped_landing!(tracer, precisions[index], max_steps)
+        tracer, landed = stepped_landing!!(tracer, precisions[index], max_steps)
         if is_error(landed)
             return Err(unwrap_error(landed))
         end
@@ -500,16 +501,20 @@ function landed_lambdas(
 end
 
 """
-The point of `tracer`'s branch at `precision`: its steps stop there (`path_step!`), at the first crossing a predictor
-or a corrected point shows.
+`tracer` advanced to `precision`, and the point of its branch there: its steps stop there (`path_step!!`), at the first
+crossing a predictor or a corrected point shows. Use only the returned tracer.
 """
-function stepped_landing!(tracer::PathFollowing.Tracer{E}, precision::E, max_steps::Integer)::Result{Vector{E}, TraceFailure} where {E <: Real}
+function stepped_landing!!(
+        tracer::T,
+        precision::E,
+        max_steps::Integer,
+    )::Tuple{T, Result{Vector{E}, TraceFailure}} where {E <: Real, T <: PathFollowing.Tracer{E}}
     context = (; lam = precision)
     while last(tracer.point) < precision
-        stepped = path_step!(tracer, precision, max_steps, context)
+        tracer, stepped = path_step!!(tracer, precision, max_steps, context)
         if is_error(stepped)
-            return Err(unwrap_error(stepped))
+            return tracer, Err(unwrap_error(stepped))
         end
     end
-    return Ok(copy(tracer.point))
+    return tracer, Ok(copy(tracer.point))
 end

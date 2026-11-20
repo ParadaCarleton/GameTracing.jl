@@ -122,7 +122,7 @@ end
         # `exp` rounds a log probability near `-shift` at its own size, so the reference's rounding grows with `shift`.
         tolerance = 2 * (shift + 1) * eps(element)
         @test PathFollowing.metric_inner(frozen, common, common) ≈ reference * (1 - reference) rtol = tolerance
-        @test dot(PathFollowing.metric_apply!(similar(common), frozen, common), common) ≈ reference * (1 - reference) rtol = tolerance
+        @test dot(PathFollowing.metric_apply!!(similar(common), frozen, common), common) ≈ reference * (1 - reference) rtol = tolerance
     end
 end
 
@@ -144,14 +144,14 @@ end
             # A common move against an extinct reference has entries near its own sum, and a differential move's sum
             # outweighs its logit moves' rounding, so the bound rejects a zero block for both.
             for vector in (common, randn(rng, element, 7))
-                applied = PathFollowing.metric_apply!(similar(vector), frozen, vector)
-                exact = sum(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[range])
+                applied = PathFollowing.metric_apply!!(similar(vector), frozen, vector)
+                exact = sum(PathFollowing.metric_apply!!(similar(big.(vector)), exact_frozen, big.(vector))[range])
                 @test abs(sum(big.(applied[range])) - exact) <= block_sum_bound(exact_frozen, applied, vector, player, range)
                 @test abs(exact) > block_sum_bound(exact_frozen, zero(applied), vector, player, range)
             end
             other = randn(rng, element, 7)
             exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
-            reversed = PathFollowing.metric_apply!(similar(common), frozen, common)
+            reversed = PathFollowing.metric_apply!!(similar(common), frozen, common)
             @test abs(dot(other, reversed) - exact) <= 64 * eps(element) * (abs(exact) + dot(abs.(other), abs.(reversed)))
             # Random moves can be near orthogonal, so the error scales with both Fisher lengths.
             lengths = sqrt(PathFollowing.metric_inner(exact_frozen, big.(common), big.(common)) * PathFollowing.metric_inner(exact_frozen, big.(other), big.(other)))
@@ -163,7 +163,7 @@ end
     metric = FisherMetric((1:3,), one(element), TargetPrecisionTerm, one(element), one(element))
     frozen = PathFollowing.frozen_metric(metric, point)
     exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:3,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
-    applied = PathFollowing.metric_apply!(similar(other), frozen, other)
+    applied = PathFollowing.metric_apply!!(similar(other), frozen, other)
     exact = PathFollowing.metric_inner(exact_frozen, big.(common), big.(other))
     @test abs(sum(big.(applied[1:3])) - exact) <= block_sum_bound(exact_frozen, applied, other, 1, 1:3)
     @test abs(PathFollowing.metric_inner(frozen, common, other) - exact) <= 64 * eps(element) * abs(exact)
@@ -180,8 +180,8 @@ end
     metric = FisherMetric((1:1,), one(element), TargetPrecisionTerm, one(element), one(element))
     exact_frozen = PathFollowing.frozen_metric(FisherMetric((1:1,), one(BigFloat), TargetPrecisionTerm, one(BigFloat), one(BigFloat)), big.(point))
     for (vector, moved) in ((element[1, 1], false), (element[1, 0], true))
-        applied = PathFollowing.metric_apply!(similar(vector), PathFollowing.frozen_metric(metric, point), vector)
-        exact = only(PathFollowing.metric_apply!(similar(big.(vector)), exact_frozen, big.(vector))[1:1])
+        applied = PathFollowing.metric_apply!!(similar(vector), PathFollowing.frozen_metric(metric, point), vector)
+        exact = only(PathFollowing.metric_apply!!(similar(big.(vector)), exact_frozen, big.(vector))[1:1])
         @test abs(big(only(applied[1:1])) - exact) <= block_sum_bound(exact_frozen, applied, vector, 1, 1:1)
         @test !moved || abs(exact) > block_sum_bound(exact_frozen, zero(applied), vector, 1, 1:1)
     end
@@ -248,14 +248,14 @@ end
     @test inner_matrix(PathFollowing.frozen_metric(metric, point), element, 3) == inner_matrix(collected, element, 3)
     palc_dot = GameTracing.metric_dot(metric, point)
     vector = element[1, -1, 2]
-    @test palc_dot.apply!(copy(vector)) == PathFollowing.metric_apply!(similar(vector), collected, vector)
+    @test palc_dot.apply!(copy(vector)) == PathFollowing.metric_apply!!(similar(vector), collected, vector)
     @test GameTracing.palc_border(palc_dot, one(element) / 2, point) == GameTracing.palc_border(palc_dot, one(element) / 2, collect(point))
 end
 
 @testset "a Fisher metric frozen again holds what a fresh freeze at the new point holds ($element)" for element in (Float32, widen(Float32))
     metric = FisherMetric((1:2,), element(2), LogPrecisionTerm, element(10), element(127 // 128))
     # The pivot moves from the first strategy to the reference.
-    refrozen = PathFollowing.freeze_metric!(PathFollowing.frozen_metric(metric, element[1, -1, 1]), element[-1, -2, 3])
+    refrozen = PathFollowing.freeze_metric!!(PathFollowing.frozen_metric(metric, element[1, -1, 1]), element[-1, -2, 3])
     fresh = PathFollowing.frozen_metric(metric, element[-1, -2, 3])
     for field in fieldnames(typeof(fresh))
         @test getfield(refrozen, field) == getfield(fresh, field)

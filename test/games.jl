@@ -43,11 +43,11 @@ function inner_matrix(frozen::Any, ::Type{E}, width::Integer)::Matrix{E} where {
     return [PathFollowing.metric_inner(frozen, left, right) for left in units, right in units]
 end
 
-"""`frozen` as a dense matrix of `metric_apply!`, one column per unit vector."""
+"""`frozen` as a dense matrix of `metric_apply!!`, one column per unit vector."""
 function applied_matrix(frozen::Any, ::Type{E}, width::Integer)::Matrix{E} where {E <: Real}
     applied = zeros(E, width, width)
     for index in 1:width
-        PathFollowing.metric_apply!(@view(applied[:, index]), frozen, setindex!(zeros(E, width), one(E), index))
+        PathFollowing.metric_apply!!(@view(applied[:, index]), frozen, setindex!(zeros(E, width), one(E), index))
     end
     return applied
 end

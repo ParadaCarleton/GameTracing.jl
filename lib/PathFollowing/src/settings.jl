@@ -1,12 +1,14 @@
 """
-    CurveProblem(system!, start, direction)
+    CurveProblem(system!!, start, direction)
 
-The curve `H(x) = 0` through `start`, traced toward `direction`. `system!(residual, jacobian, x)` writes `H(x)` (length
-`n`) and its Jacobian `∂H/∂x` (`n × (n + 1)`) from one evaluation and returns `nothing`. `start` and `direction` have
-`n + 1` entries; `direction` needs only a positive product with the tangent at `start` under the turn metric.
+The curve `H(x) = 0` through `start`, traced toward `direction`. `system!!(residual, jacobian, x)` returns `H(x)`
+(length `n`) and its Jacobian `∂H/∂x` (`n × (n + 1)`) from one evaluation, as `(residual, jacobian)` in the types of
+the arrays it gets. Mutable arrays come back changed in place, and static arrays come back new (`Into`). `start` and
+`direction` have `n + 1` entries; `direction` needs only a positive product with the tangent at `start` under the turn
+metric. A static `start` (`SVector`) needs `StaticLU`.
 """
 struct CurveProblem{S, V <: AbstractVector{<:Real}}
-    system!::S
+    system!!::S
     start::V
     direction::V
 end
@@ -183,7 +185,7 @@ curve, or the step crossed a bifurcation point. The check never accepts a change
 that runs the other way changes it the same way as a crossing, so no rule tells the two apart. At an exact
 bifurcation the trace closes in on the point in shorter steps and fails `Unresolved` below the float resolution.
 
-With `LUFactorization`, the check reads the sign from the tangent solve's own LU in O(n). Other linear solvers pay a
+With `LUFactorization` or `StaticLU`, the check reads the sign from the tangent solve's own LU in O(n). Other linear solvers pay a
 second LU factorization, of `[J; tᵀ]`, at each corrected point.
 """
 struct DeterminantSign end
@@ -227,6 +229,15 @@ function HalfStepCheck(; trigger::Real, tolerance::Real)::HalfStepCheck
 end
 
 """
+    StaticLU()
+
+`PseudoArclength`'s `linear_solver` for a static start (`SVector`): StaticArrays.jl's pivoted LU, `lu(A, RowMaximum();
+check = false)`, built anew at each solve. It keeps no cache and allocates nothing. A zero pivot fails the solve. StaticArrays factors at most 14 × 14 matrices this way, so a start has at most 14
+coordinates. The orientation check reads its sign from this LU in O(n).
+"""
+struct StaticLU end
+
+"""
     PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation_check, split_check,
                     linear_solver, accept = AcceptAll(), min_step_ulps = 4, max_refusals)
 
@@ -241,7 +252,8 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
   step near a fold can land where the oriented tangent runs back along the curve.
 - `split_check`: a `HalfStepCheck`, or `nothing` to accept a converged point on another branch that passes every other
   test.
-- `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
+- `linear_solver`: the LinearSolve.jl algorithm for the bordered systems of a mutable start, or `StaticLU()` for a
+  static start.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
 - `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
   as `Unresolved`; smaller steps cannot add a point. The check judges the step before a `Bound` cuts it.

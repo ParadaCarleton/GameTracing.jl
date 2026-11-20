@@ -55,32 +55,35 @@ corrector's bound on the error left at `point` (`settle_error`; zero at the star
 `point` (`frozen_metric`), and work arrays; `row` is the border row of the next bordered system, and the `split_`
 arrays hold a corrected point, its tangent and its `previous` through the split check. `init` builds one and `step!`
 advances it. Read its fields; do not write them.
+
+Its vectors (`V`) and matrices (`X`) take the start's array type (`similar`), so they live on the start's device.
+`pivots` stays on the host: only LAPACK's factorization of the orientation check writes it.
 """
-mutable struct Tracer{E <: Real, P <: CurveProblem, A <: PseudoArclength, C, M, T}
+mutable struct Tracer{E <: Real, V <: AbstractVector{E}, X <: AbstractMatrix{E}, P <: CurveProblem, A <: PseudoArclength, C, M, T}
     const problem::P
     const algorithm::A
-    const point::Vector{E}
-    const tangent::Vector{E}
+    const point::V
+    const tangent::V
     step_length::E
     steps::Int
     orientation::Int8
     settle_error::E
     const metric::M
     const turn_metric::T
-    const scratch::Vector{E}
-    const residual::Vector{E}
-    const jacobian::Matrix{E}
-    const bordered::Matrix{E}
-    const row::Vector{E}
-    const rhs::Vector{E}
-    const predicted::Vector{E}
-    const iterate::Vector{E}
-    const previous::Vector{E}
-    const candidate::Vector{E}
-    const split_point::Vector{E}
-    const split_tangent::Vector{E}
-    const split_previous::Vector{E}
-    const oriented::Matrix{E}
+    const scratch::V
+    const residual::V
+    const jacobian::X
+    const bordered::X
+    const row::V
+    const rhs::V
+    const predicted::V
+    const iterate::V
+    const previous::V
+    const candidate::V
+    const split_point::V
+    const split_tangent::V
+    const split_previous::V
+    const oriented::X
     const pivots::Vector{LinearAlgebra.BlasInt}
     const linear::C
 end
@@ -104,17 +107,20 @@ function CommonSolve.init(
         throw(ArgumentError("the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
     algorithm.split_check isa Union{Nothing, HalfStepCheck{E}} ||
         throw(ArgumentError("the split check's element type must be the start's $E; got $(typeof(algorithm.split_check))"))
-    size = length(problem.start)
+    (; start) = problem
+    size = length(start)
     length(problem.direction) == size || throw(DimensionMismatch("start and direction differ in length"))
-    bordered = zeros(E, size, size)
-    rhs = zeros(E, size)
+    # Every work array is `similar` to the start, so it lives on the start's device.
+    vector(entries::Integer) = fill!(similar(start, E, entries), zero(E))
+    matrix(rows::Integer) = fill!(similar(start, E, rows, size), zero(E))
+    bordered, rhs = matrix(size), vector(size)
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     linear = LinearSolve.init(LinearSolve.LinearProblem(bordered, rhs), algorithm.linear_solver; verbose = false)
     tracer = Tracer(
-        problem, algorithm, collect(problem.start), zeros(E, size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E),
-        frozen_metric(algorithm.metric, problem.start), frozen_metric(algorithm.turn_metric, problem.start), zeros(E, size),
-        zeros(E, size - 1), zeros(E, size - 1, size), bordered, zeros(E, size), rhs, zeros(E, size), zeros(E, size),
-        zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size), zeros(E, size, size),
+        problem, algorithm, copyto!(vector(size), start), vector(size), min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E),
+        frozen_metric(algorithm.metric, start), frozen_metric(algorithm.turn_metric, start), vector(size),
+        vector(size - 1), matrix(size - 1), bordered, vector(size), rhs, vector(size), vector(size),
+        vector(size), vector(size), vector(size), vector(size), vector(size), matrix(size),
         zeros(LinearAlgebra.BlasInt, size), linear,
     )
     return started(tracer)
@@ -221,13 +227,15 @@ end
 """Whether `point` lies on `bound`; never without one."""
 on_bound(::Nothing, ::AbstractVector)::Bool = false
 function on_bound(bound::Bound{E}, point::AbstractVector{E})::Bool where {E <: Real}
-    return point[bound.coordinate] == bound.value
+    return element(point, bound.coordinate) == bound.value
 end
 
 """Whether `to` lies on `bound` or on its other side from `from`; never without one."""
 reaches(::Nothing, ::AbstractVector, ::AbstractVector)::Bool = false
 function reaches(bound::Bound{E}, from::AbstractVector{E}, to::AbstractVector{E})::Bool where {E <: Real}
-    return signbit(from[bound.coordinate] - bound.value) != signbit(to[bound.coordinate] - bound.value) || on_bound(bound, to)
+    (; coordinate, value) = bound
+    reached = element(to, coordinate)
+    return signbit(element(from, coordinate) - value) != signbit(reached - value) || reached == value
 end
 
 """
@@ -236,11 +244,11 @@ bound's coordinate. The cut predictor's length in the step metric.
 """
 function cut_predictor!(tracer::Tracer{E}, bound::Bound{E})::E where {E <: Real}
     (; coordinate, value) = bound
-    fraction = (value - tracer.point[coordinate]) / (tracer.predicted[coordinate] - tracer.point[coordinate])
+    from = element(tracer.point, coordinate)
+    fraction = (value - from) / (element(tracer.predicted, coordinate) - from)
     tracer.predicted .= tracer.point .+ (fraction * tracer.step_length) .* tracer.tangent
-    tracer.predicted[coordinate] = value
-    fill!(tracer.row, zero(E))
-    tracer.row[coordinate] = one(E)
+    set_element!(tracer.predicted, coordinate, value)
+    unit!(tracer.row, coordinate)
     return fraction * tracer.step_length
 end
 
@@ -252,7 +260,7 @@ past_bound!(::Tracer, ::Nothing, ::Bool)::Bool = false
 function past_bound!(tracer::Tracer{E}, bound::Bound{E}, lands::Bool)::Bool where {E <: Real}
     if lands
         # The bordered row holds the coordinate at the value; this drops the solves' rounding.
-        tracer.iterate[bound.coordinate] = bound.value
+        set_element!(tracer.iterate, bound.coordinate, bound.value)
         return false
     end
     return reaches(bound, tracer.point, tracer.iterate) && !on_bound(bound, tracer.iterate)
@@ -335,19 +343,20 @@ function factor!(
     return (matrix, pivots)
 end
 
-function factor!(matrix::Matrix{E}, ::Vector{LinearAlgebra.BlasInt})::Tuple{Matrix{E}, Vector{LinearAlgebra.BlasInt}} where {E <: Real}
+function factor!(matrix::AbstractMatrix{E}, ::Vector{LinearAlgebra.BlasInt})::Tuple{AbstractMatrix{E}, AbstractVector{<:Integer}} where {E <: Real}
     factored = LinearAlgebra.lu!(matrix; check = false)
     return (factored.factors, factored.ipiv)
 end
 
-"""The sign of a determinant from its pivoted LU `factors` and row swaps `pivots`; zero for a zero or NaN pivot."""
+"""
+The sign of a determinant from its pivoted LU `factors` and row swaps `pivots`; zero for a zero or NaN pivot. Two
+reductions, so the factors stay on their device.
+"""
 function factored_sign(factors::AbstractMatrix{E}, pivots::AbstractVector{<:Integer})::Int8 where {E <: Real}
-    signed = Int8(1)
-    for index in eachindex(pivots)
-        pivot = factors[index, index]
-        signed *= (Int8(pivot > 0) - Int8(pivot < 0)) * ifelse(pivots[index] == index, Int8(1), Int8(-1))
-    end
-    return signed
+    diagonal = view(factors, LinearAlgebra.diagind(factors, IndexCartesian()))
+    signs = mapreduce(pivot -> Int8(pivot > 0) - Int8(pivot < 0), *, diagonal; init = Int8(1))
+    odd_swaps = mapreduce(identity, xor, elementwise(!=, pivots, eachindex(pivots)); init = false)
+    return odd_swaps ? -signs : signs
 end
 
 """
@@ -411,10 +420,10 @@ end
 
 function to_hyperplane!(tracer::Tracer{E}, bound::Bound{E}, ::E)::Tracer{E} where {E <: Real}
     (; coordinate, value) = bound
-    tracer.predicted .= tracer.iterate .+ ((value - tracer.iterate[coordinate]) / tracer.candidate[coordinate]) .* tracer.candidate
-    tracer.predicted[coordinate] = value
-    fill!(tracer.row, zero(E))
-    tracer.row[coordinate] = one(E)
+    along = (value - element(tracer.iterate, coordinate)) / element(tracer.candidate, coordinate)
+    tracer.predicted .= tracer.iterate .+ along .* tracer.candidate
+    set_element!(tracer.predicted, coordinate, value)
+    unit!(tracer.row, coordinate)
     return tracer
 end
 
@@ -439,7 +448,7 @@ function correct!(tracer::Tracer{E})::Attempt{E} where {E <: Real}
         end
         border!(tracer)
         @views tracer.rhs[1:width] .= .-tracer.residual
-        tracer.rhs[end] = -row_offset(tracer.row, tracer.predicted, tracer.iterate)
+        set_element!(tracer.rhs, lastindex(tracer.rhs), -row_offset(tracer.row, tracer.predicted, tracer.iterate))
         if !bordered_solve!(tracer, tracer.candidate)
             return refused(E, SingularSystem)
         end
@@ -512,8 +521,7 @@ at that tangent (`orientation_sign!`), or `none` when the solve fails.
 function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Option{Int8} where {E <: Real}
     metric_apply!(tracer.row, tracer.turn_metric, previous)
     border!(tracer)
-    fill!(tracer.rhs, zero(E))
-    tracer.rhs[end] = one(E)
+    unit!(tracer.rhs, lastindex(tracer.rhs))
     if !bordered_solve!(tracer, tracer.candidate)
         return none(Int8)
     end
@@ -521,7 +529,7 @@ function tangent_solve!(tracer::Tracer{E}, previous::AbstractVector{E})::Option{
 end
 
 """Fill `tracer.bordered` with the Jacobian over `tracer.row`."""
-function border!(tracer::Tracer{E})::Matrix{E} where {E <: Real}
+function border!(tracer::Tracer{E})::AbstractMatrix{E} where {E <: Real}
     width = length(tracer.residual)
     @views tracer.bordered[1:width, :] .= tracer.jacobian
     @views tracer.bordered[end, :] .= tracer.row
@@ -546,13 +554,10 @@ Whether `predicted` moves no coordinate of `point` by more than `ulps` ulps of i
 resolves.
 """
 function unresolved(point::AbstractVector{E}, predicted::AbstractVector{E}, ulps::Integer)::Bool where {E <: Real}
-    for index in eachindex(point, predicted)
-        # Negated so a NaN move counts as resolved, as the comparison is false for it.
-        if !(abs(predicted[index] - point[index]) <= ulps * eps(E) * abs(point[index]))
-            return false
-        end
-    end
-    return true
+    tolerance = ulps * eps(E)
+    # A NaN move counts as resolved, as the comparison is false for it.
+    within = elementwise((from, to) -> abs(to - from) <= tolerance * abs(from), point, predicted)
+    return mapreduce(identity, &, within; init = true)
 end
 
 """Allgower and Georg's step factor `f` (`StepControl`); a NaN measurement drops its term."""

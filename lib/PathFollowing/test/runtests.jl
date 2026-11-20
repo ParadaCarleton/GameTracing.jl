@@ -2,20 +2,27 @@ using PathFollowing
 using PathFollowing: AcceptAll, factored_sign, metric_angle
 using CommonSolve: init, step!
 using ErrorTypes: is_error, unwrap, unwrap_error
+using GPUArraysCore: allowscalar
+using JLArrays: JLArray
 using LinearAlgebra: det
 using LinearSolve: LUFactorization, QRFactorization
 using Supposition: Data, @check
 using Test: @test, @testset, @test_throws
 
-"""A circle of `radius` about the origin in `(x, y)`: `H = x² + y² - radius²`."""
+# A GPU array that indexes one element at a time throws, so the JLArrays tests catch every scalar access.
+allowscalar(false)
+
+"""
+A circle of `radius` about the origin in `(x, y)`: `H = x² + y² - radius²`. Broadcasts and reductions only, so it
+also runs on GPU arrays, which refuse scalar indexing.
+"""
 struct Circle{E <: Real}
     radius::E
 end
 
 function (circle::Circle{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual[1] = point[1]^2 + point[2]^2 - circle.radius^2
-    jacobian[1, 1] = 2 * point[1]
-    jacobian[1, 2] = 2 * point[2]
+    residual .= sum(abs2, point) - circle.radius^2
+    jacobian .= 2 .* transpose(point)
     return nothing
 end
 
@@ -166,11 +173,9 @@ struct Settled{E <: Real}
 end
 
 function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
-    largest = zero(E)
-    for index in eachindex(previous, iterate)
-        largest = max(largest, abs(iterate[index] - previous[index]))
-    end
-    return scale * largest <= settled.tolerance
+    # A lazy broadcast: one reduction on a GPU array, and no allocation on the CPU.
+    moves = Broadcast.instantiate(Broadcast.broadcasted((from, to) -> abs(to - from), previous, iterate))
+    return scale * mapreduce(identity, max, moves; init = zero(E)) <= settled.tolerance
 end
 
 """
@@ -778,6 +783,33 @@ end
         for bound in (nothing, Bound(2, E(3) / 20))
             tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; split_check = check); first_step = E(1) / 10))
             @test warm_bytes(tracer, bound) == 0
+        end
+    end
+
+    @testset "a trace on a GPU array type stays on it and follows the CPU trace, bounded or not" begin
+        # JLArrays refuses scalar indexing as a GPU does, so any element-by-element access throws here.
+        for linear_solver in (LUFactorization(), QRFactorization()), bound in (nothing, Bound(2, E(3) / 4))
+            # LU keeps the factors the orientation sign reads; QR makes the tracer factor `[J; tᵀ]` itself.
+            settings = algorithm(E; linear_solver)
+            host = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10))
+            device = unwrap(init(CurveProblem(Circle(one(E)), JLArray(E[1, 0]), JLArray(E[0, 1])), settings; first_step = E(1) / 10))
+            @test all(array -> array isa JLArray, (device.point, device.jacobian, device.bordered, device.oriented, device.metric.weights))
+            # The bound at y = 3/4 lies 0.85 of arc away, 9 steps of 0.1: the cap only stops a trace that never lands.
+            limit = isnothing(bound) ? 8 : 20
+            while device.steps < limit && (isnothing(bound) || host.point[bound.coordinate] != bound.value)
+                unwrap(step!(host, bound))
+                unwrap(step!(device, bound))
+                @test Array(device.point) ≈ host.point rtol = 10 * tolerance
+                @test device.orientation == host.orientation == 1
+            end
+            # The bound stops both traces on it, its value exact.
+            @test isnothing(bound) || Array(device.point)[2] == host.point[2] == bound.value
+            @test all(iszero, Array(device.oriented)) == (linear_solver isa LUFactorization)
+        end
+        # Host weights of any vector type reach the device in one copy, never element by element.
+        for weights in (E[1, 2], E(1):E(1):E(2), view(E[1, 2, 3], 1:2))
+            frozen = frozen_metric(FixedWeights(weights), JLArray(E[1, 0]))
+            @test frozen.weights isa JLArray && Array(frozen.weights) == collect(weights)
         end
     end
 

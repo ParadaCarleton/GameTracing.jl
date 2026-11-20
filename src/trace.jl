@@ -872,12 +872,12 @@ const PinnedCorrection{E} = Result{@NamedTuple{corrected::Vector{E}, residual::V
 
 The endpoint check's Newton correction of `point = [w; λ]` on `game`, with `λ` pinned (`branch_system!` on the pass
 work `pass_work`): `Ok((; corrected, residual))`, the point itself at an exact root, which needs none. A non-finite
-residual or Jacobian fails `NotFinite`, as LAPACK rejects it, and a singular Jacobian fails `Singular`.
+residual or Jacobian fails `NotFinite`, at an exact root too, and a singular Jacobian off one fails `Singular`.
 """
 function pinned_correction(game::LogitGame, point::AbstractVector{E}, pass_work::Any)::PinnedCorrection{E} where {E <: Real}
     system = branch_system!(BranchWorkspace(point, pass_work), game, point, last(point))
-    all(iszero, system.residual) && return Ok((; corrected = collect(point), system.residual))
     (all(isfinite, system.residual) && all(isfinite, system.jacobian)) || return Err(NotFinite)
+    all(iszero, system.residual) && return Ok((; corrected = collect(point), system.residual))
     factorization = lu!(system.jacobian; check = false)
     issuccess(factorization) || return Err(Singular)
     return Ok((; corrected = point .- factorization \ system.residual, system.residual))

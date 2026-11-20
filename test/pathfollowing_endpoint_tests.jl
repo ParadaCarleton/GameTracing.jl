@@ -207,6 +207,9 @@ end
     late_nan = LogitGame(NaNSlopePass(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), 1), element(2))
     not_finite = unwrap_error(landed_at(late_nan, element[1 // 2], settings))
     @test (not_finite.cause, not_finite.context.reason, not_finite.context.label) == (GameTracing.NotFinite, :not_finite_endpoint, :landed)
+    # At an exact root as well: `G = 1/2` has its root at `w = 1/2`.
+    exact_nan = LogitGame(NaNSlopePass(LinearGainPass(zeros(element, 1, 1), element[1 // 2]), 1), element(2))
+    @test unwrap_error(landed_at(exact_nan, element[1 // 2], settings)).cause == GameTracing.NotFinite
 end
 
 @testset "BifurcationKit's endpoint check fails NotFinite on a non-finite Jacobian ($element)" for element in (Float32, widen(Float32))
@@ -219,6 +222,7 @@ end
     late_nan = LogitGame(NaNSlopePass(constant, 1), element(2))
     failure = unwrap_error(GameTracing.verified_endpoint(progress(1 // 4), outcome, late_nan, work, corrector, (; label = :bk)))
     @test (failure.cause, failure.context.steps, failure.context.label) == (GameTracing.NotFinite, 3, :bk)
+    @test unwrap_error(GameTracing.verified_endpoint(progress(1 // 2), outcome, late_nan, work, corrector, (;))).cause == GameTracing.NotFinite
     # Under `from` the slope stays finite, and a point near the root passes.
     finite = LogitGame(NaNSlopePass(constant, 3), element(2))
     near = unwrap(GameTracing.verified_endpoint(progress(1 // 2 + 1 // 2^20), outcome, finite, work, corrector, (;)))

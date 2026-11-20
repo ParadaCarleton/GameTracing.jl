@@ -50,7 +50,7 @@ settle off the curve near a fold, which stopped the trace.
 struct ContractionEstimate{E <: Real}
     safety::E
     function ContractionEstimate(; safety::E)::ContractionEstimate{E} where {E <: Real}
-        0 < safety <= 1 || throw(ArgumentError("safety must be in (0, 1]; got $safety"))
+        0 < safety <= 1 || throw(ArgumentError(lazy"safety must be in (0, 1]; got $safety"))
         return new{E}(safety)
     end
 end
@@ -83,8 +83,8 @@ function Newton(;
         max_iterations::Integer, converged::C, contraction_limit::E, error_estimate::R, distance::D = MetricDistance(),
     )::Newton{C, E, R, D} where {C, E <: Real, R <: Union{LastCorrection, ContractionEstimate}, D}
     # The bound ties `R`'s float type to `E` only on the struct: a keyword method's bound cannot name `E`.
-    max_iterations >= 1 || throw(ArgumentError("max_iterations must be at least 1; got $max_iterations"))
-    contraction_limit > 0 || throw(ArgumentError("contraction_limit must be positive; got $contraction_limit"))
+    max_iterations >= 1 || throw(ArgumentError(lazy"max_iterations must be at least 1; got $max_iterations"))
+    contraction_limit > 0 || throw(ArgumentError(lazy"contraction_limit must be positive; got $contraction_limit"))
     return Newton{C, E, R, D}(Int(max_iterations), converged, contraction_limit, error_estimate, distance)
 end
 
@@ -123,10 +123,11 @@ scale (battle of the sexes plus `0.1 randn` payoffs), steps that kept the branch
 that jumped moved 4.2 to 5.09. `reach = Inf`
 switches the refusal off; any other `reach` must be positive and finite in the step control's type.
 """
-struct StepControl{E <: Real}
-    target_contraction::Union{Nothing, E}
-    target_correction::Union{Nothing, E}
-    target_turn::Union{Nothing, E}
+# Each target's type is a parameter, so a step control is isbits and a GPU kernel can take it.
+struct StepControl{E <: Real, C <: Union{Nothing, E}, D <: Union{Nothing, E}, T <: Union{Nothing, E}}
+    target_contraction::C
+    target_correction::D
+    target_turn::T
     max_step_growth::E
     max_step::E
     refusal_factor::E
@@ -144,16 +145,16 @@ function StepControl(;
         shrink::Real = 1 // 2,
         reach::Real = 3,
     )::StepControl{E} where {E <: Real}
-    max_step_growth >= 1 || throw(ArgumentError("max_step_growth must be at least 1; got $max_step_growth"))
-    refusal_factor >= 1 || throw(ArgumentError("refusal_factor must be at least 1; got $refusal_factor"))
+    max_step_growth >= 1 || throw(ArgumentError(lazy"max_step_growth must be at least 1; got $max_step_growth"))
+    refusal_factor >= 1 || throw(ArgumentError(lazy"refusal_factor must be at least 1; got $refusal_factor"))
     # Checked in `E`, where a shrink near 1 rounds to 1 and a retry would repeat its step.
-    zero(E) < E(shrink) < one(E) || throw(ArgumentError("shrink must lie in (0, 1) in $E; got $shrink"))
-    max_step > 0 || throw(ArgumentError("max_step must be positive; got $max_step"))
+    zero(E) < E(shrink) < one(E) || throw(ArgumentError(lazy"shrink must lie in (0, 1) in $E; got $shrink"))
+    max_step > 0 || throw(ArgumentError(lazy"max_step must be positive; got $max_step"))
     # A straight stretch measures f = 0, so the growth bound or the cap must stop the step from going infinite.
     isfinite(max_step_growth) || isfinite(max_step) || throw(ArgumentError("max_step_growth and max_step cannot both be infinite"))
-    return StepControl{E}(
-        optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn), max_step_growth,
-        E(max_step), E(refusal_factor), E(shrink), reach_in(E, reach),
+    contraction, correction, turn = optional(E, target_contraction), optional(E, target_correction), optional(E, target_turn)
+    return StepControl{E, typeof(contraction), typeof(correction), typeof(turn)}(
+        contraction, correction, turn, max_step_growth, E(max_step), E(refusal_factor), E(shrink), reach_in(E, reach),
     )
 end
 
@@ -163,7 +164,7 @@ huge one rounds to Inf. Only an explicit Inf switches the refusal off.
 """
 function reach_in(::Type{E}, reach::Real)::E where {E <: Real}
     converted = E(reach)
-    zero(E) < converted && (isfinite(converted) || isinf(reach)) || throw(ArgumentError("reach must be positive and finite in $E, or Inf; got $reach"))
+    zero(E) < converted && (isfinite(converted) || isinf(reach)) || throw(ArgumentError(lazy"reach must be positive and finite in $E, or Inf; got $reach"))
     return converted
 end
 
@@ -171,7 +172,7 @@ end
 optional(::Type{<:Real}, ::Nothing)::Nothing = nothing
 
 function optional(::Type{E}, limit::Real)::E where {E <: Real}
-    limit > 0 || throw(ArgumentError("a target must be positive; got $limit"))
+    limit > 0 || throw(ArgumentError(lazy"a target must be positive; got $limit"))
     return E(limit)
 end
 
@@ -217,8 +218,8 @@ struct HalfStepCheck{E <: Real}
     function HalfStepCheck{E}(; trigger::Real, tolerance::Real)::HalfStepCheck{E} where {E <: Real}
         # Checked in `E`, where a tiny tolerance rounds to zero and a huge number to Inf.
         converted_trigger, converted_tolerance = E(trigger), E(tolerance)
-        zero(E) <= converted_trigger < Inf || throw(ArgumentError("trigger must be non-negative and finite in $E; got $trigger"))
-        zero(E) < converted_tolerance < Inf || throw(ArgumentError("tolerance must be positive and finite in $E; got $tolerance"))
+        zero(E) <= converted_trigger < Inf || throw(ArgumentError(lazy"trigger must be non-negative and finite in $E; got $trigger"))
+        zero(E) < converted_tolerance < Inf || throw(ArgumentError(lazy"tolerance must be positive and finite in $E; got $tolerance"))
         return new{E}(converted_trigger, converted_tolerance)
     end
 end
@@ -281,7 +282,7 @@ function refusable_correction(control::StepControl, distance::Any)::Nothing
     isnothing(target_correction) && return nothing
     limit, bound = target_correction * refusal_factor^2, correction_bound(distance)
     limit < bound || throw(
-        ArgumentError("step control refuses first corrections past $limit, but the corrector's distance measures at most $bound")
+        ArgumentError(lazy"step control refuses first corrections past $limit, but the corrector's distance measures at most $bound")
     )
     return nothing
 end
@@ -295,10 +296,10 @@ function PseudoArclength(;
         corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation_check::O, split_check::K,
         linear_solver::L, accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
     )::PseudoArclength{C, S, M, T, O, K, L, A} where {C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, K <: Union{Nothing, HalfStepCheck}, L, A}
-    min_step_ulps >= 0 || throw(ArgumentError("min_step_ulps must be non-negative; got $min_step_ulps"))
+    min_step_ulps >= 0 || throw(ArgumentError(lazy"min_step_ulps must be non-negative; got $min_step_ulps"))
     refusable_correction(step_control, corrector.distance)
     reachable_trigger(step_control, split_check)
-    max_refusals >= 0 || throw(ArgumentError("max_refusals must be non-negative; got $max_refusals"))
+    max_refusals >= 0 || throw(ArgumentError(lazy"max_refusals must be non-negative; got $max_refusals"))
     return PseudoArclength{C, S, M, T, O, K, L, A}(
         corrector, step_control, metric, turn_metric, orientation_check, split_check, linear_solver, accept,
         Int(min_step_ulps), Int(max_refusals),
@@ -309,6 +310,6 @@ end
 reachable_trigger(::StepControl, ::Nothing)::Nothing = nothing
 function reachable_trigger(control::StepControl, check::HalfStepCheck)::Nothing
     check.trigger <= control.refusal_factor ||
-        throw(ArgumentError("the split check's trigger $(check.trigger) must not pass the refusal factor $(control.refusal_factor)"))
+        throw(ArgumentError(lazy"the split check's trigger $(check.trigger) must not pass the refusal factor $(control.refusal_factor)"))
     return nothing
 end

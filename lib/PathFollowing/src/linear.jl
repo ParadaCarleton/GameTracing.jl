@@ -16,7 +16,7 @@ end
 
 """The state of `solver` for the bordered systems of `work`: a `CachedSolve` for a mutable start."""
 function linear_state(solver::Any, work::Workspace)::CachedSolve
-    work.bordered isa StaticArray && throw(ArgumentError("a static start needs linear_solver = StaticLU(); got $solver"))
+    work.bordered isa StaticArray && throw(ArgumentError(lazy"a static start needs linear_solver = StaticLU(); got $solver"))
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     cache = LinearSolve.init(LinearSolve.LinearProblem(work.bordered, work.rhs), solver; verbose = false)
     oriented = fill!(similar(work.bordered), zero(eltype(work.bordered)))
@@ -26,9 +26,9 @@ end
 """`StaticLU`'s state for the bordered systems of `work`, a static start's of at most 14 coordinates."""
 function linear_state(::StaticLU, work::Workspace)::StaticSolve
     (; bordered) = work
-    bordered isa SMatrix || throw(ArgumentError("StaticLU needs a static start (an SVector); got bordered systems of type $(typeof(bordered))"))
+    bordered isa SMatrix || throw(ArgumentError(lazy"StaticLU needs a static start (an SVector); got bordered systems of type $(typeof(bordered))"))
     # Past 14 × 14, StaticArrays factors through a heap `Matrix`.
-    size(bordered, 1) <= 14 || throw(ArgumentError("StaticLU factors at most 14 × 14 systems without allocation; got $(size(bordered, 1))"))
+    size(bordered, 1) <= 14 || throw(ArgumentError(lazy"StaticLU factors at most 14 × 14 systems without allocation; got $(size(bordered, 1))"))
     return StaticSolve(LinearAlgebra.lu(bordered, LinearAlgebra.RowMaximum(); check = false))
 end
 

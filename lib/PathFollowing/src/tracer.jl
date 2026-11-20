@@ -86,12 +86,12 @@ function CommonSolve.init(
         first_step::Real,
     )::Result{<:Tracer{E}, StepFailure{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
     # Checked in `E`, where a tiny or huge `first_step` rounds to 0 or Inf.
-    0 < E(first_step) < Inf || throw(ArgumentError("first_step must be positive and finite in $E; got $first_step"))
+    0 < E(first_step) < Inf || throw(ArgumentError(lazy"first_step must be positive and finite in $E; got $first_step"))
     # The step control computes in its own type: a shrink below 1 there can round back to the same step in `E`.
     algorithm.step_control isa StepControl{E} ||
-        throw(ArgumentError("the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
+        throw(ArgumentError(lazy"the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
     algorithm.split_check isa Union{Nothing, HalfStepCheck{E}} ||
-        throw(ArgumentError("the split check's element type must be the start's $E; got $(typeof(algorithm.split_check))"))
+        throw(ArgumentError(lazy"the split check's element type must be the start's $E; got $(typeof(algorithm.split_check))"))
     (; start) = problem
     length(problem.direction) == length(start) || throw(DimensionMismatch("start and direction differ in length"))
     work = workspace(start, E)
@@ -123,7 +123,7 @@ function evaluate!!(tracer::T, point::AbstractVector)::Tuple{T, Bool} where {T <
     residual, jacobian = tracer.problem.system!!(work.residual, work.jacobian, point)
     # Folded away when the types match, as they must for the tracer to keep its type.
     residual isa typeof(work.residual) && jacobian isa typeof(work.jacobian) || throw(
-        ArgumentError("system!! must return its residual and Jacobian as a $(typeof(work.residual)) and a $(typeof(work.jacobian))")
+        ArgumentError(lazy"system!! must return its residual and Jacobian as a $(typeof(work.residual)) and a $(typeof(work.jacobian))")
     )
     @reset tracer.work.residual = residual
     @reset tracer.work.jacobian = jacobian
@@ -157,7 +157,7 @@ function step!!(
         bound::Union{Nothing, Bound{E}} = nothing,
     )::Tuple{T, Result{AcceptedStep{E}, StepFailure{E}}} where {E <: Real, T <: Tracer{E}}
     (; algorithm) = tracer
-    on_bound(bound, tracer.point) && throw(ArgumentError("the point lies on the bound $bound"))
+    on_bound(bound, tracer.point) && throw(ArgumentError(lazy"the point lies on the bound $bound"))
     refusals = 0
     last_refusal = NoRefusal
     taken = tracer.step_length
@@ -407,7 +407,7 @@ end
 """
 function settled_scale(scale::E)::E where {E <: Real}
     # A throw: the fault lies in `converged`, and a refusal would only shrink the step until `TooManyRefusals`.
-    isfinite(scale) && scale >= 0 || throw(ArgumentError("converged settled at scale $scale; it may settle only at a finite, non-negative scale"))
+    isfinite(scale) && scale >= 0 || throw(ArgumentError(lazy"converged settled at scale $scale; it may settle only at a finite, non-negative scale"))
     return scale
 end
 

@@ -899,6 +899,17 @@ end
         @test_throws ArgumentError init(CurveProblem(heap_answer, static_start...), algorithm(E; linear_solver = StaticLU()); first_step = E(1) / 10)
     end
 
+    @testset "static settings are isbits with any target dropped, so a GPU kernel can take them" begin
+        check = HalfStepCheck{E}(; trigger = 13 // 10, tolerance = one(E) / 100)
+        for targets in ((one(E) / 4, one(E) / 10, one(E) / 10), (nothing, nothing, one(E) / 10), (one(E) / 4, nothing, nothing)), split_check in (nothing, check)
+            (target_contraction, target_correction, target_turn) = targets
+            step_control = StepControl(; target_contraction, target_correction, target_turn, max_step_growth = E(2), max_step = one(E) / 2)
+            settings = algorithm(E; step_control, split_check, metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU())
+            @test isbits(step_control) && isbits(settings)
+            @test (step_control.target_contraction, step_control.target_correction, step_control.target_turn) === targets
+        end
+    end
+
     @testset "Into writes a mutable array in place and rebuilds a static one" begin
         vector = E[1, 2]
         @test (Into(vector) .= 2 .* vector) === vector == E[2, 4]

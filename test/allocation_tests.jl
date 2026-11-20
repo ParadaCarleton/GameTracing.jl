@@ -59,7 +59,7 @@ end
     rng = fresh_rng()
     point, left, right = randn(rng, element, 7), randn(rng, element, 7), randn(rng, element, 7)
     frozen = PathFollowing.frozen_metric(FisherMetric((1:2, 3:3, 4:6), one(element), LogPrecisionTerm, one(element), one(element)), point)
-    @test warm_bytes(PathFollowing.freeze_metric!, frozen, point) == 0
+    @test warm_bytes(PathFollowing.freeze_metric!!, frozen, point) == 0
     @test warm_bytes(PathFollowing.metric_inner, frozen, left, right) == 0
-    @test warm_bytes(PathFollowing.metric_apply!, similar(point), frozen, left) == 0
+    @test warm_bytes(PathFollowing.metric_apply!!, similar(point), frozen, left) == 0
 end

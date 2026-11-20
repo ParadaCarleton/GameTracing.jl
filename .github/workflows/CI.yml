@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
-      - run: fatou lint --color never src test
+      - run: fatou lint --color never src test lib/PathFollowing/src lib/PathFollowing/test
   corset:
     runs-on: ubuntu-latest
     steps:

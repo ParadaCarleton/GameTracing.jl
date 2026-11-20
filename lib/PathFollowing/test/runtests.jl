@@ -1,59 +1,55 @@
 using PathFollowing
 using PathFollowing: AcceptAll, factored_sign, metric_angle
-using CommonSolve: init, step!
+using Accessors: @reset
+using CommonSolve: init
 using ErrorTypes: is_error, unwrap, unwrap_error
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray
-using LinearAlgebra: det
+using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
+using StaticArrays: SMatrix, SVector
 using Supposition: Data, @check
-using Test: @test, @testset, @test_throws
+using Test: @inferred, @test, @testset, @test_throws
 
 # A GPU array that indexes one element at a time throws, so the JLArrays tests catch every scalar access.
 allowscalar(false)
 
 """
 A circle of `radius` about the origin in `(x, y)`: `H = x² + y² - radius²`. Broadcasts and reductions only, so it
-also runs on GPU arrays, which refuse scalar indexing.
+also runs on GPU arrays, which refuse scalar indexing, and on static arrays.
 """
 struct Circle{E <: Real}
     radius::E
 end
 
-function (circle::Circle{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual .= sum(abs2, point) - circle.radius^2
-    jacobian .= 2 .* transpose(point)
-    return nothing
+function (circle::Circle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return (Into(residual) .= sum(abs2, point) - circle.radius^2, Into(jacobian) .= 2 .* transpose(point))
+end
+
+"""`residual` and `jacobian`, one row of two, set to `entry` and `row` (`Into`): a test system's return on any storage."""
+function one_row!!(residual::R, jacobian::J, entry::E, row::NTuple{2, E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return (Into(residual) .= SVector(entry), Into(jacobian) .= SMatrix{1, 2, E}(row...))
 end
 
 """The line `x = y`: `H = x - y`."""
 struct Line end
 
-function (::Line)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual[1] = point[1] - point[2]
-    jacobian[1, 1] = one(E)
-    jacobian[1, 2] = -one(E)
-    return nothing
+function (::Line)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return one_row!!(residual, jacobian, point[1] - point[2], (one(E), -one(E)))
 end
 
 """The curve `λ = u - u³` in `(u, λ)`: λ turns at a minimum, `u = -1/√3`, then at a maximum, `u = 1/√3`."""
 struct Wiggle end
 
-function (::Wiggle)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual[1] = point[2] - point[1] + point[1]^3
-    jacobian[1, 1] = 3 * point[1]^2 - 1
-    jacobian[1, 2] = one(E)
-    return nothing
+function (::Wiggle)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return one_row!!(residual, jacobian, point[2] - point[1] + point[1]^3, (3 * point[1]^2 - 1, one(E)))
 end
 
 """The fold `H = u² - λ` in `(u, λ)`: λ turns back at `u = 0`."""
 struct Fold end
 
-function (::Fold)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual[1] = point[1]^2 - point[2]
-    jacobian[1, 1] = 2 * point[1]
-    jacobian[1, 2] = -one(E)
-    return nothing
+function (::Fold)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return one_row!!(residual, jacobian, point[1]^2 - point[2], (2 * point[1], -one(E)))
 end
 
 """
@@ -64,12 +60,9 @@ struct Pitchfork{E <: Real}
     tilt::E
 end
 
-function (pitchfork::Pitchfork{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+function (pitchfork::Pitchfork{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     (u, lambda) = (point[1], point[2])
-    residual[1] = u^3 - lambda * u - pitchfork.tilt
-    jacobian[1, 1] = 3 * u^2 - lambda
-    jacobian[1, 2] = -u
-    return nothing
+    return one_row!!(residual, jacobian, u^3 - lambda * u - pitchfork.tilt, (3 * u^2 - lambda, -u))
 end
 
 """`H = u - λ` up to `λ = edge`; past it a NaN residual, or a zero Jacobian when `singular`."""
@@ -78,12 +71,10 @@ struct Edge{E <: Real}
     singular::Bool
 end
 
-function (edge::Edge{E})(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+function (edge::Edge{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     past = point[2] > edge.edge
-    residual[1] = past && !edge.singular ? E(NaN32) : point[1] - point[2]
-    jacobian[1, 1] = past && edge.singular ? zero(E) : one(E)
-    jacobian[1, 2] = past && edge.singular ? zero(E) : -one(E)
-    return nothing
+    row = past && edge.singular ? (zero(E), zero(E)) : (one(E), -one(E))
+    return one_row!!(residual, jacobian, past && !edge.singular ? E(NaN32) : point[1] - point[2], row)
 end
 
 """`H = u - λ`, whose `bad_call`-th evaluation is NaN, or has a zero Jacobian when `singular`."""
@@ -93,20 +84,18 @@ mutable struct Flaky
     const singular::Bool
 end
 
-function (flaky::Flaky)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+function (flaky::Flaky)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     flaky.calls += 1
     bad = flaky.calls == flaky.bad_call
-    residual[1] = bad && !flaky.singular ? E(NaN32) : point[1] - point[2]
-    jacobian[1, 1] = bad && flaky.singular ? zero(E) : one(E)
-    jacobian[1, 2] = bad && flaky.singular ? zero(E) : -one(E)
-    return nothing
+    row = bad && flaky.singular ? (zero(E), zero(E)) : (one(E), -one(E))
+    return one_row!!(residual, jacobian, bad && !flaky.singular ? E(NaN32) : point[1] - point[2], row)
 end
 
 """A correction's length as the largest move of any coordinate, unbounded."""
 struct LargestMove end
 
 function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return maximum(abs.(to .- from))
+    return mapreduce((later, earlier) -> abs(later - earlier), max, to, from)
 end
 PathFollowing.correction_bound(::LargestMove)::Real = Inf32
 
@@ -124,11 +113,8 @@ one before it.
 """
 struct Overshoot end
 
-function (::Overshoot)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual[1] = point[1]^2 + point[2]^2 - 1
-    jacobian[1, 1] = point[1] / 5
-    jacobian[1, 2] = point[2] / 5
-    return nothing
+function (::Overshoot)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return one_row!!(residual, jacobian, point[1]^2 + point[2]^2 - 1, (point[1] / 5, point[2] / 5))
 end
 
 """
@@ -137,23 +123,27 @@ onto the line at `(-1/5, 1)`. Its half steps keep the parabola and reach `(1/2, 
 """
 struct ParabolaAndLine end
 
-function (::ParabolaAndLine)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
+function (::ParabolaAndLine)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     parabola, line = point[1] - point[2]^2 / 2, point[1] + one(E) / 5
-    residual[1] = parabola * line
-    jacobian[1, 1] = parabola + line
-    jacobian[1, 2] = -point[2] * line
-    return nothing
+    return one_row!!(residual, jacobian, parabola * line, (parabola + line, -point[2] * line))
 end
 
 """The line `x = 0`, its residual NaN for `y` in `(1/4, 3/4)`: a step of 1 up from the origin sees only `y = 1`."""
 struct BandedLine end
 
-function (::BandedLine)(residual::AbstractVector{E}, jacobian::AbstractMatrix{E}, point::AbstractVector{E})::Nothing where {E <: Real}
-    residual[1] = one(E) / 4 < point[2] < 3 * one(E) / 4 ? E(NaN32) : point[1]
-    jacobian[1, 1] = one(E)
-    jacobian[1, 2] = zero(E)
-    return nothing
+function (::BandedLine)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    return one_row!!(residual, jacobian, one(E) / 4 < point[2] < 3 * one(E) / 4 ? E(NaN32) : point[1], (one(E), zero(E)))
 end
+
+"""`LargestMove` that throws a `DomainError` on a point in `BandedLine`'s band, where that line has no residual."""
+struct BandAvoidingMove end
+
+function (::BandAvoidingMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    in_band = point -> one(E) / 4 < point[2] < 3 * one(E) / 4
+    (in_band(from) || in_band(to)) && throw(DomainError((from, to), "a point in BandedLine's band"))
+    return LargestMove()(from, to)
+end
+PathFollowing.correction_bound(::BandAvoidingMove)::Real = Inf32
 
 """A `converged` that ignores its contract and settles where `scale` is infinite."""
 settles_at_infinite_scale(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool = isinf(scale)
@@ -161,10 +151,22 @@ settles_at_infinite_scale(::AbstractVector, ::AbstractVector, ::AbstractVector, 
 """A `converged` that never holds."""
 never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
 
-"""The bytes a warm `step!` of `tracer` toward `bound` allocates."""
-function warm_bytes(tracer::Tracer, bound::Union{Nothing, Bound})::Int
-    step!(tracer, bound)
-    return @allocated step!(tracer, bound)
+"""`tracer` after two steps toward `bound`, and the bytes the second, warm `step!!` allocates."""
+function warm_bytes(tracer::T, bound::Union{Nothing, Bound})::Tuple{T, Int} where {T <: Tracer}
+    tracer, _ = step!!(tracer, bound)
+    bytes = @allocated((tracer, _) = step!!(tracer, bound))
+    return tracer, bytes
+end
+
+"""`tracer` advanced by one step toward `bound` (`step!!`), and its `AcceptedStep`; a failed step throws."""
+function accepted(tracer::T, bound::Union{Nothing, Bound} = nothing)::Tuple{T, AcceptedStep} where {T <: Tracer}
+    tracer, outcome = step!!(tracer, bound)
+    return tracer, unwrap(outcome)
+end
+
+"""The `StepFailure` of `tracer`'s next step toward `bound`; an accepted step throws."""
+function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::StepFailure
+    return unwrap_error(last(step!!(tracer, bound)))
 end
 
 """Converged when the correction, times `scale`, moved no coordinate more than `tolerance`."""
@@ -186,29 +188,27 @@ struct CountingMetric <: PathFollowing.Metric
     freezes::Base.RefValue{Int}
 end
 
-"""`CountingMetric`'s state: its counter and its weights at the point it is frozen at."""
-struct CountingFrozen{E <: Real}
+"""`CountingMetric`'s state: its counter and its weights at the point it is frozen at, in the point's storage."""
+struct CountingFrozen{E <: Real, V <: AbstractVector{E}}
     freezes::Base.RefValue{Int}
-    weights::Vector{E}
+    weights::V
 end
 
-function PathFollowing.frozen_metric(metric::CountingMetric, point::AbstractVector{E})::CountingFrozen{E} where {E <: Real}
-    return freeze_metric!(CountingFrozen(metric.freezes, zeros(E, length(point))), point)
+function PathFollowing.frozen_metric(metric::CountingMetric, point::V)::CountingFrozen{E, V} where {E <: Real, V <: AbstractVector{E}}
+    return freeze_metric!!(CountingFrozen(metric.freezes, zero(point)), point)
 end
 
-function PathFollowing.freeze_metric!(frozen::CountingFrozen{E}, point::AbstractVector{E})::CountingFrozen{E} where {E <: Real}
+function PathFollowing.freeze_metric!!(frozen::F, point::AbstractVector{E})::F where {E <: Real, F <: CountingFrozen{E}}
     frozen.freezes[] += 1
-    frozen.weights .= 1 .+ abs.(point)
-    return frozen
+    return CountingFrozen(frozen.freezes, Into(frozen.weights) .= 1 .+ abs.(point))
 end
 
 function PathFollowing.metric_inner(frozen::CountingFrozen{E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
     return sum(frozen.weights .* left .* right)
 end
 
-function PathFollowing.metric_apply!(out::AbstractVector{E}, frozen::CountingFrozen{E}, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    out .= frozen.weights .* vector
-    return out
+function PathFollowing.metric_apply!!(out::V, frozen::CountingFrozen{E}, vector::AbstractVector{E})::V where {E <: Real, V <: AbstractVector{E}}
+    return Into(out) .= frozen.weights .* vector
 end
 
 """A `PseudoArclength` in `E` with Euclidean metrics and the given overrides."""
@@ -235,7 +235,7 @@ function traced(problem::CurveProblem, settings::PseudoArclength, steps::Integer
     tracer = unwrap(started)
     points = [copy(tracer.point)]
     for _ in 1:steps
-        outcome = step!(tracer)
+        tracer, outcome = step!!(tracer)
         is_error(outcome) && return outcome
         push!(points, copy(tracer.point))
     end
@@ -248,13 +248,17 @@ function untargeted(system::Any, start::Vector{E}, direction::Vector{E}; first_s
     return unwrap(init(CurveProblem(system, start, direction), algorithm(E; step_control = control, overrides...); first_step))
 end
 
-"""The accepted steps of `tracer` toward `bound` until its point lies on it, at most `limit`; a failed step throws."""
-function bounded_steps(tracer::Tracer{E}, bound::Bound{E}, limit::Integer)::Vector{AcceptedStep{E}} where {E <: Real}
+"""
+`tracer` advanced toward `bound` until its point lies on it, at most `limit` steps, and the accepted steps; a failed
+step throws.
+"""
+function bounded_steps(tracer::T, bound::Bound{E}, limit::Integer)::Tuple{T, Vector{AcceptedStep{E}}} where {E <: Real, T <: Tracer{E}}
     steps = AcceptedStep{E}[]
     while tracer.point[bound.coordinate] != bound.value && length(steps) < limit
-        push!(steps, unwrap(step!(tracer, bound)))
+        tracer, step = accepted(tracer, bound)
+        push!(steps, step)
     end
-    return steps
+    return tracer, steps
 end
 
 @testset "PathFollowing $E" for E in (Float32, Float64)
@@ -289,7 +293,7 @@ end
         lambdas = E[]
         failure = nothing
         for _ in 1:10_000
-            outcome = step!(tracer)
+            tracer, outcome = step!!(tracer)
             if is_error(outcome)
                 failure = unwrap_error(outcome)
                 break
@@ -306,20 +310,24 @@ end
             # The branch u = 0 changes sign at the bifurcation point λ = 0, so starts on either side differ.
             settings = algorithm(E; linear_solver)
             tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), start, E[0, 1]), settings; first_step = E(3) / 10))
-            @test tracer.orientation == expected == sign(det([tracer.jacobian; tracer.tangent']))
+            @test tracer.orientation == expected == sign(det([tracer.work.jacobian; tracer.tangent']))
             for _ in 1:6
-                unwrap(step!(tracer))
-                @test tracer.orientation == expected == sign(det([tracer.jacobian; tracer.tangent']))
+                tracer, _ = accepted(tracer)
+                @test tracer.orientation == expected == sign(det([tracer.work.jacobian; tracer.tangent']))
             end
             # Only the fallback fills the matrix of the second factorization.
-            @test all(iszero, tracer.oriented) == (linear_solver isa LUFactorization)
+            @test all(iszero, tracer.linear.oriented) == (linear_solver isa LUFactorization)
         end
     end
 
     @testset "without an orientation check, a bifurcation crossing goes unremarked" begin
         settings = algorithm(E; orientation_check = nothing)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(E)), E[0, -1], E[0, 1]), settings; first_step = E(3) / 10))
-        steps = [unwrap(step!(tracer)) for _ in 1:6]
+        steps = AcceptedStep{E}[]
+        for _ in 1:6
+            tracer, step = accepted(tracer)
+            push!(steps, step)
+        end
         @test !any(step -> step.refusals > 0, steps)
         @test tracer.orientation == 0
         @test tracer.point[2] > 0
@@ -334,7 +342,7 @@ end
         tracer = unwrap(init(CurveProblem(Fold(), E[-1, 1], E[1, -1]), algorithm(E); first_step = E(1) / 100))
         for _ in 1:30
             before = tracer.step_length
-            step = unwrap(step!(tracer))
+            tracer, step = accepted(tracer)
             @test step.step_length <= before
             @test tracer.step_length <= 2 * step.step_length * (1 + eps(E))
             @test tracer.step_length <= one(E) / 2
@@ -356,7 +364,7 @@ end
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10))
         @test metric.freezes[] == 1
         for steps in 1:3
-            unwrap(step!(tracer))
+            tracer, _ = accepted(tracer)
             @test metric.freezes[] == steps + 1
             @test tracer.metric.weights == 1 .+ abs.(tracer.point)
             # The tangent has unit length in the metric frozen at its point.
@@ -369,7 +377,7 @@ end
         frozen = frozen_metric(FixedWeights([2, 3]), E[1, 1])
         @test eltype(frozen.weights) == E
         @test metric_inner(frozen, E[1, 2], E[3, 4]) == 2 * 3 + 3 * 8
-        @test metric_apply!(zeros(E, 2), frozen, E[1, 2]) == E[2, 6]
+        @test metric_apply!!(zeros(E, 2), frozen, E[1, 2]) == E[2, 6]
         @test_throws DimensionMismatch frozen_metric(FixedWeights(ones(E, 3)), E[1, 1])
     end
 
@@ -430,7 +438,7 @@ end
             max_step = E(1),
         )
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = one(E)))
-        step = unwrap(step!(tracer))
+        tracer, step = accepted(tracer)
         @test step.refusals > 0
         @test step.turn <= 2 * control.target_turn
     end
@@ -443,7 +451,7 @@ end
             max_step = E(1),
         )
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = E(4) / 5))
-        step = unwrap(step!(tracer))
+        tracer, step = accepted(tracer)
         @test step.refusals == 1
         @test step.step_length ≈ E(4) / 5 / (atan(E(4) / 3) * 10) rtol = 1 // 100
     end
@@ -455,7 +463,7 @@ end
             max_step = E(1),
         )
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; step_control = control); first_step = E(1) / 1000))
-        unwrap(step!(tracer))
+        tracer, _ = accepted(tracer)
         @test tracer.step_length == E(2) / 1000
     end
 
@@ -479,7 +487,7 @@ end
         iterations = map(estimates) do error_estimate
             corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2, error_estimate)
             tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control = control); first_step = E(1) / 2))
-            step = unwrap(step!(tracer))
+            tracer, step = accepted(tracer)
             @test abs(hypot(tracer.point...) - 1) <= settle
             step.iterations
         end
@@ -488,7 +496,7 @@ end
 
     @testset "a custom distance measures corrections" begin
         settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = LargestMove()))
-        step = unwrap(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10)) |> step!)
+        _, step = accepted(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10)))
         @test step.first_correction > 0
     end
 
@@ -499,23 +507,23 @@ end
             max_step = one(E), reach = one(E) / 4,
         )
         problem = CurveProblem(Circle(one(E)), E[1, 0], E[0, 1])
-        step = unwrap(step!(unwrap(init(problem, algorithm(E; step_control = control); first_step = E(3) / 4))))
+        _, step = accepted(unwrap(init(problem, algorithm(E; step_control = control); first_step = E(3) / 4)))
         @test (step.refusals, step.step_length) == (1, E(3) / 8)
-        failure = unwrap_error(step!(unwrap(init(problem, algorithm(E; step_control = control, max_refusals = 0); first_step = E(3) / 4))))
+        failure = failed_step(unwrap(init(problem, algorithm(E; step_control = control, max_refusals = 0); first_step = E(3) / 4)))
         @test (failure.cause, failure.last_refusal) == (TooManyRefusals, FarFromPredictor)
     end
 
     @testset "a start settled by a long correction allows no long move: the allowance is the corrector's error bound" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 100))
         # A step of 1/100 at reach 3, and a converged point 1/2 from its predictor (50 lengths), its last correction zero.
-        tracer.predicted .= E[1, 1 // 100]
-        tracer.iterate .= E[3 // 2, 1 // 100]
-        copyto!(tracer.previous, tracer.iterate)
+        tracer.work.predicted .= E[1, 1 // 100]
+        tracer.work.iterate .= E[3 // 2, 1 // 100]
+        copyto!(tracer.work.previous, tracer.work.iterate)
         # The start settled by a correction of length 1, at a convergence scale that bounds its error by 1/1000.
-        tracer.settle_error = PathFollowing.settle_error(tracer, E(1) / 1000, E[2, 0], E[1, 0])
+        @reset tracer.settle_error = PathFollowing.settle_error(tracer, E(1) / 1000, E[2, 0], E[1, 0])
         @test PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
         # An error bound of 1, as a tolerance of 1 allows, cannot tell that move from the corrector's noise.
-        tracer.settle_error = PathFollowing.settle_error(tracer, one(E), E[2, 0], E[1, 0])
+        @reset tracer.settle_error = PathFollowing.settle_error(tracer, one(E), E[2, 0], E[1, 0])
         @test !PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
     end
 
@@ -525,7 +533,7 @@ end
         corrector = Newton(; max_iterations = 8, converged = settles_at_infinite_scale, contraction_limit = E(100), error_estimate = ContractionEstimate(; safety = E(1) / 5))
         step_control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
         tracer = unwrap(init(CurveProblem(Overshoot(), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control, orientation_check = nothing); first_step = E(1) / 10))
-        @test_throws ArgumentError step!(tracer)
+        @test_throws ArgumentError step!!(tracer)
         @test_throws ArgumentError PathFollowing.settled_scale(E(NaN32))
         @test PathFollowing.settled_scale(zero(E)) == 0
     end
@@ -535,24 +543,43 @@ end
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
         for (split_check, point, refusals) in ((check, E[1 // 8, 1 // 2], 1), (nothing, E[-1 // 5, 1], 0))
             tracer = untargeted(ParabolaAndLine(), E[0, 0], E[0, 1]; first_step = 1, orientation_check = nothing, split_check)
-            accepted = unwrap(step!(tracer))
+            tracer, step = accepted(tracer)
             @test tracer.point ≈ point atol = 100 * tolerance
-            @test accepted.refusals == refusals
+            @test step.refusals == refusals
         end
     end
 
     @testset "a half step that fails refuses the step as SplitMismatch" begin
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
-        failure = unwrap_error(step!(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, split_check = check, max_refusals = 0)))
+        failure = failed_step(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, split_check = check, max_refusals = 0))
         @test (failure.cause, failure.last_refusal) == (TooManyRefusals, SplitMismatch)
-        @test unwrap(step!(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, max_refusals = 0))).step_length == 1
+        @test last(accepted(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, max_refusals = 0))).step_length == 1
+    end
+
+    @testset "a failed half step refuses before the distance sees its rejected point, and the buffers come back" begin
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = BandAvoidingMove())
+        banded(max_refusals) = untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, corrector, split_check = check, max_refusals)
+        failure = failed_step(banded(0))
+        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, SplitMismatch)
+        tracer = banded(0)
+        tracer.work.iterate .= E[0, 1]
+        tracer.work.candidate .= E[0, 1]
+        tracer.work.previous .= E[0, 7 // 8]
+        # The half predictor at y = 1/2 lies in the band, so the first half step fails.
+        tracer, refuses = PathFollowing.split_refused!!(tracer, check, zero(E), nothing, false, one(E))
+        @test (refuses, tracer.work.iterate, tracer.work.candidate, tracer.work.previous) == (true, E[0, 1], E[0, 1], E[0, 7 // 8])
+        # The retries: SplitMismatch at 1, NotFiniteResidual at 1/2 (in the band), and 1/4 lies on its edge.
+        tracer, step = accepted(banded(60))
+        @test (step.refusals, step.step_length, tracer.point) == (2, one(E) / 4, E[0, 1 // 4])
     end
 
     @testset "half steps of a landing end on the bound, and the step lands" begin
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; split_check = check); first_step = E(1) / 10))
         bound = Bound(2, E(1) / 20)
-        @test unwrap(step!(tracer, bound)).refusals == 0
+        tracer, step = accepted(tracer, bound)
+        @test step.refusals == 0
         @test tracer.point[2] == bound.value
         @test tracer.point[1] ≈ sqrt(1 - bound.value^2) atol = 100 * tolerance
     end
@@ -561,10 +588,10 @@ end
         # `CountingMetric` weighs each coordinate by 1 + |xᵢ|, so the metric frozen at the start measures another length.
         problem = CurveProblem(Circle(one(E)), E[1, 0], E[0, 1])
         tracer = unwrap(init(problem, algorithm(E; tolerance = one(E) / 100, metric = CountingMetric(Ref(0))); first_step = E(1) / 2))
-        unwrap(step!(tracer))
+        tracer, _ = accepted(tracer)
         scratch = similar(tracer.point)
-        at_point = PathFollowing.metric_distance(tracer.metric, scratch, tracer.previous, tracer.point)
-        at_start = PathFollowing.metric_distance(frozen_metric(CountingMetric(Ref(0)), problem.start), scratch, tracer.previous, tracer.point)
+        at_point = PathFollowing.metric_distance(tracer.metric, scratch, tracer.work.previous, tracer.point)
+        at_start = PathFollowing.metric_distance(frozen_metric(CountingMetric(Ref(0)), problem.start), scratch, tracer.work.previous, tracer.point)
         @test tracer.settle_error ≈ at_point
         @test !(at_point ≈ at_start)
     end
@@ -584,28 +611,28 @@ end
     @testset "a predictor that reaches the bound is cut there and lands with the value exact" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
         bound = Bound(2, E(1) / 20)
-        accepted = unwrap(step!(tracer, bound))
+        tracer, step = accepted(tracer, bound)
         @test tracer.point[2] == bound.value
         @test tracer.point[1] ≈ sqrt(1 - bound.value^2) atol = 100 * tolerance
         # The next step grows from the cut predictor, by at most max_step_growth.
-        @test accepted.step_length ≈ E(1) / 20 rtol = 10 * eps(E)
-        @test tracer.step_length <= 2 * accepted.step_length
-        @test_throws ArgumentError step!(tracer, bound)
+        @test step.step_length ≈ E(1) / 20 rtol = 10 * eps(E)
+        @test tracer.step_length <= 2 * step.step_length
+        @test_throws ArgumentError step!!(tracer, bound)
     end
 
     @testset "a step short of the bound moves as without one" begin
         free = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
         bounded = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
-        unwrap(step!(free))
-        unwrap(step!(bounded, Bound(2, E(1) / 4)))
+        free, _ = accepted(free)
+        bounded, _ = accepted(bounded, Bound(2, E(1) / 4))
         @test (bounded.point, bounded.tangent, bounded.step_length) == (free.point, free.tangent, free.step_length)
     end
 
     @testset "a corrected point past the bound refuses the step as PastBound" begin
         # From (-7/25, -24/25) a step of 4/5 passes y's minimum at (0, -1) to (3/5, -4/5), past y = -9/10.
         tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5, max_refusals = 0)
-        failure = unwrap_error(step!(tracer, Bound(2, -E(9) / 10)))
-        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, PastBound)
+        tracer, outcome = step!!(tracer, Bound(2, -E(9) / 10))
+        @test (unwrap_error(outcome).cause, unwrap_error(outcome).last_refusal) == (TooManyRefusals, PastBound)
         @test tracer.point == E[-7, -24] ./ 25
     end
 
@@ -619,15 +646,15 @@ end
         settings = algorithm(E; step_control = control, max_refusals = 2)
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(100)))
         bound = Bound(2, E(9) / 10)
-        accepted = unwrap(step!(tracer, bound))
-        @test accepted.refusals >= 1
-        @test accepted.step_length < E(9) / 10
-        bounded_steps(tracer, bound, 40)
+        tracer, step = accepted(tracer, bound)
+        @test step.refusals >= 1
+        @test step.step_length < E(9) / 10
+        tracer, _ = bounded_steps(tracer, bound, 40)
         @test tracer.point ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
         # Without retries the failure reports the cut predictor it refused.
         settings = algorithm(E; step_control = control, max_refusals = 0)
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(100)))
-        failure = unwrap_error(step!(tracer, bound))
+        failure = failed_step(tracer, bound)
         @test failure.cause == TooManyRefusals
         @test failure.step_length ≈ E(9) / 10 rtol = 10 * eps(E)
     end
@@ -636,14 +663,15 @@ end
         # Up x = y from (1, 1), y = nextfloat(1) is one ulp away. Judging the cut predictor failed this as Unresolved.
         tracer = unwrap(init(CurveProblem(Line(), E[1, 1], E[1, 1]), algorithm(E); first_step = E(1) / 10))
         bound = Bound(2, nextfloat(one(E)))
-        unwrap(step!(tracer, bound))
+        tracer, _ = accepted(tracer, bound)
         @test tracer.point[2] == bound.value
         @test tracer.point[1] ≈ bound.value atol = 4 * eps(E)
         # An uncut step ends one ulp short of the bound, and the next step lands on it.
         tracer = unwrap(init(CurveProblem(Line(), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 10))
-        @test unwrap(step!(tracer, Bound(2, one(E)))).step_length == E(1) / 10
+        tracer, step = accepted(tracer, Bound(2, one(E)))
+        @test step.step_length == E(1) / 10
         bound = Bound(2, nextfloat(tracer.point[2]))
-        unwrap(step!(tracer, bound))
+        tracer, _ = accepted(tracer, bound)
         @test tracer.point[2] == bound.value
     end
 
@@ -653,7 +681,7 @@ end
         control = StepControl(; targets..., max_step_growth = E(2), max_step = one(E), shrink = prevfloat(one(E)))
         settings = algorithm(E; step_control = control, accept = (start, predicted, corrected) -> false)
         tracer = unwrap(init(CurveProblem(Line(), E[0, 0], E[1, 1]), settings; first_step = nextfloat(zero(E))))
-        failure = unwrap_error(step!(tracer))
+        failure = failed_step(tracer)
         @test (failure.cause, failure.last_refusal, failure.refusals) == (Unresolved, AcceptRefused, 1)
         @test failure.step_length == nextfloat(zero(E))
     end
@@ -661,22 +689,24 @@ end
     @testset "a bounded step over a fold's top stops at the first crossing" begin
         # From (3/5, 4/5) a step of 4/5 passes y's maximum at (0, 1) to (-7/25, 24/25), so it meets y = 9/10 twice.
         tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)
-        @test length(bounded_steps(tracer, Bound(2, E(9) / 10), 1)) == 1
+        tracer, steps = bounded_steps(tracer, Bound(2, E(9) / 10), 1)
+        @test length(steps) == 1
         @test tracer.point ≈ [sqrt(E(19)) / 10, E(9) / 10] atol = 100 * tolerance
         # y = 1/2 lies behind the start, so the same step stays above it.
         tracer = untargeted(Circle(one(E)), E[3, 4] ./ 5, E[-1, 0]; first_step = E(4) / 5)
-        unwrap(step!(tracer, Bound(2, one(E) / 2)))
+        tracer, _ = accepted(tracer, Bound(2, one(E) / 2))
         @test tracer.point ≈ E[-7, 24] ./ 25 atol = 100 * tolerance
     end
 
     @testset "a bounded step through a fold's bottom stops at the first crossing" begin
         # From (-7/25, -24/25) the step passes y's minimum at (0, -1); it meets y = -97/100 at x = ∓0.2431, the first at -.
         tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5)
-        @test length(bounded_steps(tracer, Bound(2, -E(97) / 100), 1)) == 1
+        tracer, steps = bounded_steps(tracer, Bound(2, -E(97) / 100), 1)
+        @test length(steps) == 1
         @test tracer.point ≈ [-sqrt(1 - E(97)^2 / 100^2), -E(97) / 100] atol = 100 * tolerance
         # y = -9/10 lies past the step's end, and first behind its start: the refused step shrinks and lands ahead.
         tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5)
-        steps = bounded_steps(tracer, Bound(2, -E(9) / 10), 4)
+        tracer, steps = bounded_steps(tracer, Bound(2, -E(9) / 10), 4)
         @test first(steps).refusals == 1
         @test tracer.point ≈ [sqrt(E(19)) / 10, -E(9) / 10] atol = 100 * tolerance
     end
@@ -685,19 +715,19 @@ end
         # From (1, 0) toward rising y the step of 4/5 ends at (3/5, 4/5); y = -1/10 lies behind, at (√99/10, -1/10).
         tracer = untargeted(Circle(one(E)), E[1, 0], E[0, 1]; first_step = E(4) / 5)
         bound = Bound(2, -E(1) / 10)
-        unwrap(step!(tracer, bound))
+        tracer, _ = accepted(tracer, bound)
         @test tracer.point ≈ E[3, 4] ./ 5 atol = 100 * tolerance
-        bounded_steps(tracer, bound, 20)
+        tracer, _ = bounded_steps(tracer, bound, 20)
         @test tracer.point ≈ [-sqrt(E(99)) / 10, -E(1) / 10] atol = 100 * tolerance
     end
 
     @testset "a step over two folds of λ = u - u³ stops at the crossing between them" begin
         # From u = -3/5 a step of 227/200 passes λ's minimum and maximum to u ≈ 3/5, λ ≈ 48/125; λ = 0 lies between.
         tracer = untargeted(Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0]; first_step = E(227) / 200, max_refusals = 0)
-        failure = unwrap_error(step!(tracer, Bound(2, zero(E))))
+        failure = failed_step(tracer, Bound(2, zero(E)))
         @test (failure.cause, failure.last_refusal) == (TooManyRefusals, PastBound)
         tracer = untargeted(Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0]; first_step = E(227) / 200)
-        bounded_steps(tracer, Bound(2, zero(E)), 20)
+        tracer, _ = bounded_steps(tracer, Bound(2, zero(E)), 20)
         @test tracer.point ≈ E[0, 0] atol = 100 * tolerance
     end
 
@@ -774,15 +804,21 @@ end
 
     @testset "a warm step allocates nothing, nor does one that lands on a bound" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
-        @test warm_bytes(tracer, nothing) == 0
+        @test last(warm_bytes(tracer, nothing)) == 0
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
         bound = Bound(2, E(3) / 20)
-        @test warm_bytes(tracer, bound) == 0
+        tracer, bytes = warm_bytes(tracer, bound)
+        @test bytes == 0
         @test tracer.point[2] == bound.value
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
         for bound in (nothing, Bound(2, E(3) / 20))
             tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; split_check = check); first_step = E(1) / 10))
-            @test warm_bytes(tracer, bound) == 0
+            @test last(warm_bytes(tracer, bound)) == 0
+            # A static tracer allocates nothing either, and its steps infer.
+            static_problem = CurveProblem(Circle(one(E)), SVector{2, E}(1, 0), SVector{2, E}(0, 1))
+            static = unwrap(init(static_problem, algorithm(E; split_check = check, linear_solver = StaticLU()); first_step = E(1) / 10))
+            @test last(warm_bytes(static, bound)) == 0
+            @inferred step!!(static, bound)
         end
     end
 
@@ -793,18 +829,18 @@ end
             settings = algorithm(E; linear_solver)
             host = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10))
             device = unwrap(init(CurveProblem(Circle(one(E)), JLArray(E[1, 0]), JLArray(E[0, 1])), settings; first_step = E(1) / 10))
-            @test all(array -> array isa JLArray, (device.point, device.jacobian, device.bordered, device.oriented, device.metric.weights))
+            @test all(array -> array isa JLArray, (device.point, device.work.jacobian, device.work.bordered, device.linear.oriented, device.metric.weights))
             # The bound at y = 3/4 lies 0.85 of arc away, 9 steps of 0.1: the cap only stops a trace that never lands.
             limit = isnothing(bound) ? 8 : 20
             while device.steps < limit && (isnothing(bound) || host.point[bound.coordinate] != bound.value)
-                unwrap(step!(host, bound))
-                unwrap(step!(device, bound))
+                host, _ = accepted(host, bound)
+                device, _ = accepted(device, bound)
                 @test Array(device.point) ≈ host.point rtol = 10 * tolerance
                 @test device.orientation == host.orientation == 1
             end
             # The bound stops both traces on it, its value exact.
             @test isnothing(bound) || Array(device.point)[2] == host.point[2] == bound.value
-            @test all(iszero, Array(device.oriented)) == (linear_solver isa LUFactorization)
+            @test all(iszero, Array(device.linear.oriented)) == (linear_solver isa LUFactorization)
         end
         # Host weights of any vector type reach the device in one copy, never element by element.
         for weights in (E[1, 2], E(1):E(1):E(2), view(E[1, 2, 3], 1:2))
@@ -813,16 +849,84 @@ end
         end
     end
 
+    @testset "a static start traces as a mutable one, step for step, through refusals and failures" begin
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        point_metric = (; metric = CountingMetric(Ref(0)), turn_metric = FixedWeights(ones(E, 2)))
+        # A split check; a landing; orientation flips at a bifurcation point; zero pivots past an edge; a point metric.
+        # Each case's last entry checks that its trace took that path: its refusals and its failure, if any.
+        cases = (
+            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), nothing, 12, (_, failure) -> isnothing(failure)),
+            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), Bound(2, E(3) / 4), 20, (_, failure) -> isnothing(failure)),
+            (Pitchfork(zero(E)), E[0, -1], E[0, 1], (;), nothing, 12, (refusals, _) -> refusals > 0),
+            (Edge(one(E), true), E[0, 0], E[1, 1], (;), nothing, 200, (_, failure) -> failure.last_refusal == SingularSystem),
+            (Fold(), E[-1, 1], E[1, -1], point_metric, nothing, 12, (_, failure) -> isnothing(failure)),
+        )
+        for (system, start, direction, overrides, bound, limit, took_its_path) in cases
+            in_place = unwrap(init(CurveProblem(system, start, direction), algorithm(E; overrides...); first_step = E(1) / 4))
+            static_problem = CurveProblem(system, SVector{2, E}(start), SVector{2, E}(direction))
+            static = unwrap(init(static_problem, algorithm(E; linear_solver = StaticLU(), overrides...); first_step = E(1) / 4))
+            @test static.point isa SVector{2, E} && static.work.bordered isa SMatrix{2, 2, E}
+            @test static.linear isa PathFollowing.StaticSolve && static.orientation == in_place.orientation
+            refusals, failure = 0, nothing
+            for _ in 1:limit
+                in_place, expected = step!!(in_place, bound)
+                static, outcome = step!!(static, bound)
+                @test is_error(outcome) == is_error(expected)
+                if is_error(expected)
+                    failure = unwrap_error(outcome)
+                    @test failure == unwrap_error(expected)
+                    break
+                end
+                refusals += unwrap(outcome).refusals
+                @test unwrap(outcome).refusals == unwrap(expected).refusals
+                @test static.point ≈ in_place.point atol = 10 * tolerance
+                @test static.orientation == in_place.orientation
+                isnothing(bound) || static.point[bound.coordinate] != bound.value || break
+            end
+            @test took_its_path(refusals, failure)
+            @test isnothing(bound) || static.point[bound.coordinate] == in_place.point[bound.coordinate] == bound.value
+        end
+    end
+
+    @testset "StaticLU takes a static start of at most 14 coordinates, and a mutable start takes LinearSolve" begin
+        static_start = (SVector{2, E}(1, 0), SVector{2, E}(0, 1))
+        @test_throws ArgumentError init(CurveProblem(Circle(one(E)), static_start...), algorithm(E); first_step = E(1) / 10)
+        @test_throws ArgumentError init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; linear_solver = StaticLU()); first_step = E(1) / 10)
+        wide = (SVector{15, E}(ntuple(index -> E(index == 1), 15)), SVector{15, E}(ntuple(index -> E(index == 2), 15)))
+        @test_throws ArgumentError init(CurveProblem(Circle(one(E)), wide...), algorithm(E; linear_solver = StaticLU(), metric = FixedWeights(ones(E, 15))); first_step = E(1) / 10)
+        # A system that answers a static tracer with heap arrays would change the tracer's type.
+        heap_answer = (residual, jacobian, _) -> (collect(residual), collect(jacobian))
+        @test_throws ArgumentError init(CurveProblem(heap_answer, static_start...), algorithm(E; linear_solver = StaticLU()); first_step = E(1) / 10)
+    end
+
+    @testset "Into writes a mutable array in place and rebuilds a static one" begin
+        vector = E[1, 2]
+        @test (Into(vector) .= 2 .* vector) === vector == E[2, 4]
+        static = SVector{2, E}(1, 2)
+        @test (Into(static) .= 2 .* static) === SVector{2, E}(2, 4)
+        @test static == SVector{2, E}(1, 2)
+        device = JLArray(E[1, 2])
+        @test (Into(device) .= 2 .* device) === device
+        @test Array(device) == E[2, 4]
+        @test PathFollowing.unit!!(SVector{3, E}(5, 5, 5), 2) === SVector{3, E}(0, 1, 0)
+        @test PathFollowing.set_element!!(SVector{2, E}(1, 2), 1, E(7)) === SVector{2, E}(7, 2)
+    end
+
+    @testset "the static orientation sign is the sign of the determinant, its row swaps counted" begin
+        @test !PathFollowing.odd_permutation(SVector(1, 2, 3)) && !PathFollowing.odd_permutation(SVector(2, 3, 1))
+        @test PathFollowing.odd_permutation(SVector(2, 1, 3)) && PathFollowing.odd_permutation(SVector(3, 2, 1))
+        for matrix in (SMatrix{3, 3, E}(0, 1, 0, 1, 0, 0, 0, 0, 1), SMatrix{3, 3, E}(0, 0, 1, 1, 0, 0, 0, 1, 0), SMatrix{3, 3, E}(2, 1, 1, 1, -3, 1, 4, 1, 5))
+            factorization = LinearAlgebra.lu(matrix, LinearAlgebra.RowMaximum(); check = false)
+            @test factored_sign(factorization) == sign(det(matrix))
+        end
+        @test factored_sign(LinearAlgebra.lu(SMatrix{2, 2, E}(1, 0, 0, NaN32), LinearAlgebra.RowMaximum(); check = false)) == 0
+    end
+
     @testset "property: random ellipses keep every point on the curve" begin
         ratio = Data.Floats{E}(; minimum = E(1) / 4, maximum = E(4), nans = false, infs = false)
         @check max_examples = 30 function on_ellipse(stretch = ratio)
-            ellipse! = (residual, jacobian, point) -> begin
-                residual[1] = point[1]^2 + (point[2] / stretch)^2 - 1
-                jacobian[1, 1] = 2 * point[1]
-                jacobian[1, 2] = 2 * point[2] / stretch^2
-                nothing
-            end
-            points = traced(CurveProblem(ellipse!, E[1, 0], E[0, 1]), algorithm(E), 20; first_step = E(1) / 10)
+            ellipse!! = (residual, jacobian, point) -> one_row!!(residual, jacobian, point[1]^2 + (point[2] / stretch)^2 - 1, (2 * point[1], 2 * point[2] / stretch^2))
+            points = traced(CurveProblem(ellipse!!, E[1, 0], E[0, 1]), algorithm(E), 20; first_step = E(1) / 10)
             points isa Vector && all(point -> abs(point[1]^2 + (point[2] / stretch)^2 - 1) <= 100 * tolerance, points)
         end
     end
@@ -832,10 +936,14 @@ end
     for linear_solver in (LUFactorization(), QRFactorization())
         settings = algorithm(BigFloat; linear_solver)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))
-        steps = [unwrap(step!(tracer)) for _ in 1:6]
+        steps = AcceptedStep{BigFloat}[]
+        for _ in 1:6
+            tracer, step = accepted(tracer)
+            push!(steps, step)
+        end
         # Steps across the bifurcation point flip the sign and are refused.
         @test sum(step -> step.refusals, steps) > 0
         @test tracer.orientation == 1 && tracer.point[2] < 0
-        @test all(iszero, tracer.oriented) == (linear_solver isa LUFactorization)
+        @test all(iszero, tracer.linear.oriented) == (linear_solver isa LUFactorization)
     end
 end

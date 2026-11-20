@@ -155,10 +155,10 @@ function PathFollowing.frozen_metric(metric::FisherMetric{R, E}, point::Abstract
     frozen = FrozenFisher{FisherMetric{R, E}, E, typeof(copied), typeof(pivots)}(
         metric, copied, probabilities, references, pivots, state_weight, palc_state_weight, fill!(similar(copied, 1), zero(E)),
     )
-    return PathFollowing.freeze_metric!(frozen, point)
+    return PathFollowing.freeze_metric!!(frozen, point)
 end
 
-function PathFollowing.freeze_metric!(frozen::F, point::AbstractVector{E})::F where {E <: Real, F <: FrozenFisher{<:FisherMetric, E}}
+function PathFollowing.freeze_metric!!(frozen::F, point::AbstractVector{E})::F where {E <: Real, F <: FrozenFisher{<:FisherMetric, E}}
     copyto!(frozen.point, point)
     for (player, range) in enumerate(frozen.metric.ranges)
         normalizer = log_normalizer(point, range)
@@ -325,11 +325,11 @@ function player_apply!(
 end
 
 # `M v = (state_weight Jᵀ G J v + (ω - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, one block per player (`player_apply!`).
-function PathFollowing.metric_apply!(
-        out::AbstractVector{E},
+function PathFollowing.metric_apply!!(
+        out::V,
         frozen::FrozenFisher{<:FisherMetric, E},
         vector::AbstractVector{E},
-    )::AbstractVector{E} where {E <: Real}
+    )::V where {E <: Real, V <: AbstractVector{E}}
     (; state_weight, palc_state_weight) = frozen
     root = only(frozen.root)
     gap_scale = state_weight * last(frozen.point) / palc_state_weight
@@ -357,7 +357,7 @@ function (dot::MetricDot)(left::AbstractVector{E}, right::AbstractVector{E})::E 
 end
 
 function BifurcationKit.reweight!(dot::MetricDot, point::BifurcationKit.BorderedArray)::Bool
-    PathFollowing.freeze_metric!(dot.frozen, point.u)
+    PathFollowing.freeze_metric!!(dot.frozen, point.u)
     return true
 end
 
@@ -374,7 +374,7 @@ end
 
 function (apply::MetricApply{F, E})(vector::AbstractVector{E})::AbstractVector{E} where {F, E <: Real}
     copyto!(apply.buffer, vector)
-    return PathFollowing.metric_apply!(vector, apply.frozen, apply.buffer)
+    return PathFollowing.metric_apply!!(vector, apply.frozen, apply.buffer)
 end
 
 """

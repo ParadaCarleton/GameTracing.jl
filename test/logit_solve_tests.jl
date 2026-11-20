@@ -450,7 +450,7 @@ end
         tracer = unwrap(GameTracing.path_init(gains, settings))
         # The opening predictor passes this precision, so the first attempt corrects at it.
         precision = tracer.step_length * last(tracer.tangent) * 9 // 10
-        failure = unwrap_error(GameTracing.stepped_landing!(tracer, precision, 10))
+        failure = unwrap_error(last(GameTracing.stepped_landing!!(tracer, precision, 10)))
         @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :refusals, precision)
         @test failure.context.last_refusal == PathFollowing.NotConverged
         @test iszero(failure.context.precision)

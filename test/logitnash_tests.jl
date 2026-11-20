@@ -315,8 +315,9 @@ end
     arms = ((PathFollowingSettings{element}(; growth_two(element)...), 1), (PathFollowingSettings{element}(; growth_two(element)..., split_check = nothing), 0))
     for (settings, refusals) in arms
         tracer = unwrap(GameTracing.path_init(gains, settings))
-        second = last([unwrap(GameTracing.path_step!(tracer, element(4), settings.max_steps, (;))) for _ in 1:2])
-        @test second.refusals == refusals
+        tracer, _ = GameTracing.path_step!!(tracer, element(4), settings.max_steps, (;))
+        _, second = GameTracing.path_step!!(tracer, element(4), settings.max_steps, (;))
+        @test unwrap(second).refusals == refusals
         landed = only(unwrap(logit_solve_lambda(gains, element(4); settings)))
         @test agreeing(first_choices(-landed.logits), reference.first_choices)
     end

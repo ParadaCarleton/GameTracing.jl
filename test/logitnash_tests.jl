@@ -256,12 +256,15 @@ function on_principal_branch(payoffs::Tuple, logits::AbstractVector{E}, precisio
 end
 
 """
-Whether a `PrecisionExhausted` failure's `context` on `payoffs` is the stall near the pitchfork: its failed iterate's
-`lambda` and its last accepted `precision` both in (0.8, 0.81), and its last accepted `logits` on the principal branch.
+Whether a `PrecisionExhausted` failure's `context` on `payoffs` is the stall near the pitchfork: an `unresolved` step
+whose failed iterate's `lambda` and last accepted `precision` lie in (0.8, 0.81), its last `correction` under 1e-3,
+and its last accepted `logits` on the principal branch. The seven replayed stalls corrected by 3.1e-5 to 2.6e-4.
 """
 function pitchfork_stall(payoffs::Tuple, context::NamedTuple)::Bool
     near = 0.8f0 < context.lambda < 0.81f0 && 0.8f0 < context.precision < 0.81f0
-    return near && on_principal_branch(payoffs, context.logits, context.precision)
+    # A NaN correction fails the comparison.
+    rounding = context.unresolved && context.correction < 1.0f-3
+    return near && rounding && on_principal_branch(payoffs, context.logits, context.precision)
 end
 
 """
@@ -459,15 +462,20 @@ end
 @testset "a pitchfork unfolded by 1e-4: Float64 traces settle on the (1, 1) arm; Float32 ones may stall, never leave it" begin
     precision = logitnash_equilibrium(UNFOLDED_PITCHFORK_GAME, 4).precision
     oracle = gambit_branch(UNFOLDED_PITCHFORK_GAME, precision)
-    # A stall passes only near the pitchfork on the principal branch: not 0.01 off it, nor last accepted at λ 0.5.
+    # A stall passes only as an unresolved step near the pitchfork on the principal branch, its last correction a
+    # rounding: not 0.01 off the branch, last accepted at λ 0.5, resolved, or corrected by NaN or 1e-2.
     pass = NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME))
     at_stall = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.8079f0))
     early = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.5f0))
-    @test pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
-    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall .+ 0.01f0))
-    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.5f0, logits = early))
+    measured = (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall, correction = 2.8f-4, unresolved = true)
+    @test pitchfork_stall(UNFOLDED_PITCHFORK_GAME, measured)
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; logits = at_stall .+ 0.01f0)))
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; precision = 0.5f0, logits = early)))
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; unresolved = false)))
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; correction = NaN32)))
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; correction = 1.0f-2)))
     # The Float32 fallback takes that stall only as `PrecisionExhausted` at noise 1e-4.
-    stall = TraceFailure(GameTracing.PrecisionExhausted, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
+    stall = TraceFailure(GameTracing.PrecisionExhausted, measured)
     @test known_float32_stall(stall, UNFOLDED_PITCHFORK_GAME, inv(float(10^4)))
     @test !known_float32_stall(stall, UNFOLDED_PITCHFORK_GAME, inv(float(10^3)))
     @test !known_float32_stall(TraceFailure(GameTracing.TraceStuck, stall.context), UNFOLDED_PITCHFORK_GAME, inv(float(10^4)))

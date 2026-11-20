@@ -643,6 +643,39 @@ end
 
 (hook::StopAt)(::AbstractVector, precision::Real)::Bool = precision < hook.swap_precision
 
+"""
+A `NormalFormGains` pass that counts in `builds` the work arrays it hands out (`pass_workspace`). It has no call
+without work arrays, so an evaluation that skips them throws a `MethodError`.
+"""
+struct CountingPass{G <: NormalFormGains}
+    inner::G
+    builds::Base.RefValue{Int}
+end
+
+function GameTracing.pass_workspace(pass::CountingPass, logits::AbstractVector)::NamedTuple
+    pass.builds[] += 1
+    return pass_workspace(pass.inner, logits)
+end
+
+function (pass::CountingPass)(
+        work::NamedTuple,
+        gain::AbstractVector,
+        gain_slope::AbstractMatrix,
+        gain_precision_slope::AbstractVector,
+        logits::AbstractVector,
+        precision::Real,
+    )::Nothing
+    return pass.inner(work, gain, gain_slope, gain_precision_slope, logits, precision)
+end
+
+GameTracing.logit_ranges(pass::CountingPass)::Tuple = logit_ranges(pass.inner)
+GameTracing.gap_bound(pass::CountingPass)::Real = gap_bound(pass.inner)
+
+"""`game`'s branch residual `F(point, pin)` from one evaluation on fresh work arrays (`GameResidual`)."""
+function branch_residual(game::LogitGame, point::AbstractVector{E}, pin::Real)::Vector{E} where {E <: Real}
+    return GameTracing.GameResidual(game, GameTracing.BranchWorkspace(game, point))(point, pin)
+end
+
 """`table` in Float32."""
 function single_precision(table::AbstractArray{T, N})::Array{Float32, N} where {T <: Real, N}
     return Float32.(table)

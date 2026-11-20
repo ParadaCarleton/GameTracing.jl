@@ -176,6 +176,31 @@ end
     end
 end
 
+"""Fill every float array in pass work `work` with NaN, so a read before a write shows in the pass's outputs."""
+function poison!(work::AbstractArray{<:AbstractFloat})::Nothing
+    fill!(work, NaN32)
+    return nothing
+end
+
+poison!(work::Union{Tuple, NamedTuple, AbstractArray})::Nothing = foreach(poison!, work)
+
+@testset "a NormalFormGains pass reads no work array before it writes it, so a trace can share them ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    for counts in ((2, 3), (2, 2, 2), (3, 2, 2, 2))
+        gains = NormalFormGains(ntuple(_ -> randn(rng, element, counts...), length(counts)))
+        width = logit_count(gains)
+        logits = randn(rng, element, width)
+        outputs()::Tuple = (zeros(element, width), zeros(element, width, width), zeros(element, width))
+        clean, poisoned = outputs(), outputs()
+        gains(pass_workspace(gains, logits), clean..., logits, element(2))
+        work = pass_workspace(gains, logits)
+        poison!(work)
+        gains(work, poisoned..., logits, element(2))
+        @test all(output -> all(isfinite, output), poisoned)
+        @test all(splat(isapprox), zip(clean, poisoned))
+    end
+end
+
 @testset "write_gain_slope! refuses a block that does not fit the two players' strategies" begin
     rng = fresh_rng()
     gains = NormalFormGains(ntuple(_ -> randn(rng, 3, 2), 2))

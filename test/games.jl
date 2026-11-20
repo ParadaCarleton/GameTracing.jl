@@ -314,12 +314,12 @@ end
 action_sign(action::Integer)::Int = 3 - 2 * action
 
 function (pass::NormalFormPass{N})(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector{E},
         ::Real,
-    )::Nothing where {N, E <: Real}
+    )::Tuple{G, S, P} where {N, E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     first_choices = inv.(one(E) .+ exp.(-logits))
     fill!(gain, zero(E))
     fill!(gain_slope, zero(E))
@@ -336,7 +336,7 @@ function (pass::NormalFormPass{N})(
         end
     end
     gain_slope .*= transpose(first_choices .* (one(E) .- first_choices))
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """Whether `logits` solves `pass` at `precision` to `Float64` rounding at `scale`, times the logits' size."""

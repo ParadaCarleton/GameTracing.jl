@@ -11,6 +11,7 @@ PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [sources]
@@ -20,3 +21,4 @@ BifurcationKit = {url = "https://github.com/ParadaCarleton/BifurcationKit.jl", r
 
 [compat]
 LogitNash = "=0.3.0"
+StaticArrays = "1"

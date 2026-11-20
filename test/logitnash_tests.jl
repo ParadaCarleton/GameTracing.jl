@@ -246,13 +246,58 @@ function unfolded_pitchforks(rng::AbstractRNG)::Vector{Tuple}
     return [unfolded_pitchfork(rng, scale) for scale in inv.(float.((10^4, 10^3, 10^2, 10))) for _ in 1:3]
 end
 
+"""
+Whether `logits` at `precision` lie within 1e-3 of `payoffs`' principal branch (`branch_reference`). On
+`UNFOLDED_PITCHFORK_GAME`, each measured Float32 stall's last accepted point lay within 3.5e-4 of it, the only root at λ 0.8079.
+"""
+function on_principal_branch(payoffs::Tuple, logits::AbstractVector{E}, precision::Real)::Bool where {E <: Real}
+    reference = branch_reference(NormalFormPass(map(float, payoffs)), 2, precision)
+    return reference.reached && maximum(abs, logits .- reference.logits) < 1.0f-3
+end
+
+"""
+Whether a `PrecisionExhausted` failure's `context` on `payoffs` is the stall near the pitchfork: its failed iterate's
+`lambda` and its last accepted `precision` both in (0.8, 0.81), and its last accepted `logits` on the principal branch.
+"""
+function pitchfork_stall(payoffs::Tuple, context::NamedTuple)::Bool
+    near = 0.8f0 < context.lambda < 0.81f0 && 0.8f0 < context.precision < 0.81f0
+    return near && on_principal_branch(payoffs, context.logits, context.precision)
+end
+
+"""
+`cross_checked!` of `payoffs` under `settings`, or under BifurcationKit's Float64 settings where its Float32 trace
+stalls near the pitchfork (`pitchfork_stall`, issue #132). Over 3000 draws at 1e-4, 7 Float32 traces stalled there and
+every Float64 trace reached the target; at 1e-3 none stalled.
+"""
+function pitchfork_cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSettings)::Bool
+    if settings isa BifurcationKitSettings{Float32}
+        result = traced_result(payoffs, logitnash_equilibrium(payoffs, precision).precision, settings)
+        if is_error(result) && unwrap_error(result).cause == GameTracing.PrecisionExhausted && pitchfork_stall(payoffs, unwrap_error(result).context)
+            return cross_checked!(payoffs, precision, BifurcationKitSettings{widen(Float32)}())
+        end
+    end
+    return cross_checked!(payoffs, precision, settings)
+end
+
 @testset "a pitchfork unfolded by a payoff perturbation: the trace turns with the principal branch ($engine)" for (engine, settings) in default_settings()
     # Measured over 40 draws per scale against the arclength reference: the secant tangent followed the principal branch
     # 0/40 at 1e-4, 3/40 at 1e-3, 34/40 at 1e-2 and 39/40 at 1e-1; the bordered tangent 40/40 at every scale.
     # PathFollowing, over 300 draws per scale in Float32 and Float64 alike: 300/300 at 1e-4, 1e-3 and 1e-2, and 297/300
     # at 1e-1 until its corrector's reach refusal; with it, 300/300 at every scale.
     for payoffs in unfolded_pitchforks(fresh_rng())
-        cross_checked!(payoffs, 4, settings)
+        pitchfork_cross_checked!(payoffs, 4, settings)
+    end
+end
+
+# Two of the 7 draws at 1e-4 whose BifurcationKit Float32 trace stalled near the pitchfork on a Meteor Lake.
+const FLOAT32_STALLED_PITCHFORKS = (
+    ([2.999874150131597 1.2154126252561834e-5; -0.00010482790213372753 2.000060406365217], [2.000058691819911 8.572047555522358e-6; 8.006489022599519e-5 3.0000599148478537]),
+    ([3.0000694513302446 -0.0001601958687524617; -8.173649810089089e-5 2.000132529290259], [2.0000364515345765 6.871377377528037e-5; 0.00015500412506080802 2.999909808379389]),
+)
+
+@testset "BifurcationKit in Float64 cross-checks the unfolded pitchforks where its Float32 trace stalled" begin
+    for payoffs in FLOAT32_STALLED_PITCHFORKS
+        cross_checked!(payoffs, 4, BifurcationKitSettings{widen(Float32)}())
     end
 end
 
@@ -330,23 +375,6 @@ end
 # The state weights of the pitchfork sweep.
 const PITCHFORK_WEIGHTS = (0.003f0, 0.01f0, 0.03f0, 0.1f0, 0.3f0)
 
-"""
-Whether `logits` at `precision` lie within 1e-3 of `UNFOLDED_PITCHFORK_GAME`'s principal branch (`branch_reference`).
-Each measured Float32 stall's last accepted point lay within 3.5e-4 of it, and at λ 0.8079 it is the only root.
-"""
-function on_principal_branch(logits::AbstractVector{E}, precision::Real)::Bool where {E <: Real}
-    reference = branch_reference(NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME)), 2, precision)
-    return reference.reached && maximum(abs, logits .- reference.logits) < 1.0f-3
-end
-
-"""
-Whether a `PrecisionExhausted` failure's `context` is the stall near the pitchfork: its failed iterate's `lambda` and
-its last accepted `precision` both in (0.8, 0.81), and its last accepted `logits` on the principal branch.
-"""
-function pitchfork_stall(context::NamedTuple)::Bool
-    near = 0.8f0 < context.lambda < 0.81f0 && 0.8f0 < context.precision < 0.81f0
-    return near && on_principal_branch(context.logits, context.precision)
-end
 
 """
 Where a BifurcationKit trace of `UNFOLDED_PITCHFORK_GAME` to `precision` under `settings` ends: "arm" on `oracle`'s
@@ -360,7 +388,7 @@ function pitchfork_outcome(precision::E, settings::BifurcationKitSettings{E}, or
     if is_error(result)
         failure = unwrap_error(result)
         lambda = get(failure.context, :lambda, NaN32)
-        stalled = failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(failure.context)
+        stalled = failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(UNFOLDED_PITCHFORK_GAME, failure.context)
         return stalled ? "stall" : "$(failure.cause) at λ $lambda"
     end
     logits = unwrap(result).logits
@@ -396,7 +424,7 @@ end
         result = traced_result(UNFOLDED_PITCHFORK_GAME, GameTracing.element_type(settings)(precision), settings)
         if is_error(result)
             failure = unwrap_error(result)
-            @test settings isa BifurcationKitSettings && failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(failure.context)
+            @test settings isa BifurcationKitSettings && failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(UNFOLDED_PITCHFORK_GAME, failure.context)
             push!(stalls, label)
         else
             (; logits, logit_accuracy) = unwrap(result)
@@ -428,9 +456,9 @@ end
     pass = NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME))
     at_stall = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.8079f0))
     early = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.5f0))
-    @test pitchfork_stall((; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
-    @test !pitchfork_stall((; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall .+ 0.01f0))
-    @test !pitchfork_stall((; lambda = 0.8079f0, precision = 0.5f0, logits = early))
+    @test pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall .+ 0.01f0))
+    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.5f0, logits = early))
     for element in (Float32, widen(Float32))
         outcomes = [
             (name, element, weight) => pitchfork_outcome(element(precision), arm_settings(arm, element(weight)), oracle)

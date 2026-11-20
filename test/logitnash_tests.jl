@@ -241,9 +241,9 @@ function unfolded_pitchfork(rng::AbstractRNG, scale::Real)::Tuple
     return map(table -> table .+ scale .* randn(rng, 2, 2), map(float, LOGITNASH_GAMES.battle_of_the_sexes))
 end
 
-"""The unfolded-pitchfork testset's draws from `rng`: three at each scale from 1e-4 to 1e-1, in that order."""
-function unfolded_pitchforks(rng::AbstractRNG)::Vector{Tuple}
-    return [unfolded_pitchfork(rng, scale) for scale in inv.(float.((10^4, 10^3, 10^2, 10))) for _ in 1:3]
+"""The unfolded-pitchfork testset's draws from `rng`, as `scale => payoffs`: three at each scale from 1e-4 to 1e-1, in that order."""
+function unfolded_pitchforks(rng::AbstractRNG)::Vector{<:Pair{<:Real, <:Tuple}}
+    return [scale => unfolded_pitchfork(rng, scale) for scale in inv.(float.((10^4, 10^3, 10^2, 10))) for _ in 1:3]
 end
 
 """
@@ -265,14 +265,21 @@ function pitchfork_stall(payoffs::Tuple, context::NamedTuple)::Bool
 end
 
 """
-`cross_checked!` of `payoffs` under `settings`, or under BifurcationKit's Float64 settings where its Float32 trace
-stalls near the pitchfork (`pitchfork_stall`, issue #132). Over 3000 draws at 1e-4, 7 Float32 traces stalled there and
-every Float64 trace reached the target; at 1e-3 none stalled.
+Whether BifurcationKit's Float32 `failure` on `payoffs`, drawn at noise `scale`, is the known stall near the pitchfork
+(`pitchfork_stall`, issue #132): `PrecisionExhausted` at noise 1e-4. Over 3000 draws, 7 stalled there at 1e-4, none at 1e-3.
 """
-function pitchfork_cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSettings)::Bool
+function known_float32_stall(failure::TraceFailure, payoffs::Tuple, scale::Real)::Bool
+    return scale <= inv(float(10^4)) && failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(payoffs, failure.context)
+end
+
+"""
+`cross_checked!` of `payoffs`, drawn at noise `scale`, under `settings`, or under BifurcationKit's Float64 settings
+where its Float32 trace ends in the known stall (`known_float32_stall`). Float64 reached all 3000 draws at 1e-4.
+"""
+function pitchfork_cross_checked!(payoffs::Tuple, scale::Real, precision::Real, settings::EngineSettings)::Bool
     if settings isa BifurcationKitSettings{Float32}
         result = traced_result(payoffs, logitnash_equilibrium(payoffs, precision).precision, settings)
-        if is_error(result) && unwrap_error(result).cause == GameTracing.PrecisionExhausted && pitchfork_stall(payoffs, unwrap_error(result).context)
+        if is_error(result) && known_float32_stall(unwrap_error(result), payoffs, scale)
             return cross_checked!(payoffs, precision, BifurcationKitSettings{widen(Float32)}())
         end
     end
@@ -284,8 +291,8 @@ end
     # 0/40 at 1e-4, 3/40 at 1e-3, 34/40 at 1e-2 and 39/40 at 1e-1; the bordered tangent 40/40 at every scale.
     # PathFollowing, over 300 draws per scale in Float32 and Float64 alike: 300/300 at 1e-4, 1e-3 and 1e-2, and 297/300
     # at 1e-1 until its corrector's reach refusal; with it, 300/300 at every scale.
-    for payoffs in unfolded_pitchforks(fresh_rng())
-        pitchfork_cross_checked!(payoffs, 4, settings)
+    for (scale, payoffs) in unfolded_pitchforks(fresh_rng())
+        pitchfork_cross_checked!(payoffs, scale, 4, settings)
     end
 end
 
@@ -317,7 +324,7 @@ end
 # 12 of a CI run's seed, and the 1e-1 draws of seeds 84, 185 and 260. Each pairs with whether the split check keeps it
 # without the reach refusal: at seed 185 both half steps jump with the step, so they agree.
 const JUMPED_PITCHFORKS = [
-    (unfolded_pitchforks(Xoshiro(0x0035b4b3c0a0f1ba))[12], true); [(unfolded_pitchfork(Xoshiro(seed), inv(float(10))), seed != 185) for seed in (84, 185, 260)]
+    (last(unfolded_pitchforks(Xoshiro(0x0035b4b3c0a0f1ba))[12]), true); [(unfolded_pitchfork(Xoshiro(seed), inv(float(10))), seed != 185) for seed in (84, 185, 260)]
 ]
 
 @testset "PathFollowing keeps the unfolded pitchforks' principal branch where it jumped; at growth 2 without its reach refusal and split check it jumps ($element)" for element in (Float32, widen(Float32))
@@ -459,6 +466,11 @@ end
     @test pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
     @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall .+ 0.01f0))
     @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, (; lambda = 0.8079f0, precision = 0.5f0, logits = early))
+    # The Float32 fallback takes that stall only as `PrecisionExhausted` at noise 1e-4.
+    stall = TraceFailure(GameTracing.PrecisionExhausted, (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall))
+    @test known_float32_stall(stall, UNFOLDED_PITCHFORK_GAME, inv(float(10^4)))
+    @test !known_float32_stall(stall, UNFOLDED_PITCHFORK_GAME, inv(float(10^3)))
+    @test !known_float32_stall(TraceFailure(GameTracing.TraceStuck, stall.context), UNFOLDED_PITCHFORK_GAME, inv(float(10^4)))
     for element in (Float32, widen(Float32))
         outcomes = [
             (name, element, weight) => pitchfork_outcome(element(precision), arm_settings(arm, element(weight)), oracle)

@@ -153,9 +153,9 @@ function rounded_residual(game::LogitGame, point::AbstractVector{E}, pin::E)::Ve
 end
 
 """`frozen` with each value it holds as an exact `number` (`Rounded`), so its products bound their own rounding."""
-function rounded_frozen(frozen::GameTracing.FrozenFisher{M, E}, number::Type{Rounded{E, W}})::GameTracing.FrozenFisher where {M, E, W}
+function rounded_frozen(frozen::GameTracing.FrozenFisher{<:Any, E}, number::Type{Rounded{E, W}})::GameTracing.FrozenFisher where {E, W}
     point = number.(frozen.point)
-    return GameTracing.FrozenFisher{M, number, typeof(point), typeof(frozen.pivots)}(
+    return GameTracing.FrozenFisher(
         frozen.metric, point, number.(frozen.probabilities), number.(frozen.references), frozen.pivots,
         number(frozen.state_weight), number(frozen.palc_state_weight), number.(frozen.root),
     )

@@ -427,18 +427,18 @@ end
 @testset "a branch that goes round a closed loop is flagged $element" for element in (Float32, widen(Float32))
     circle = circle_branch(element, 3, 20, true)
     flagged = first_loop(circle, 1)
-    # Fenchel's gate: no flag before the tangents have turned through 2π, which takes 21 records.
-    @test !isnothing(flagged) && 21 <= flagged <= 52
-    # The gate alone holds back a loop whose tangents never turn; open paths never loop.
+    # Lap 1 crosses its top fold at record 6 or 7; lap 2 crosses it again 20 records on, as rounding at the fold decides.
+    @test flagged in (26, 27)
+    # A lap whose records fall between the first lap's records passes the same fold.
+    @test first_loop([circle_record(element(4 * pi * (index - 1) / 39), index, true) for index in 1:80], 1) == 26
+    # Records without a tangent cross no fold; open paths never loop.
     @test isnothing(first_loop(circle_branch(element, 3, 20, false), 1))
     line = [branch_record([element(index) / 10], element(index) / 20, index) for index in 1:60]
     @test isnothing(first_loop(line, 1))
-    # A path that comes within a step of its anchor without its precision ever turning back is no loop.
+    # A path whose precision never turns back crosses no fold, though it laps the circle.
     rising = [(; record..., tangent_precision = abs(record.tangent_precision) + one(element)) for record in circle]
     @test isnothing(first_loop(rising, 1))
-    # A stalled record has no direction, so it turns nothing.
-    stalled = (; line[1]..., gap_tangent = [zero(element)], tangent_precision = zero(element))
-    @test GameTracing.tangent_turn(stalled, line[2], 1) == 0
+    # Its two top folds lie π apart along the gaps.
     s_curve = [
         (; branch_record([element(index) / 10], sin(element(index) / 5), index)..., gap_tangent = [one(element)], tangent_precision = cos(element(index) / 5))
             for index in 1:60
@@ -508,6 +508,25 @@ end
         GameTracing.CorrectorSettings{typeof(element(1))}(),
     )
     @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), near)
+end
+
+"""
+Branch records that cross a fold at each `(gap, param, sign)` of `crossings`, in one step of 0.1 along the gap from a
+precision tangent of `sign` to one of `-sign`. A fold of `sign = 1` tops the branch.
+"""
+function fold_crossings(::Type{E}, crossings::AbstractVector)::AbstractVector where {E <: Real}
+    return [
+        (; branch_record([E(gap) + E(side) / 20], E(param), 1)..., tangent_precision = E(-side * sign))
+            for (gap, param, sign) in crossings for side in (-1, 1)
+    ]
+end
+
+@testset "two folds are one when they turn the same way and lie within their two steps ($element)" for element in (Float32, widen(Float32))
+    # Each crossing step is 0.1 long, so a top fold within 0.2 of the first top fold closes a loop.
+    @test first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (19 // 100, 1, 1)]), 1) == 6
+    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (21 // 100, 1, 1)]), 1))
+    # A top fold next to a bottom fold, as near a cusp, closes no loop.
+    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (15 // 100, 1, -1)]), 1))
 end
 
 @testset "the loop test measures in the units P w and λ / P, so a rescaled branch flags the same record ($element)" for element in (Float32, widen(Float32))

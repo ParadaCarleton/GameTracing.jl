@@ -1,5 +1,4 @@
 using BifurcationKit: BifurcationKit
-using LinearAlgebra: dot
 using Logging: @debug
 """
     CorrectorSettings{E}(; reach, max_kl, logit_tolerance, settle_ulps, pin_tolerance, contraction_limit,
@@ -549,24 +548,6 @@ same_point(record::NamedTuple, other::NamedTuple)::Bool = record.param == other.
     record.gaps == other.gaps
 
 """
-    tangent_turn(left, right, target_precision)
-
-The angle in radians between two branch records' tangents `[gap_tangent; tangent_precision]`, in the Euclidean product
-of the units `P w` and `λ / P`, `P` the `target_precision`; zero when either is zero.
-"""
-function tangent_turn(left::R, right::R, target_precision::Real)::fieldtype(R, :param) where {R <: NamedTuple}
-    scale = oftype(left.tangent_precision, target_precision)^2
-    # Two square roots: the product of the squared lengths could overflow at a far target.
-    lengths = sqrt(scale * dot(left.gap_tangent, left.gap_tangent) + left.tangent_precision^2 / scale) *
-        sqrt(scale * dot(right.gap_tangent, right.gap_tangent) + right.tangent_precision^2 / scale)
-    if lengths == 0
-        return zero(lengths)
-    end
-    cosine = (scale * dot(left.gap_tangent, right.gap_tangent) + left.tangent_precision * right.tangent_precision / scale) / lengths
-    return acos(clamp(cosine, -one(cosine), one(cosine)))
-end
-
-"""
 The squared Euclidean distance between two points with `gaps` and `param`, such as branch records, in the units `P w`
 and `λ / P`, `P` the `target_precision`.
 """
@@ -580,31 +561,48 @@ function squared_distance(left::NamedTuple, right::NamedTuple, target_precision:
 end
 
 """
+Whether the step from `left` to `right`, two consecutive points with a `tangent_precision`, crosses a fold: their
+precision tangents have opposite signs. A fold turns the same way as the sign of `left.tangent_precision`.
+"""
+crosses_fold(left::NamedTuple, right::NamedTuple)::Bool = left.tangent_precision > 0 > right.tangent_precision ||
+    left.tangent_precision < 0 < right.tangent_precision
+
+"""
+The fold that the step from `left` to `right` crosses (`crosses_fold`): the point `(gaps, param)` of the step where
+the linear interpolation of the precision tangent is zero.
+"""
+function fold_point(left::NamedTuple, right::NamedTuple)::NamedTuple
+    weight = left.tangent_precision / (left.tangent_precision - right.tangent_precision)
+    return (; gaps = left.gaps .+ weight .* (right.gaps .- left.gaps), param = left.param + weight * (right.param - left.param))
+end
+
+"""
     looped(history, current, target_precision)
 
-Whether `current`, a point with `gaps` and `param` that follows the branch records `history`, closes a loop of the
-branch (an isola). Gates: the precision tangent changes sign between the anchor and `current` (a closed curve returns to its starting precision), and the tangents of `history` have turned through at least 2π in total (`tangent_turn`), as a closed
-curve must (Fenchel's theorem). Then Brent's cycle detection: the anchor is the record at the largest power-of-two index
-not after the last record (indices from 1), and the trace has looped when `current` lies closer to the anchor than the
-last step is long, with the anchor at least two records before `current`. Distances are plain Euclidean on
-`[P gaps; param / P]`, `P` the `target_precision`, as `TraceFinalise` holds no `TraceGeometry`.
+Whether `current`, a point with `gaps`, `param` and `tangent_precision` after the branch records `history`, closes a
+loop of the branch (an isola). The branch solves an ODE, so it passes a regular point twice only on a closed curve, and
+each lap passes its folds again. The trace has looped when the step to `current` crosses a fold that a step of
+`history` crossed (`crosses_fold`):
+- The two folds turn the same way.
+- Their `fold_point`s lie within the two steps' lengths together, as each lies within its step of the true fold.
+Distances are plain Euclidean on `[P gaps; param / P]`, `P` the `target_precision`, as `TraceFinalise` holds no
+`TraceGeometry`. Off a fold, the test costs two comparisons per step.
 """
 function looped(history::AbstractVector{R}, current::NamedTuple, target_precision::Real)::Bool where {R <: NamedTuple}
-    anchor_index = prevpow(2, max(length(history), 1))
-    if anchor_index > length(history) - 1
+    if isempty(history) || !crosses_fold(last(history), current)
         return false
     end
-    anchor = history[firstindex(history) + anchor_index - 1]
-    if !(squared_distance(current, anchor, target_precision) < squared_distance(current, last(history), target_precision))
-        return false
+    fold = fold_point(last(history), current)
+    reach = sqrt(squared_distance(last(history), current, target_precision))
+    for index in firstindex(history):(lastindex(history) - 1)
+        left, right = history[index], history[index + 1]
+        if crosses_fold(left, right) && signbit(left.tangent_precision) == signbit(last(history).tangent_precision) &&
+                squared_distance(fold_point(left, right), fold, target_precision) <=
+                (reach + sqrt(squared_distance(left, right, target_precision)))^2
+            return true
+        end
     end
-    # A closed curve returns to its starting precision, so its precision tangent changes sign along the lap.
-    precision_tangents = [record.tangent_precision for record in view(history, (firstindex(history) + anchor_index - 1):lastindex(history))]
-    if !(minimum(precision_tangents) < 0 < maximum(precision_tangents))
-        return false
-    end
-    turn = sum(tangent_turn.(view(history, firstindex(history):(lastindex(history) - 1)), view(history, (firstindex(history) + 1):lastindex(history)), target_precision))
-    return turn >= 2 * oftype(turn, pi)
+    return false
 end
 
 """
@@ -682,7 +680,7 @@ function (finalise::TraceFinalise)(
         )
         return false
     end
-    current = (; param = point.p, gaps = view(point.u, firstindex(point.u):(lastindex(point.u) - 1)))
+    current = (; param = point.p, gaps = view(point.u, firstindex(point.u):(lastindex(point.u) - 1)), tangent_precision = tangent.p)
     if looped(result.branch, current, finalise.slot[].game.target_precision)
         return false
     end

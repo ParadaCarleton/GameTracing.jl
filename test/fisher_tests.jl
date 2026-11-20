@@ -3,6 +3,7 @@ using GameTracing: FisherMetric, checked_ranges, largest_kl, player_kl
 using LinearAlgebra: dot
 using Mooncake: Mooncake
 using PathFollowing: PathFollowing
+using StaticArrays: SVector
 
 """`log(1 + Σ exp z)`: the log normalizer of a player's mixed strategy at its logits `z` against its reference."""
 function log_partition(logits::AbstractVector{E})::E where {E <: Real}
@@ -262,6 +263,21 @@ end
     end
     @test fresh.root == [GameTracing.precision_dot_root(metric, element(3))]
     @test (fresh.state_weight, fresh.palc_state_weight) == (metric.state_weight, metric.palc_state_weight)
+end
+
+@testset "a Fisher metric frozen at a static point is isbits and gives the mutable one's products ($element)" for element in (Float32, widen(Float32))
+    rng = fresh_rng()
+    metric = FisherMetric((1:2, 3:3, 4:6), element(2), LogPrecisionTerm, element(10), element(127 // 128))
+    point, left, right, moved = (randn(rng, element, 7) for _ in 1:4)
+    static = PathFollowing.frozen_metric(metric, SVector{7}(point))
+    @test isbits(static)
+    buffered = PathFollowing.frozen_metric(metric, point)
+    @test PathFollowing.metric_inner(static, SVector{7}(left), SVector{7}(right)) == PathFollowing.metric_inner(buffered, left, right)
+    @test PathFollowing.metric_apply!!(zero(SVector{7, element}), static, SVector{7}(left)) == PathFollowing.metric_apply!!(zeros(element, 7), buffered, left)
+    refrozen, fresh = PathFollowing.freeze_metric!!(static, SVector{7}(moved)), PathFollowing.frozen_metric(metric, moved)
+    for field in fieldnames(typeof(fresh))
+        @test getfield(refrozen, field) == getfield(fresh, field)
+    end
 end
 
 @testset "PALC weighs Δλ² by the documented ω(λ), positive at every finite λ; PathFollowing by the log term ($element)" for element in (Float32, widen(Float32))

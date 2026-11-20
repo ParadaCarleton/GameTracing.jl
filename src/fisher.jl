@@ -1,7 +1,8 @@
 using BifurcationKit: BifurcationKit
 using ErrorfreeArithmetic: two_hilo_diff, two_prod, two_sum
 using LogExpFunctions: log1pmx
-using PathFollowing: PathFollowing
+using PathFollowing: PathFollowing, Into
+using StaticArrays: SVector, StaticVector
 """The gap of strategy `index` at a point `[w; λ]`: `w[index]`, or zero for the reference strategy, `index = 0`."""
 function strategy_gap(point::AbstractVector{E}, index::Integer)::E where {E <: Real}
     return iszero(index) ? zero(E) : point[index]
@@ -132,19 +133,28 @@ end
 `metric` (`FisherMetric`) frozen at `point = [w; λ]`: each strategy's probability by its logit, each player's reference
 probability, and each player's pivot, its most probable strategy's logit index or 0 for its reference. The products
 center each player's logit moves on its pivot's move. A move common to every strategy but an extinct reference then
-keeps its Fisher length `√p_ref`, which a raw `Σ qᵢΔzᵢ² - (Σ qᵢΔzᵢ)²` rounds away. The buffers follow `point`'s storage.
-`state_weight` and `palc_state_weight` are `metric`'s, and `root` holds `precision_dot_root` at `point` as its only
-entry. The products read these values in `E` and `metric`'s ranges, nothing else.
+keeps its Fisher length `√p_ref`, which a raw `Σ qᵢΔzᵢ² - (Σ qᵢΔzᵢ)²` rounds away. The buffers follow `point`'s storage:
+mutable arrays change in place, and static ones make the state isbits (`freeze_metric!!`). `state_weight` and
+`palc_state_weight` are `metric`'s, and `root` holds `precision_dot_root` at `point` as its only entry. The products
+read these values in `E` and `metric`'s ranges, nothing else.
 """
-struct FrozenFisher{M <: FisherMetric, E <: Real, V <: AbstractVector{E}, I <: AbstractVector{Int}}
+struct FrozenFisher{
+        M <: FisherMetric,
+        E <: Real,
+        V <: AbstractVector{E},
+        Q <: AbstractVector{E},
+        R <: AbstractVector{E},
+        I <: AbstractVector{Int},
+        O <: AbstractVector{E},
+    }
     metric::M
     point::V
-    probabilities::V
-    references::V
+    probabilities::Q
+    references::R
     pivots::I
     state_weight::E
     palc_state_weight::E
-    root::V
+    root::O
 end
 
 function PathFollowing.frozen_metric(metric::FisherMetric{R, E}, point::AbstractVector{E})::FrozenFisher{FisherMetric{R, E}, E} where {R, E <: Real}
@@ -152,24 +162,33 @@ function PathFollowing.frozen_metric(metric::FisherMetric{R, E}, point::Abstract
     copied, pivots = copyto!(similar(point), point), fill!(similar(point, Int, players), 0)
     probabilities, references = fill!(similar(copied, length(point) - 1), zero(E)), fill!(similar(copied, players), zero(E))
     (; state_weight, palc_state_weight) = metric
-    frozen = FrozenFisher{FisherMetric{R, E}, E, typeof(copied), typeof(pivots)}(
-        metric, copied, probabilities, references, pivots, state_weight, palc_state_weight, fill!(similar(copied, 1), zero(E)),
-    )
+    frozen = FrozenFisher(metric, copied, probabilities, references, pivots, state_weight, palc_state_weight, fill!(similar(copied, 1), zero(E)))
+    return PathFollowing.freeze_metric!!(frozen, point)
+end
+
+function PathFollowing.frozen_metric(
+        metric::FisherMetric{R, E},
+        point::StaticVector{P, E},
+    )::FrozenFisher{FisherMetric{R, E}, E} where {N, R <: NTuple{N, UnitRange{Int}}, P, E <: Real}
+    (; state_weight, palc_state_weight) = metric
+    blank = zeros(SVector{N, E})
+    frozen = FrozenFisher(metric, SVector(point), zeros(SVector{P - 1, E}), blank, zeros(SVector{N, Int}), state_weight, palc_state_weight, zeros(SVector{1, E}))
     return PathFollowing.freeze_metric!!(frozen, point)
 end
 
 function PathFollowing.freeze_metric!!(frozen::F, point::AbstractVector{E})::F where {E <: Real, F <: FrozenFisher{<:FisherMetric, E}}
-    copyto!(frozen.point, point)
-    for (player, range) in enumerate(frozen.metric.ranges)
+    (; metric, probabilities, references, pivots) = frozen
+    copied = Into(frozen.point) .= point
+    for (player, range) in enumerate(metric.ranges)
         normalizer = log_normalizer(point, range)
-        frozen.pivots[player] = first(normalizer)
-        frozen.references[player] = exp(log_probability(point, 0, normalizer))
+        pivots = set_entry!!(pivots, first(normalizer), player)
+        references = set_entry!!(references, exp(log_probability(point, 0, normalizer)), player)
         for index in range
-            frozen.probabilities[index] = exp(log_probability(point, index, normalizer))
+            probabilities = set_entry!!(probabilities, exp(log_probability(point, index, normalizer)), index)
         end
     end
-    frozen.root[begin] = precision_dot_root(frozen.metric, last(point))
-    return frozen
+    root = set_entry!!(frozen.root, precision_dot_root(metric, last(point)), firstindex(frozen.root))
+    return F(metric, copied, probabilities, references, pivots, frozen.state_weight, frozen.palc_state_weight, root)
 end
 
 """
@@ -286,8 +305,8 @@ function PathFollowing.metric_inner(frozen::FrozenFisher{<:FisherMetric, E}, lef
 end
 
 """
-Write player `player`'s block of `M v`, `gap_scale` times `(G J v)ᵢ = qᵢ dᵢ` (`d` as in `player_inner`), into `out[range]`,
-and return its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ qᵢ dᵢ` is the reference's `π_ref (pivot + mean)`. The
+Player `player`'s block of `M v`, `gap_scale` times `(G J v)ᵢ = qᵢ dᵢ` (`d` as in `player_inner`), in `out[range]`
+(`Into`), and its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ qᵢ dᵢ` is the reference's `π_ref (pivot + mean)`. The
 pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
 against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
 
@@ -297,14 +316,14 @@ moves'. The bound holds under Higham's standard model `fl(x ∘ y) = (x ∘ y) (
 and partial sum is a normal float or zero. Outside that domain, the function promises nothing. Entries of size `s`
 hold no nonzero sum under about `eps s`, so a large differential move can sum to zero.
 """
-function player_apply!(
-        out::AbstractVector{E},
+function player_apply!!(
+        out::V,
         frozen::FrozenFisher{<:FisherMetric, E},
         vector::AbstractVector{E},
         player::Integer,
         range::UnitRange{Int},
         gap_scale::E,
-    )::E where {E <: Real}
+    )::Tuple{V, E} where {E <: Real, V <: AbstractVector{E}}
     pivot_index = frozen.pivots[player]
     pivot = pivot_move(frozen, vector, player)
     mean = centered_mean(frozen, vector, player, range, pivot)
@@ -313,18 +332,18 @@ function player_apply!(
     for index in range
         if index != pivot_index
             share = frozen.probabilities[index] * ((logit_move(frozen, vector, index) - pivot) - mean)
-            out[index] = gap_scale * share
+            out = set_entry!!(out, gap_scale * share, index)
             others += out[index]
             pulled += (frozen.point[index] - pivot_gap) * share
         end
     end
     if !iszero(pivot_index)
-        out[pivot_index] = gap_scale * information - others
+        out = set_entry!!(out, gap_scale * information - others, pivot_index)
     end
-    return pulled
+    return out, pulled
 end
 
-# `M v = (state_weight Jᵀ G J v + (ω - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, one block per player (`player_apply!`).
+# `M v = (state_weight Jᵀ G J v + (ω - (1 - θ)) Δλ e_λ) / θ` with `J = [λ I  w]`, one block per player (`player_apply!!`).
 function PathFollowing.metric_apply!!(
         out::V,
         frozen::FrozenFisher{<:FisherMetric, E},
@@ -335,10 +354,10 @@ function PathFollowing.metric_apply!!(
     gap_scale = state_weight * last(frozen.point) / palc_state_weight
     pulled = zero(E)
     for (player, range) in enumerate(frozen.metric.ranges)
-        pulled += player_apply!(out, frozen, vector, player, range, gap_scale)
+        out, player_pulled = player_apply!!(out, frozen, vector, player, range, gap_scale)
+        pulled += player_pulled
     end
-    out[end] = (state_weight * pulled + root * (root * last(vector))) / palc_state_weight
-    return out
+    return set_entry!!(out, (state_weight * pulled + root * (root * last(vector))) / palc_state_weight, lastindex(out))
 end
 
 """

@@ -794,7 +794,9 @@ end
             host = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10))
             device = unwrap(init(CurveProblem(Circle(one(E)), JLArray(E[1, 0]), JLArray(E[0, 1])), settings; first_step = E(1) / 10))
             @test all(array -> array isa JLArray, (device.point, device.jacobian, device.bordered, device.oriented, device.metric.weights))
-            while device.steps < 8 && (isnothing(bound) || host.point[bound.coordinate] != bound.value)
+            # The bound at y = 3/4 lies 0.85 of arc away, 9 steps of 0.1: the cap only stops a trace that never lands.
+            limit = isnothing(bound) ? 8 : 20
+            while device.steps < limit && (isnothing(bound) || host.point[bound.coordinate] != bound.value)
                 unwrap(step!(host, bound))
                 unwrap(step!(device, bound))
                 @test Array(device.point) ≈ host.point rtol = 10 * tolerance

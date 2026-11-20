@@ -244,7 +244,7 @@ end
     @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
     # A trace sent back from its start would fall below precision zero, so every step it tries is refused. Without the
     # orientation check, a step of a few ulps rounds above zero and the trace creeps there until `max_steps`.
-    reversed = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}()))
+    reversed = started_tracer(gains, PathFollowingSettings{element}())
     reversed.tangent .*= -1
     recorder = GameTracing.BranchRecorder(gains, zero(element))
     below = unwrap_error(GameTracing.recorded_points(reversed, recorder, element(100), 10, (;)))
@@ -311,7 +311,7 @@ end
     narrow = NormalFormGains((element[0 1 // 1024; 0 0], element[0 0; 0 0]))
     @test GameTracing.opening_step(LogitGame(narrow, floatmax(element)), target, Inf32) ≈ 1024 / big(floatmax(element)) rtol = 1 // 10^4
     # PathFollowing's tracer starts at the same step.
-    tracer = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}()))
+    tracer = started_tracer(gains, PathFollowingSettings{element}())
     @test tracer.step_length == GameTracing.opening_step(game, GameTracing.default_step_metric(element), Inf32)
 end
 
@@ -447,10 +447,10 @@ end
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     for distance in (StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), LogitDistance{element}(; tolerance = eps(element), settle_ulps = 0))
         settings = PathFollowingSettings{element}(; newton_iterations = 1, distance, max_refusals = 2)
-        tracer = unwrap(GameTracing.path_init(gains, settings))
+        tracer = started_tracer(gains, settings)
         # The opening predictor passes this precision, so the first attempt corrects at it.
         precision = tracer.step_length * last(tracer.tangent) * 9 // 10
-        failure = unwrap_error(last(GameTracing.stepped_landing!!(tracer, precision, 10)))
+        failure = unwrap_error(last(GameTracing.stepped_landing!!(tracer, precision, 10, GameTracing.AcceptAll(), (; lam = precision))))
         @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :refusals, precision)
         @test failure.context.last_refusal == PathFollowing.NotConverged
         @test iszero(failure.context.precision)
@@ -523,7 +523,7 @@ end
 
 @testset "PathFollowing's first step is finite and under max_step ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains((element[0, 1],))
-    capped = unwrap(GameTracing.path_init(gains, PathFollowingSettings{element}(; max_step = element(0.01f0))))
+    capped = started_tracer(gains, PathFollowingSettings{element}(; max_step = element(0.01f0)))
     @test capped.step_length == element(0.01f0)
     # The payoff range's inverse overflows.
     flat = NormalFormGains((element[0, nextfloat(zero(element))],))

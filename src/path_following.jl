@@ -567,7 +567,7 @@ order, on the host. Each game traces in its own work item on the KernelAbstracti
 `land_batch`), from its flat start with its own first step (`opening_step`). A failed trace gives the `TraceFailure`
 that `logit_solve_lambda` gives.
 
-- `games`: `NormalFormGains` of one concrete type with static payoffs (`SArray`), each player with one strategy count.
+- `games`: `NormalFormGains` of one concrete type with static payoffs (`SArray`), every player with the same strategy count.
 - `settings`: `PathFollowingSettings` in the payoffs' float type, with `linear_solver = PathFollowing.StaticLU()`.
 - `backend`: the device that runs the traces. The problems copy to it, and the landings copy back.
 - `workgroupsize`: the work items per group. The CPU backend runs each group on one thread, so use a small group there.

@@ -152,6 +152,6 @@ end
     @test_throws "settings trace in" cpu_batch(games, 1, batch_settings(widen(Float32)))
     mixed = Vector{NormalFormGains{2, <:SArray}}([first(games), static_game(only(drawn_payoffs(rng, Float32, (3, 3), 1)))])
     @test_throws "one concrete type" cpu_batch(mixed, 1, settings)
-    @test_throws "one strategy count per player" cpu_batch([static_game((zeros(Float32, 2, 3), zeros(Float32, 2, 3)))], 1, settings)
+    @test_throws "the same strategy count for every player" cpu_batch([static_game((zeros(Float32, 2, 3), zeros(Float32, 2, 3)))], 1, settings)
     @test isempty(cpu_batch(empty(games), 1, settings))
 end

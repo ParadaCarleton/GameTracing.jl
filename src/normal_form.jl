@@ -60,12 +60,12 @@ end
 
 """
 `pass_workspace` for static payoffs at static logits: the same arrays, static, so the pass is isbits. Every player
-must have one strategy count (`ArgumentError` otherwise): the pass indexes its players' arrays at run time, and a
+must have the same strategy count (`ArgumentError` otherwise): the pass indexes its players' arrays at run time, and a
 tuple of static arrays of one type keeps that index type-stable.
 """
 function pass_workspace(::NormalFormGains{N, A}, ::StaticVector{<:Any, E})::NamedTuple where {N, A <: SArray, E <: Real}
     counts = Tuple(Size(A))
-    allequal(counts) || throw(ArgumentError(lazy"a static pass needs one strategy count per player; got $counts"))
+    allequal(counts) || throw(ArgumentError(lazy"a static pass needs the same strategy count for every player; got $counts"))
     count, entries = first(counts), prod(counts)
     strategy, entry_vector = zeros(SVector{count, E}), zeros(SVector{entries, E})
     return (;

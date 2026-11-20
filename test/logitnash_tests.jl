@@ -276,17 +276,14 @@ function known_float32_stall(failure::TraceFailure, payoffs::Tuple, scale::Real)
 end
 
 """
-`cross_checked!` of `payoffs`, drawn at noise `scale`, under `settings`, or under BifurcationKit's Float64 settings
-where its Float32 trace ends in the known stall (`known_float32_stall`). Float64 reached all 3000 draws at 1e-4.
+The settings that cross-check `payoffs`, drawn at noise `scale`: BifurcationKit's Float64 settings where its Float32
+trace ends in the known stall (`known_float32_stall`), else `settings`. Float64 reached all 3000 draws at 1e-4.
 """
-function pitchfork_cross_checked!(payoffs::Tuple, scale::Real, precision::Real, settings::EngineSettings)::Bool
-    if settings isa BifurcationKitSettings{Float32}
-        result = traced_result(payoffs, logitnash_equilibrium(payoffs, precision).precision, settings)
-        if is_error(result) && known_float32_stall(unwrap_error(result), payoffs, scale)
-            return cross_checked!(payoffs, precision, BifurcationKitSettings{widen(Float32)}())
-        end
-    end
-    return cross_checked!(payoffs, precision, settings)
+function pitchfork_settings(payoffs::Tuple, scale::Real, precision::Real, settings::EngineSettings)::EngineSettings
+    settings isa BifurcationKitSettings{Float32} || return settings
+    result = traced_result(payoffs, logitnash_equilibrium(payoffs, precision).precision, settings)
+    stalled = is_error(result) && known_float32_stall(unwrap_error(result), payoffs, scale)
+    return stalled ? BifurcationKitSettings{widen(Float32)}() : settings
 end
 
 @testset "a pitchfork unfolded by a payoff perturbation: the trace turns with the principal branch ($engine)" for (engine, settings) in default_settings()
@@ -294,9 +291,12 @@ end
     # 0/40 at 1e-4, 3/40 at 1e-3, 34/40 at 1e-2 and 39/40 at 1e-1; the bordered tangent 40/40 at every scale.
     # PathFollowing, over 300 draws per scale in Float32 and Float64 alike: 300/300 at 1e-4, 1e-3 and 1e-2, and 297/300
     # at 1e-1 until its corrector's reach refusal; with it, 300/300 at every scale.
-    for (scale, payoffs) in unfolded_pitchforks(fresh_rng())
-        pitchfork_cross_checked!(payoffs, scale, 4, settings)
+    checks = [payoffs => pitchfork_settings(payoffs, scale, 4, settings) for (scale, payoffs) in unfolded_pitchforks(fresh_rng())]
+    for (payoffs, checked_with) in checks
+        cross_checked!(payoffs, 4, checked_with)
     end
+    # A fallback swaps the settings. 7 of 3000 draws at 1e-4 stalled, so two of a run's three stall with chance 2e-5.
+    @test count(check -> last(check) !== settings, checks) <= 1
 end
 
 # Two of the 7 draws at 1e-4 whose BifurcationKit Float32 trace stalled near the pitchfork on a Meteor Lake.
@@ -305,9 +305,14 @@ const FLOAT32_STALLED_PITCHFORKS = (
     ([3.0000694513302446 -0.0001601958687524617; -8.173649810089089e-5 2.000132529290259], [2.0000364515345765 6.871377377528037e-5; 0.00015500412506080802 2.999909808379389]),
 )
 
-@testset "BifurcationKit in Float64 cross-checks the unfolded pitchforks where its Float32 trace stalled" begin
+@testset "unfolded pitchforks where BifurcationKit's Float32 trace stalled: Float64 cross-checks them, the fallback only at 1e-4" begin
+    float32 = BifurcationKitSettings{Float32}()
     for payoffs in FLOAT32_STALLED_PITCHFORKS
         cross_checked!(payoffs, 4, BifurcationKitSettings{widen(Float32)}())
+        # On a CPU whose Float32 trace reaches the target, neither scale falls back.
+        stalled = is_error(traced_result(payoffs, logitnash_equilibrium(payoffs, 4).precision, float32))
+        @test (pitchfork_settings(payoffs, inv(float(10^4)), 4, float32) isa BifurcationKitSettings{widen(Float32)}) == stalled
+        @test pitchfork_settings(payoffs, inv(float(10^3)), 4, float32) isa BifurcationKitSettings{Float32}
     end
 end
 

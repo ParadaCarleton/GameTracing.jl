@@ -187,7 +187,7 @@ function rounding_explanation(pass::Union{NormalFormGains, NormalFormPass}, fail
     end
     game = LogitGame(pass, element(target_precision))
     jacobian = GameTracing.GameJacobian(game, GameTracing.BranchWorkspace(game, stalled_iterate))(stalled_iterate, stalled_pin)
-    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!, width, target_precision)
+    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!!, width, target_precision)
     state_weight, start, tangent = element(palc.palc_state_weight), [gaps; precision], [gap_tangent; tangent_precision]
     # The step's weights are those of the point it starts from, the last accepted one.
     GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(start, precision))

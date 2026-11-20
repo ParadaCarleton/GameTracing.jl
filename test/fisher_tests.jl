@@ -51,16 +51,16 @@ struct RangelessPass end
 GameTracing.gap_bound(::RangelessPass)::Real = 0
 
 function (::RangelessPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         ::AbstractVector,
         ::Real,
-    )::Nothing
+    )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     fill!(gain, zero(eltype(gain)))
     fill!(gain_slope, zero(eltype(gain_slope)))
     fill!(gain_precision_slope, zero(eltype(gain_precision_slope)))
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 @testset "a one-logit Fisher block is σ(z)σ(-z) ($element)" for element in (Float32, widen(Float32))

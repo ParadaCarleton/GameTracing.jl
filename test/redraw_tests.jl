@@ -202,7 +202,7 @@ end
 
 """The context of the failure `reached_state` returns for `progress` and `outcome` on `game`, with the caller's `context`."""
 function failure_fields(progress::GameTracing.TraceProgress, outcome::NamedTuple, game::LogitGame, context::NamedTuple)::NamedTuple
-    return unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!, progress.gaps), REDRAW_SETTINGS, context)).context
+    return unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!!, progress.gaps), REDRAW_SETTINGS, context)).context
 end
 
 @testset "a corrector at rounding noise fails PrecisionExhausted at its precision, before the target" begin
@@ -212,7 +212,7 @@ end
     progress = GameTracing.TraceProgress(traced.logits ./ half, half, 3, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false)
     exhausted = (; precision = half, correction = 2.0f-3, stalled_iterate = [traced.logits ./ half; half], stalled_pin = half, stalled_arclength = 0.1f0)
     outcome = (; step_length = 0.1f0, accepted_step = 0.2f0, exhausted, logit_accuracy = 3.0f-5, unresolved = false, exception = nothing)
-    failure = unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!, progress.gaps), REDRAW_SETTINGS, (;)))
+    failure = unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!!, progress.gaps), REDRAW_SETTINGS, (;)))
     @test failure.cause == GameTracing.PrecisionExhausted
     @test failure.context.lambda == exhausted.precision
     @test failure.context.correction == exhausted.correction
@@ -227,16 +227,16 @@ end
     @test failure.context.logit_accuracy == outcome.logit_accuracy
     @test failure.context.accepted_step == outcome.accepted_step
     unaccepted = GameTracing.TraceProgress(traced.logits ./ half, half, 0, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false)
-    @test iszero(unwrap_error(GameTracing.reached_state(unaccepted, outcome, game, pass_workspace(game.pass!, unaccepted.gaps), REDRAW_SETTINGS, (;))).context.accepted_step)
+    @test iszero(unwrap_error(GameTracing.reached_state(unaccepted, outcome, game, pass_workspace(game.pass!!, unaccepted.gaps), REDRAW_SETTINGS, (;))).context.accepted_step)
     reached = GameTracing.TraceProgress(traced.logits ./ TARGET_PRECISION, TARGET_PRECISION, 3, 0.0f0, TARGET_PRECISION, zeros(Float32, WIDTH), 0.0f0, false)
-    endpoint = unwrap(GameTracing.reached_state(reached, (; outcome..., exhausted = nothing), game, pass_workspace(game.pass!, reached.gaps), REDRAW_SETTINGS, (;)))
+    endpoint = unwrap(GameTracing.reached_state(reached, (; outcome..., exhausted = nothing), game, pass_workspace(game.pass!!, reached.gaps), REDRAW_SETTINGS, (;)))
     @test endpoint.steps == 3
     @test endpoint.logit_accuracy == outcome.logit_accuracy
 end
 
 @testset "a redrawn game must keep the trace's target precision and pass work type, and a hook's ShiftedGame must come from this point" begin
     game = LogitGame(GAME, TARGET_PRECISION)
-    slot = GameTracing.RedrawSlot(game, false, 0.1f0, pass_workspace(game.pass!, zeros(Float32, WIDTH)))
+    slot = GameTracing.RedrawSlot(game, false, 0.1f0, pass_workspace(game.pass!!, zeros(Float32, WIDTH)))
     check = GameTracing.RootShift(Float32[0.1f0, 0.2f0, 0.5f0], Float32[0, 0, 1], nothing)
     @test GameTracing.swapped(slot, check, nothing) === slot
     @test GameTracing.swapped(slot, check, slot.game) === slot

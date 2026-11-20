@@ -189,7 +189,7 @@ function palc_algorithm(
     return palc_with_geometry(
         settings,
         width,
-        palc_geometry(settings.step_metric, game.pass!, width, game.target_precision),
+        palc_geometry(settings.step_metric, game.pass!!, width, game.target_precision),
         orientation_check,
         PlainOrientation(settings.step_metric, E(game.target_precision)),
     )
@@ -439,7 +439,7 @@ function trace_endpoint(
     )::TraceResult{E} where {E <: Real}
     flat = zeros(E, width)
     # One set of pass work arrays serves every evaluation of the game; a redraw's swap brings the new game's.
-    pass_work = pass_workspace(game.pass!, flat)
+    pass_work = pass_workspace(game.pass!!, flat)
     traced_start = trace_start(game, flat, pass_work)
     # The start is a root for every finite game; a non-finite gain shows in its gaps.
     if !all(isfinite, traced_start)
@@ -557,7 +557,7 @@ function guarded_trace(
         similar(start),
         similar(start),
         zero(E),
-        kl_ranges(settings.corrector.max_kl, finalise.slot[].game.pass!, length(start) - 1),
+        kl_ranges(settings.corrector.max_kl, finalise.slot[].game.pass!!, length(start) - 1),
     )
     return segment_outcome(
         segment_branch(

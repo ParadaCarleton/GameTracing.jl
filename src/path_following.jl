@@ -3,6 +3,7 @@ using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
 using LinearSolve: LinearSolve
 using Logging: @debug
 using PathFollowing: PathFollowing
+using StaticArrays: SVector, StaticVector
 
 """
 How the corrector measures a move between two points `[w; λ]` (`corrector_measure`), with its settle tolerance and
@@ -198,22 +199,21 @@ function optional_limit(::Type{E}, limit::Real)::E where {E <: Real}
 end
 
 """
-    QRESystem(game, workspace)
+    QRESystem(game, logits, pass_work)
 
-`game`'s branch as PathFollowing's `system!!` over points `[w; λ]`: `branch_system!` without
-its pin row, written into `workspace` first, then copied into the tracer's arrays in place.
+`game`'s branch as PathFollowing's `system!!` over points `[w; λ]`: `branch_rows!!` into the tracer's residual and
+Jacobian, with logits and pass work arrays (`pass_workspace`) of its own. Static arrays and a static game (`SArray`
+payoffs) make it isbits, so a GPU work item runs it (`logit_solve_lambda_batch`).
 """
-struct QRESystem{G <: LogitGame, W <: BranchWorkspace}
+struct QRESystem{G <: LogitGame, L <: AbstractVector, W}
     game::G
-    workspace::W
+    logits::L
+    pass_work::W
 end
 
 function (system::QRESystem)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    filled = branch_system!(system.workspace, system.game, point, last(point))
-    width = length(residual)
-    residual .= @view filled.residual[1:width]
-    jacobian .= @view filled.jacobian[1:width, :]
-    return (residual, jacobian)
+    residual, jacobian, _, _ = branch_rows!!(residual, jacobian, system.logits, system.pass_work, system.game, point)
+    return residual, jacobian
 end
 
 """
@@ -326,8 +326,11 @@ struct PositivePrecision end
 
 (::PositivePrecision)(::AbstractVector, ::AbstractVector, corrected::AbstractVector)::Bool = last(corrected) > 0
 
-"""PathFollowing's `PseudoArclength` for `settings` on `gains`."""
-function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGains)::PathFollowing.PseudoArclength where {E <: Real}
+"""
+PathFollowing's `PseudoArclength` for `settings` on `gains`, its metric in the storage of `start` (`point_metric`). A
+static start and `linear_solver = PathFollowing.StaticLU()` make it isbits.
+"""
+function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGains, start::AbstractVector{E})::PathFollowing.PseudoArclength where {E <: Real}
     measure = corrector_measure(settings.distance, gains)
     return PathFollowing.PseudoArclength(;
         corrector = PathFollowing.Newton(;
@@ -342,7 +345,7 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
             settings.max_step_growth, settings.max_step, settings.reach,
         ),
         # PathFollowing measures the precision at target one, and has no PALC state weight to divide by.
-        metric = trace_metric(settings.step_metric, gains, logit_count(gains), one(E), one(E)),
+        metric = point_metric(trace_metric(settings.step_metric, gains, logit_count(gains), one(E), one(E)), start),
         settings.orientation_check,
         settings.split_check,
         accept = PositivePrecision(),
@@ -353,24 +356,42 @@ function path_algorithm(settings::PathFollowingSettings{E}, gains::NormalFormGai
 end
 
 """
-PathFollowing's `init` of the principal branch of `gains` in `[w; λ]`: a `Tracer` from the flat start toward rising
-`λ`, or the `StepFailure` there (`start_cause`, `start_context`).
+`metric` in the storage of `start`: `FixedWeights` take static weights at a static start, so the algorithm is isbits.
+A `FisherMetric` reads only its ranges and numbers, so it serves every storage.
+"""
+point_metric(metric::PathFollowing.Metric, ::AbstractVector)::PathFollowing.Metric = metric
+
+function point_metric(metric::PathFollowing.FixedWeights, ::StaticVector{P, E})::PathFollowing.FixedWeights{SVector{P, E}} where {P, E <: Real}
+    return PathFollowing.FixedWeights(SVector{P, E}(metric.weights))
+end
+
+"""
+PathFollowing's `CurveProblem` of the principal branch of `gains` in `[w; λ]`: from the flat start (`trace_start`)
+toward rising `λ`, in the storage of `flat`, one zero per logit. A static `flat` and game give an isbits problem.
+"""
+function path_problem(gains::NormalFormGains, flat::AbstractVector{E})::PathFollowing.CurveProblem where {E <: Real}
+    game = LogitGame(gains, one(E))
+    pass_work = pass_workspace(gains, flat)
+    start = trace_start(game, flat, pass_work)
+    direction = set_entry!!(zero(start), one(E), lastindex(start))
+    return PathFollowing.CurveProblem(QRESystem(game, zero(flat), pass_work), start, direction)
+end
+
+"""The first step of a trace of `problem` (`path_problem`) under `settings` (`opening_step`)."""
+function path_first_step(problem::PathFollowing.CurveProblem, settings::PathFollowingSettings{E})::E where {E <: Real}
+    return opening_step(problem.system!!.game, settings.step_metric, settings.max_step)
+end
+
+"""
+PathFollowing's `init` of the principal branch of `gains` in `[w; λ]` (`path_problem`): a `Tracer` from the flat
+start toward rising `λ`, or the `StepFailure` there (`start_cause`, `start_context`).
 """
 function path_init(
         gains::NormalFormGains,
         settings::PathFollowingSettings{E},
     )::Result{<:PathFollowing.Tracer{E}, PathFollowing.StepFailure{E}} where {E <: Real}
-    game = LogitGame(gains, one(E))
-    width = logit_count(gains)
-    flat = zeros(E, width)
-    pass_work = pass_workspace(game.pass!, flat)
-    start = trace_start(game, flat, pass_work)
-    direction = setindex!(zeros(E, width + 1), one(E), width + 1)
-    return CommonSolve.init(
-        PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(start, pass_work)), start, direction),
-        path_algorithm(settings, gains);
-        first_step = opening_step(game, settings.step_metric, settings.max_step),
-    )
+    problem = path_problem(gains, zeros(E, logit_count(gains)))
+    return CommonSolve.init(problem, path_algorithm(settings, gains, problem.start); first_step = path_first_step(problem, settings))
 end
 
 """The `TraceCause` of PathFollowing's start `failure`: `NotFinite` for a non-finite start, `Singular` otherwise."""
@@ -399,6 +420,24 @@ function stopped_context(
 end
 
 """
+The `TraceFailure` of PathFollowing's `failure` that stopped a trace at `point = [w; λ]` after `steps` steps, `context`
+on it: `NoConvergence` for `TooManySteps`, else `TraceStuck` for `Unresolved` or `TooManyRefusals`, with the refusals.
+"""
+function stopped_failure(
+        failure::PathFollowing.StepFailure{E},
+        point::AbstractVector{E},
+        steps::Integer,
+        context::NamedTuple,
+    )::TraceFailure where {E <: Real}
+    if failure.cause == PathFollowing.TooManySteps
+        return TraceFailure(NoConvergence, stopped_context(:max_steps, point, steps, context, (;)))
+    end
+    reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
+    details = (; failure.last_refusal, failure.step_length, failure.refusals)
+    return TraceFailure(TraceStuck, stopped_context(reason, point, steps, context, details))
+end
+
+"""
 `tracer` advanced by one accepted step that stops at precision `precision` (PathFollowing's `step!!` toward a `Bound`),
 and the step (PathFollowing's `AcceptedStep`), or the `TraceFailure` that ends the trace: `NoConvergence` once it has
 taken `max_steps`, else `TraceStuck` for PathFollowing's `Unresolved` or `TooManyRefusals`. `context` rides on the
@@ -411,14 +450,12 @@ function path_step!!(
         context::NamedTuple,
     )::Tuple{T, Result{PathFollowing.AcceptedStep{E}, TraceFailure}} where {E <: Real, T <: PathFollowing.Tracer{E}}
     if tracer.steps >= max_steps
-        return tracer, Err(TraceFailure(NoConvergence, stopped_context(:max_steps, tracer.point, tracer.steps, context, (;))))
+        spent = PathFollowing.StepFailure(PathFollowing.TooManySteps, PathFollowing.NoRefusal, tracer.step_length, 0)
+        return tracer, Err(stopped_failure(spent, tracer.point, tracer.steps, context))
     end
     tracer, stepped = PathFollowing.step!!(tracer, PathFollowing.Bound(length(tracer.point), precision))
     if is_error(stepped)
-        failure = unwrap_error(stepped)
-        reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
-        details = (; failure.last_refusal, failure.step_length, failure.refusals)
-        return tracer, Err(TraceFailure(TraceStuck, stopped_context(reason, tracer.point, tracer.steps, context, details)))
+        return tracer, Err(stopped_failure(unwrap_error(stepped), tracer.point, tracer.steps, context))
     end
     @debug "trace point" _group = :trace step = tracer.steps precision = last(tracer.point) step_length = unwrap(stepped).step_length
     return tracer, Ok(unwrap(stepped))
@@ -518,3 +555,4 @@ function stepped_landing!!(
     end
     return tracer, Ok(copy(tracer.point))
 end
+

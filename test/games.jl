@@ -64,17 +64,17 @@ GameTracing.logit_ranges(pass::LinearGainPass)::Vector{UnitRange{Int}} = UnitRan
 GameTracing.gap_bound(pass::LinearGainPass)::Real = maximum(abs.(pass.stand_alone) .+ vec(sum(abs, pass.interaction; dims = 2)))
 
 function (pass::LinearGainPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector{E},
         ::Real,
-    )::Nothing where {E <: Real}
+    )::Tuple{G, S, P} where {E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     stays = inv.(one(E) .+ exp.(-logits))
     gain .= pass.interaction * stays .+ pass.stand_alone
     gain_slope .= pass.interaction .* transpose(stays .* (one(E) .- stays))
     fill!(gain_precision_slope, zero(E))
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """One logit that gains `amplitude * logistic(logits - threshold)`: a coordination game whose branch folds back when `threshold` is large."""
@@ -87,17 +87,17 @@ GameTracing.logit_ranges(::ThresholdPass)::Tuple{UnitRange{Int}} = (1:1,)
 GameTracing.gap_bound(pass::ThresholdPass)::Real = abs(pass.amplitude)
 
 function (pass::ThresholdPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector{E},
         ::Real,
-    )::Nothing where {E <: Real}
+    )::Tuple{G, S, P} where {E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     stays = inv.(one(E) .+ exp.(pass.threshold .- logits))
     gain .= pass.amplitude .* stays
     gain_slope .= reshape(pass.amplitude .* stays .* (one(E) .- stays), 1, 1)
     fill!(gain_precision_slope, zero(E))
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """A `LinearGainPass` whose gains shrink with the precision: `G = (A p + b) / sqrt(1 + (λ s)²)`, so `∂G/∂λ ≠ 0`."""
@@ -111,18 +111,18 @@ GameTracing.logit_ranges(pass::DampedGainPass)::Vector{UnitRange{Int}} = GameTra
 GameTracing.gap_bound(pass::DampedGainPass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::DampedGainPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector{E},
         precision::Real,
-    )::Nothing where {E <: Real}
-    pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
+    )::Tuple{G, S, P} where {E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
+    gain, gain_slope, gain_precision_slope = pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
     damping = inv(sqrt(1 + (precision * pass.spread)^2))
     gain_precision_slope .= -precision * pass.spread^2 * damping^2 .* damping .* gain
     gain .*= damping
     gain_slope .*= damping
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """One logit whose gain is the precision itself, `G = λ`: the branch `z = λ²`."""
@@ -133,16 +133,16 @@ GameTracing.logit_ranges(::PrecisionGainPass)::Tuple{UnitRange{Int}} = (1:1,)
 GameTracing.gap_bound(::PrecisionGainPass)::Real = 1
 
 function (::PrecisionGainPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         ::AbstractVector{E},
         precision::Real,
-    )::Nothing where {E <: Real}
+    )::Tuple{G, S, P} where {E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     fill!(gain, E(precision))
     fill!(gain_slope, zero(E))
     fill!(gain_precision_slope, one(E))
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """
@@ -161,17 +161,17 @@ GameTracing.logit_ranges(::NoisyFlatPass)::Tuple{UnitRange{Int}} = (1:1,)
 GameTracing.gap_bound(pass::NoisyFlatPass)::Real = abs(pass.level) + abs(pass.noise)
 
 function (pass::NoisyFlatPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector{E},
         precision::Real,
-    )::Nothing where {E <: Real}
+    )::Tuple{G, S, P} where {E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     draw = (E(hash(only(logits), pass.salt) % 65536) / 32768 - one(E)) * (precision > pass.onset)
     fill!(gain, pass.level + pass.noise * draw)
     fill!(gain_slope, zero(E))
     fill!(gain_precision_slope, zero(E))
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """A pass whose gain and slopes are NaN once the precision passes `poison`, as a game that overflows there is."""
@@ -184,19 +184,19 @@ GameTracing.logit_ranges(pass::PoisonedPass)::Union{Tuple, AbstractVector} = Gam
 GameTracing.gap_bound(pass::PoisonedPass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::PoisonedPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector,
         precision::Real,
-    )::Nothing
-    pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
+    )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
+    gain, gain_slope, gain_precision_slope = pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
     if precision > pass.poison
         fill!(gain, NaN32)
         fill!(gain_slope, NaN32)
         fill!(gain_precision_slope, NaN32)
     end
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """A pass that gives a NaN slope, so the Jacobian is non-finite where the residual is not."""
@@ -208,15 +208,15 @@ GameTracing.logit_ranges(pass::NaNSlopePass)::Union{Tuple, AbstractVector} = Gam
 GameTracing.gap_bound(pass::NaNSlopePass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::NaNSlopePass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector,
         precision::Real,
-    )::Nothing
-    pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
+    )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
+    gain, gain_slope, gain_precision_slope = pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
     fill!(gain_slope, NaN32)
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
 
 """A pass that throws a caller's `ArgumentError` once the precision is positive."""
@@ -228,17 +228,16 @@ GameTracing.logit_ranges(pass::ThrowingPass)::Union{Tuple, AbstractVector} = Gam
 GameTracing.gap_bound(pass::ThrowingPass)::Real = GameTracing.gap_bound(pass.pass)
 
 function (pass::ThrowingPass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector,
         precision::Real,
-    )::Nothing
+    )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     if precision > 0
         throw(ArgumentError("bad game"))
     end
-    pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
-    return nothing
+    return pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
 end
 
 """
@@ -247,10 +246,8 @@ precision_slope)`, which are `T`, `∂T/∂z = λ ∂G/∂z` and `∂T/∂λ = G
 """
 function evaluated(pass::Any, logits::AbstractVector{E}, precision::Real)::NamedTuple where {E <: Real}
     width = length(logits)
-    gain = Vector{E}(undef, width)
-    gain_slope = Matrix{E}(undef, width, width)
-    gain_precision_slope = Vector{E}(undef, width)
-    pass(gain, gain_slope, gain_precision_slope, logits, precision)
+    blank = (Vector{E}(undef, width), Matrix{E}(undef, width, width), Vector{E}(undef, width))
+    gain, gain_slope, gain_precision_slope = pass(blank..., logits, precision)
     return (;
         response = precision .* gain,
         logit_slope = precision .* gain_slope,
@@ -283,7 +280,7 @@ struct UnboundedPass{P}
     pass::P
 end
 
-(wrapper::UnboundedPass)(arguments::Any...)::Nothing = wrapper.pass(arguments...)
+(wrapper::UnboundedPass)(arguments::Any...)::Tuple = wrapper.pass(arguments...)
 GameTracing.logit_ranges(wrapper::UnboundedPass)::Any = GameTracing.logit_ranges(wrapper.pass)
 
 """
@@ -658,13 +655,13 @@ function GameTracing.pass_workspace(pass::CountingPass, logits::AbstractVector):
 end
 
 function (pass::CountingPass)(
-        work::NamedTuple,
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        work::W,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector,
         precision::Real,
-    )::Nothing
+    )::Tuple{W, G, S, P} where {W <: NamedTuple, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     return pass.inner(work, gain, gain_slope, gain_precision_slope, logits, precision)
 end
 
@@ -741,17 +738,18 @@ GameTracing.logit_ranges(pass::WindowNoisePass)::Union{Tuple, AbstractVector} = 
 GameTracing.gap_bound(pass::WindowNoisePass)::Real = GameTracing.gap_bound(pass.pass) + abs(pass.noise)
 
 function (pass::WindowNoisePass)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector{E},
         precision::Real,
-    )::Nothing where {E <: Real}
-    pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
+    )::Tuple{G, S, P} where {E <: Real, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
+    gain, gain_slope, gain_precision_slope = pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
     if 0 < precision < pass.window
         for index in eachindex(gain)
             gain[index] += pass.noise * (E(hash((index, sum(logits))) % 65536) / 32768 - one(E))
         end
     end
-    return nothing
+    return gain, gain_slope, gain_precision_slope
 end
+

@@ -1,52 +1,56 @@
 using BifurcationKit: BifurcationKit
 using LinearAlgebra: mul!
+using PathFollowing: Into
+using StaticArrays: SMatrix, SVector, StaticMatrix, StaticVector, pop, push
 """
-    LogitGame(pass!, target_precision)
+    LogitGame(pass!!, target_precision)
 
 A logit game whose equilibria solve `z = λ G(z, λ)` at precision `λ = 1 / temperature`, `G` the payoff gains the
-logits scale. `pass!(gain, gain_slope, gain_precision_slope, z, λ)` writes `G(z, λ)`, its Jacobian `∂G/∂z` and its
-slope `∂G/∂λ` into the three arrays, from one evaluation, and returns `nothing`. The arrays are views into the
-trace's own residual and Jacobian (`BranchWorkspace`), so a pass allocates nothing of its own. A pass that needs work
-arrays of its own gets them from `pass_workspace`. `G` must be finite at `λ = 0`, where the flat logits are the only
-equilibrium. `target_precision` is the precision a trace ends at, non-negative and finite (`ArgumentError` otherwise).
-A traced pass also defines `logit_ranges` and `gap_bound`.
+logits scale. `pass!!(gain, gain_slope, gain_precision_slope, z, λ)` writes `G(z, λ)`, its Jacobian `∂G/∂z` and its
+slope `∂G/∂λ` into the three arrays, from one evaluation, and returns them (`Into`): mutable arrays changed in place,
+static arrays new. The mutable arrays are views into the trace's own residual and Jacobian (`branch_rows!!`), so a
+pass allocates nothing of its own. A pass that needs work arrays of its own gets them from `pass_workspace`. `G` must
+be finite at `λ = 0`, where the flat logits are the only equilibrium. `target_precision` is the precision a trace ends
+at, non-negative and finite (`ArgumentError` otherwise). A traced pass also defines `logit_ranges` and `gap_bound`.
 """
 struct LogitGame{P, T <: Real}
-    pass!::P
+    pass!!::P
     target_precision::T
-    function LogitGame{P, T}(pass!::P, target_precision::Real)::LogitGame{P, T} where {P, T <: Real}
+    function LogitGame{P, T}(pass!!::P, target_precision::Real)::LogitGame{P, T} where {P, T <: Real}
         stored = convert(T, target_precision)
         # Both: a conversion can round a negative target to -0 or a huge one to Inf.
         if !(reachable(target_precision) && reachable(stored))
             throw(ArgumentError("target_precision must be non-negative and finite in $T; got $target_precision"))
         end
-        return new{P, T}(pass!, stored)
+        return new{P, T}(pass!!, stored)
     end
 end
 
-function LogitGame(pass!::P, target_precision::T)::LogitGame{P, T} where {P, T <: Real}
-    return LogitGame{P, T}(pass!, target_precision)
+function LogitGame(pass!!::P, target_precision::T)::LogitGame{P, T} where {P, T <: Real}
+    return LogitGame{P, T}(pass!!, target_precision)
 end
 
 """Whether a trace can reach `precision`: it rises from its start at `λ = 0`, so a non-negative, finite one."""
 reachable(precision::Real)::Bool = precision >= 0 && isfinite(precision)
 
 """
-    pass_workspace(pass!, logits)
+    pass_workspace(pass!!, logits)
 
-The work arrays `pass!` needs beyond its outputs, in the element type and length of `logits`, or `nothing` (the
-default) when it needs none. A pass with work arrays is called as `pass!(work, gain, gain_slope, gain_precision_slope, z, λ)`.
+The work arrays `pass!!` needs beyond its outputs, in the element type, length and storage of `logits`, or `nothing`
+(the default) when it needs none. A pass with work arrays is called as
+`pass!!(work, gain, gain_slope, gain_precision_slope, z, λ)` and returns the work first, then its outputs (`Into`).
 A trace builds them once per game and shares them across every evaluation of that game. So a pass may read what
 `pass_workspace` wrote, such as the game's constants, and writes every other work array before it reads it. The work
 belongs to its game: no other game's pass gets it. Each trace builds its own, so a game shared by two traces stays
-safe. A redrawn game's work must have the type of the trace's (`swapped`).
+safe. A redrawn game's work must have the type of the trace's (`swapped`). Static work arrays come back new from each
+pass, and a static trace drops them: the next pass starts again from `pass_workspace`'s.
 """
 pass_workspace(::Any, ::AbstractVector)::Nothing = nothing
 
 """
-    logit_ranges(pass!)
+    logit_ranges(pass!!)
 
-Each player's range in the stacked logits of `pass!`'s game: the logits of its strategies against its reference
+Each player's range in the stacked logits of `pass!!`'s game: the logits of its strategies against its reference
 strategy, one `UnitRange{Int}` per player in a tuple or vector, tiling the logits in order (`checked_ranges`). A player
 with two strategies has one logit; a player with one strategy has an empty range. The Fisher metric (`FisherDistance`) and the corrector's KL limit (`max_kl`) read
 it. It has no default: a pass traced under either must define it.
@@ -54,24 +58,24 @@ it. It has no default: a pass traced under either must define it.
 function logit_ranges end
 
 """
-    gap_bound(pass!)
+    gap_bound(pass!!)
 
-A bound on every payoff gap `|w|` of `pass!`'s game over the strategies the trace meets: the inverse of each trace's
+A bound on every payoff gap `|w|` of `pass!!`'s game over the strategies the trace meets: the inverse of each trace's
 first step (`opening_step`). A normal-form game's is its payoff range (`payoff_range`). Every traced pass
 defines it; a pass without its own method throws an `ArgumentError` that names the method to define.
 """
-function gap_bound(pass!::Any)::Union{}
-    throw(ArgumentError("$(typeof(pass!)) has no gap bound: define GameTracing.gap_bound(::$(typeof(pass!))), a bound on its payoff gaps"))
+function gap_bound(pass!!::Any)::Union{}
+    throw(ArgumentError("$(typeof(pass!!)) has no gap bound: define GameTracing.gap_bound(::$(typeof(pass!!))), a bound on its payoff gaps"))
 end
 
 """
-The first arclength step of a trace of `game` in `geometry`, at most `max_step`: `root / gap_bound(game.pass!)`.
+The first arclength step of a trace of `game` in `geometry`, at most `max_step`: `root / gap_bound(game.pass!!)`.
 A step `h` from `λ = 0` moves `λ` by at most `h / root` (`opening_root`), so no logit `z = λ w` moves by more than one,
 whatever the target. Step control grows or shrinks it from there. The quotient overflows only for a tiny bound; a step
 that is not positive and finite (a zero, tiny or non-finite bound) is one, and a non-finite start fails (`NotFinite`).
 """
 function opening_step(game::LogitGame, geometry::TraceGeometry{E}, max_step::Real)::E where {E <: Real}
-    step = opening_root(geometry, game.target_precision) / E(gap_bound(game.pass!))
+    step = opening_root(geometry, game.target_precision) / E(gap_bound(game.pass!!))
     return min(step > 0 && isfinite(step) ? step : one(E), E(max_step))
 end
 
@@ -91,22 +95,23 @@ function checked_ranges(ranges::R, width::Integer)::R where {R}
     return ranges
 end
 
-"""Call `pass!` on its outputs, with its work arrays `work` unless it has none."""
-function run_pass!(
-        pass!::Any,
-        work::Any,
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+"""
+Call `pass!!` on its outputs, with its work arrays `work` unless it has none (`nothing`). Return the work and the
+three outputs, each changed in place or new (`Into`).
+"""
+function run_pass!!(
+        pass!!::Any,
+        work::W,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector,
         precision::Real,
-    )::Nothing
+    )::Tuple{W, G, S, P} where {W, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     if isnothing(work)
-        pass!(gain, gain_slope, gain_precision_slope, logits, precision)
-    else
-        pass!(work, gain, gain_slope, gain_precision_slope, logits, precision)
+        return (work, pass!!(gain, gain_slope, gain_precision_slope, logits, precision)...)
     end
-    return nothing
+    return pass!!(work, gain, gain_slope, gain_precision_slope, logits, precision)
 end
 
 """
@@ -137,7 +142,7 @@ end
 
 function BranchWorkspace(game::LogitGame, point::AbstractVector{E})::BranchWorkspace{E} where {E <: Real}
     # A `Vector`, as `trace_endpoint` passes: a redraw's swap needs pass work of the trace's type.
-    return BranchWorkspace(point, pass_workspace(game.pass!, zeros(E, length(point) - 1)))
+    return BranchWorkspace(point, pass_workspace(game.pass!!, zeros(E, length(point) - 1)))
 end
 
 """
@@ -161,7 +166,7 @@ end
 """
     GameSystem(game, workspace)
 
-BifurcationKit's fused `FJ(x, pin)` of `game`'s branch: the residual and Jacobian from one `pass!`, written into
+BifurcationKit's fused `FJ(x, pin)` of `game`'s branch: the residual and Jacobian from one `pass!!`, written into
 `workspace` (`branch_system!`). PALC's Newton method calls it in place of the residual and `J`.
 """
 struct GameSystem{G <: LogitGame, W <: BranchWorkspace}
@@ -193,17 +198,100 @@ payoff_gaps(point::AbstractVector)::AbstractVector = view(
     firstindex(point):(lastindex(point) - 1),
 )
 
+payoff_gaps(point::StaticVector)::StaticVector = pop(point)
+
 """The logits `z = λ w` of a branch point `x = [w; λ]`."""
 function logits_at(point::AbstractVector{E})::AbstractVector{E} where {E <: Real}
     return last(point) .* payoff_gaps(point)
 end
 
 """
+    branch_rows!!(residual, jacobian, logits, pass_work, game, x)
+
+`game`'s branch residual `F = w - G(λ w, λ)` at `x = [w; λ]` in `residual`, and its Jacobian `[∂F/∂w  ∂F/∂λ]` in
+`jacobian`: `∂F/∂w = I - λ ∂G/∂z` and `∂F/∂λ = -(∂G/∂z w + ∂G/∂λ)`. The logits `z = λ w` go into `logits`, and the
+pass runs on its work arrays `pass_work` (`pass_workspace`). Return the four arrays (`Into`). Mutable arrays hold
+`G`, `∂G/∂z` and `∂G/∂λ` in the blocks of `F` and its Jacobian (`pass_blocks`), which then form in place. Static
+arrays form new ones.
+"""
+function branch_rows!!(
+        residual::R,
+        jacobian::J,
+        logits::L,
+        pass_work::W,
+        game::LogitGame,
+        point::AbstractVector{E},
+    )::Tuple{R, J, L, W} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}, L <: AbstractVector{E}, W}
+    gaps = payoff_gaps(point)
+    precision = point[end]
+    logits = Into(logits) .= precision .* gaps
+    gain, gain_slope, precision_column = pass_blocks(residual, jacobian)
+    pass_work, gain, gain_slope, precision_column = run_pass!!(game.pass!!, pass_work, gain, gain_slope, precision_column, logits, precision)
+    # `∂F/∂λ` first: it reads `∂G/∂z`, which the next line overwrites.
+    precision_column = precision_slope!!(precision_column, gain_slope, gaps)
+    gain_slope = Into(gain_slope) .= .-precision .* gain_slope
+    for diagonal in axes(gain_slope, 1)
+        gain_slope = set_entry!!(gain_slope, gain_slope[diagonal, diagonal] + one(E), diagonal, diagonal)
+    end
+    gain = Into(gain) .= gaps .- gain
+    return (joined_rows!!(residual, jacobian, gain, gain_slope, precision_column)..., logits, pass_work)
+end
+
+"""
+The blocks a pass writes `G`, `∂G/∂z` and `∂G/∂λ` into, for a residual and a Jacobian `[∂F/∂w  ∂F/∂λ]`: views of
+mutable arrays, or new static arrays of their sizes.
+"""
+function pass_blocks(residual::AbstractVector, jacobian::AbstractMatrix)::Tuple{AbstractVector, AbstractMatrix, AbstractVector}
+    width = length(residual)
+    return residual, @view(jacobian[:, 1:width]), @view(jacobian[:, width + 1])
+end
+
+function pass_blocks(residual::StaticVector{W, E}, ::StaticMatrix)::Tuple{StaticVector, StaticMatrix, StaticVector} where {W, E <: Real}
+    return residual, zeros(SMatrix{W, W, E}), zeros(SVector{W, E})
+end
+
+"""`∂F/∂λ = -(∂G/∂z w + ∂G/∂λ)` from `∂G/∂λ` in `column`, `∂G/∂z` in `slope` and the gaps `w` (`Into`)."""
+function precision_slope!!(column::C, slope::AbstractMatrix{E}, gaps::AbstractVector{E})::C where {E <: Real, C <: AbstractVector{E}}
+    return mul!(column, slope, gaps, -one(E), -one(E))
+end
+
+function precision_slope!!(
+        column::C,
+        slope::StaticMatrix{<:Any, <:Any, E},
+        gaps::StaticVector{<:Any, E},
+    )::C where {E <: Real, C <: StaticVector{<:Any, E}}
+    return C(.-(slope * gaps) .- column)
+end
+
+"""
+The residual and Jacobian `[∂F/∂w  ∂F/∂λ]` from their blocks (`pass_blocks`): the mutable arrays, which the blocks
+view, or new static ones.
+"""
+function joined_rows!!(
+        residual::R,
+        jacobian::J,
+        ::AbstractVector,
+        ::AbstractMatrix,
+        ::AbstractVector,
+    )::Tuple{R, J} where {R <: AbstractVector, J <: AbstractMatrix}
+    return residual, jacobian
+end
+
+function joined_rows!!(
+        ::R,
+        ::J,
+        gain::StaticVector,
+        gain_slope::StaticMatrix,
+        precision_column::StaticVector,
+    )::Tuple{R, J} where {R <: StaticVector, J <: StaticMatrix}
+    return R(gain), J(hcat(gain_slope, precision_column))
+end
+
+"""
     branch_system!(workspace, game, x, pin)
 
-`workspace` with `game`'s branch residual and Jacobian at `x = [w; λ]`: `∂F/∂w = I - λ ∂G/∂z` and
-`∂F/∂λ = -(∂G/∂z w + ∂G/∂λ)`, over the precision's own row `[0 … 0 1]`. The pass writes `G`, `∂G/∂z`
-and `∂G/∂λ` into the blocks that hold `F` and its Jacobian, which are then formed in place.
+`workspace` with `game`'s branch residual and Jacobian at `x = [w; λ]`, BifurcationKit's square system: the rows of
+`branch_rows!!` over the precision's own row, `λ - pin` and `[0 … 0 1]`.
 """
 function branch_system!(
         workspace::BranchWorkspace{E},
@@ -212,37 +300,48 @@ function branch_system!(
         pin::Real,
     )::typeof(workspace) where {E <: Real}
     (; residual, jacobian, logits, pass_work) = workspace
-    gaps = payoff_gaps(point)
-    width = length(gaps)
-    precision = point[end]
-    logits .= precision .* gaps
-    gain = view(residual, 1:width)
-    gain_slope = @view jacobian[1:width, 1:width]
-    precision_column = @view jacobian[1:width, width + 1]
-    run_pass!(game.pass!, pass_work, gain, gain_slope, precision_column, logits, precision)
-    # `∂F/∂λ` first: it reads `∂G/∂z`, which the next line overwrites.
-    mul!(precision_column, gain_slope, gaps, -one(E), -one(E))
-    gain_slope .= .-precision .* gain_slope
-    for diagonal in axes(gain_slope, 1)
-        gain_slope[diagonal, diagonal] += one(E)
-    end
-    gain .= gaps .- gain
+    width = length(point) - 1
+    branch_rows!!(view(residual, 1:width), @view(jacobian[1:width, :]), logits, pass_work, game, point)
     fill!(@view(jacobian[width + 1, 1:width]), zero(E))
     jacobian[end, end] = one(E)
-    residual[end] = precision - pin
+    residual[end] = point[end] - pin
     return workspace
+end
+
+"""
+The residual and Jacobian `[∂F/∂w  ∂F/∂λ]` of `branch_rows!!` for `width` gaps, uninitialized: mutable arrays like
+`flat`, or static ones for a static `flat`.
+"""
+function branch_arrays(flat::AbstractVector{E})::Tuple{AbstractVector{E}, AbstractMatrix{E}} where {E <: Real}
+    width = length(flat)
+    return similar(flat), similar(flat, width, width + 1)
+end
+
+function branch_arrays(::StaticVector{W, E})::Tuple{StaticVector{W, E}, StaticMatrix{W}} where {W, E <: Real}
+    return zeros(SVector{W, E}), zeros(SMatrix{W, W + 1, E})
+end
+
+"""`vector` with `entry` appended: a new mutable array, or a new static array."""
+function appended(vector::AbstractVector{E}, entry::E)::AbstractVector{E} where {E <: Real}
+    return [vector; entry]
+end
+
+function appended(vector::StaticVector{<:Any, E}, entry::E)::StaticVector{<:Any, E} where {E <: Real}
+    return push(vector, entry)
 end
 
 """
     trace_start(game, flat, pass_work)
 
 The branch's start `[w; 0]` at zero precision: the gaps `G(0, 0)` that the `flat` logits (all zero) face, from one
-pass on `game`'s work arrays `pass_work` (`pass_workspace`).
+pass on `game`'s work arrays `pass_work` (`pass_workspace`), in `flat`'s storage.
 """
 function trace_start(game::LogitGame, flat::AbstractVector{E}, pass_work::Any)::AbstractVector{E} where {E <: Real}
-    start = [flat; zero(E)]
-    payoff_gaps(start) .= .-payoff_gaps(branch_system!(BranchWorkspace(start, pass_work), game, start, zero(E)).residual)
-    return start
+    residual, jacobian = branch_arrays(flat)
+    point = appended(flat, zero(E))
+    residual, _, _, _ = branch_rows!!(residual, jacobian, zero(flat), pass_work, game, point)
+    # The residual at the flat start is `0 - G`.
+    return appended(.-residual, zero(E))
 end
 
 """

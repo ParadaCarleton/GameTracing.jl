@@ -277,7 +277,7 @@ function CorrectorReach(
 end
 
 """
-The players' `logit_ranges` that `CorrectorReach`'s KL limit `limit` reads, over `width` logits of `pass!`'s game:
+The players' `logit_ranges` that `CorrectorReach`'s KL limit `limit` reads, over `width` logits of `pass!!`'s game:
 `nothing` when the limit is off, so a pass without `logit_ranges` traces under it.
 """
 kl_ranges(::Nothing, ::Any, ::Integer)::Nothing = nothing

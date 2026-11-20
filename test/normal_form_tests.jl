@@ -265,8 +265,8 @@ end
 @testset "rock-paper-scissors traces to the uniform mixture at every precision" begin
     beats = [0 -1 1; 1 0 -1; -1 1 0]
     game = LogitGame(NormalFormGains((Float32.(beats), Float32.(-beats))), 5.0f0)
-    traced = unwrap(trace_endpoint(game, logit_count(game.pass!), BifurcationKitSettings{Float32}()))
-    @test profile_gap(mixed_strategies(game.pass!, traced.logits), (fill(1.0f0 / 3, 3), fill(1.0f0 / 3, 3))) < 1.0f-4
+    traced = unwrap(trace_endpoint(game, logit_count(game.pass!!), BifurcationKitSettings{Float32}()))
+    @test profile_gap(mixed_strategies(game.pass!!, traced.logits), (fill(1.0f0 / 3, 3), fill(1.0f0 / 3, 3))) < 1.0f-4
 end
 
 @testset "games with more than two strategies: the trace follows the principal branch" begin

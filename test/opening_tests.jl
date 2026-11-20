@@ -399,7 +399,7 @@ end
 """The factored bordered tangent of a restart (`restart_tangent`), up to positive scale: the opening tangent's reference."""
 function factored_opening_tangent(game, start, settings)
     width = length(start) - 1
-    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!, width, game.target_precision)
+    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!!, width, game.target_precision)
     direction = setindex!(zero(start), one(eltype(start)), lastindex(start))
     border = GameTracing.palc_border(palc.dot, eltype(start)(palc.palc_state_weight), direction)
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))
@@ -410,10 +410,10 @@ end
     rng = Xoshiro(0x0123456789abcdef + width)
     game = LogitGame(LinearGainPass(randn(rng, Float32, width, width), randn(rng, Float32, width)), TARGET_PRECISION)
     settings = BifurcationKitSettings{Float32}()
-    start = GameTracing.trace_start(game, zeros(Float32, width), pass_workspace(game.pass!, zeros(Float32, width)))
+    start = GameTracing.trace_start(game, zeros(Float32, width), pass_workspace(game.pass!!, zeros(Float32, width)))
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))
     @test system.jacobian[1:width, 1:width] == I(width)
-    closed = GameTracing.opening_tangent(game, start, pass_workspace(game.pass!, zeros(Float32, width))).tangent
+    closed = GameTracing.opening_tangent(game, start, pass_workspace(game.pass!!, zeros(Float32, width))).tangent
     factored = factored_opening_tangent(game, start, settings)
     @test closed ./ last(closed) ≈ factored ./ last(factored) atol = 1.0f-5
 end

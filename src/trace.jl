@@ -34,7 +34,7 @@ end
 
 """
     BifurcationKitSettings{E}(; max_step, aggressiveness, step_metric,
-                     corrector, max_steps, tangent, bordered_solver, step_control, orientation_check, palc_corrector,
+                     corrector, max_steps, loop_reach, tangent, bordered_solver, step_control, orientation_check, palc_corrector,
                      palc_options, continuation_options)
 
 BifurcationKit PALC controls for `trace_endpoint`, in `(w, λ)` with `w = logits / λ` the payoff gaps and `λ` the
@@ -52,6 +52,10 @@ precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`). Th
 - `step_metric`: a `TraceGeometry`, the norm a trace steps in and its state weight. The default is
   `default_step_metric`, both engines' default. The first tangent is the exact tangent at the flat start (`opening_tangent`).
 - `max_steps`: continuation steps before the trace fails as `NoConvergence`.
+- `loop_reach`: the loop test's tolerance (`LoopTest`). A trace that crosses a fold again within this share of the two
+  steps' lengths fails as `TraceStuck`. A fold estimate lies about `φ / 8` of its step from the fold, `φ` the step's
+  turn, so the default 1/2 holds four such errors at `StepControl`'s turn limit of 1 radian. A larger reach can join
+  distinct folds of a tight S-curve.
 - `tangent`: BifurcationKit's tangent algorithm, passed to PALC as is. `Bordered()` (the default) solves the bordered
   Jacobian system. `Secant()` extrapolates the last two points and saves that solve. Do not use it where a small payoff
   perturbation unfolds a pitchfork: there it crosses onto another arm (the test "a pitchfork unfolded by a payoff
@@ -81,6 +85,7 @@ struct BifurcationKitSettings{
     step_metric::TraceGeometry{E}
     corrector::CorrectorSettings{E}
     max_steps::Int
+    loop_reach::E
     tangent::T
     bordered_solver::BorderedSolver
     step_control::Union{Nothing, StepControl{E}}
@@ -97,6 +102,7 @@ function BifurcationKitSettings{E}(;
         step_metric::TraceGeometry{E} = default_step_metric(E),
         corrector::CorrectorSettings{E} = CorrectorSettings{E}(),
         max_steps::Integer = 2_000,
+        loop_reach::Real = 1 // 2,
         tangent::T = BifurcationKit.Bordered(),
         bordered_solver::BorderedSolver = MatrixSolve,
         step_control::Union{Nothing, StepControl{E}} = StepControl{E}(),
@@ -108,7 +114,7 @@ function BifurcationKitSettings{E}(;
         E <: Real, T <: BifurcationKit.AbstractTangentComputation, C, P <: NamedTuple, O <: NamedTuple,
     }
     return BifurcationKitSettings{E, T, C, P, O}(
-        E(max_step), E(aggressiveness), step_metric, corrector, Int(max_steps), tangent, bordered_solver,
+        E(max_step), E(aggressiveness), step_metric, corrector, Int(max_steps), E(loop_reach), tangent, bordered_solver,
         step_control, checked_orientation(orientation_check, bordered_solver), palc_corrector, palc_options,
         continuation_options,
     )
@@ -461,13 +467,14 @@ function trace_endpoint(
         zero(E),
         false,
         false,
-        E(game.target_precision),
+        LoopTest(E(game.target_precision), settings.loop_reach),
     )
     finalise = TraceFinalise(
         keep_going,
         redraw,
         RedrawSlot(game, false, opening_step(game, settings.step_metric, settings.max_step)),
         settings.corrector,
+        opening.loop,
     )
     return redrawn_trace(
         guarded_trace(traced_start, opening_tangent(game, traced_start), settings, finalise, accept_corrected, opening),
@@ -674,7 +681,7 @@ function restarted_segment(
         restart.tangent_precision,
         opening.unmoved,
         opening.looped,
-        opening.target_precision,
+        opening.loop,
     )
     return opened_segment(iterator, opened_state(iterator, start, restart.opening), opened)
 end

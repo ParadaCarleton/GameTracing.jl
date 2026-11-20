@@ -229,7 +229,7 @@ end
         0.0f0,
         false,
         false,
-        TARGET_PRECISION,
+        shipped_loop(TARGET_PRECISION),
     )
     result = GameTracing.reached_state(
         progress,
@@ -250,7 +250,7 @@ end
 """`reached_state` of a trace of `game` to `gaps` on its target, its accepted points settled within `accuracy`."""
 function reached_at(game::LogitGame, gaps::AbstractVector{E}, accuracy::E)::GameTracing.TraceResult{E} where {E <: Real}
     target = E(game.target_precision)
-    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false, false, target)
+    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false, false, shipped_loop(target))
     return GameTracing.reached_state(progress, ran_outcome(accuracy), game, BifurcationKitSettings{E}(), (;))
 end
 
@@ -324,6 +324,7 @@ end
         GameTracing.NoRedraw(),
         GameTracing.RedrawSlot(game, false, 0.1f0),
         GameTracing.CorrectorSettings{Float32}(),
+        shipped_loop(TARGET_PRECISION),
     )
     start, moved = branch_record(Float32[0, 0], 0.0f0, 0),
         branch_record(Float32[0.1f0, 0.2f0], 0.5f0, 1)
@@ -347,7 +348,7 @@ end
         0.0f0,
         false,
         false,
-        TARGET_PRECISION,
+        shipped_loop(TARGET_PRECISION),
     )
     @test GameTracing.branch_progress([start], opening) === opening
     progress = GameTracing.branch_progress([start, moved], opening)
@@ -413,15 +414,27 @@ function circle_branch(
 end
 
 """
-The 1-based index of the first record of `branch` that `looped` flags against the records before it, or `nothing`, at
-`target_precision`: one for the records of a unit circle, whose plane `(w, λ)` then measures as `(P w, λ / P)` does.
+The 1-based index of the first record of `branch` that `looped` flags against the records before it under `loop`, or
+`nothing`.
+"""
+function first_loop(branch::AbstractVector, loop::GameTracing.LoopTest)::Union{Nothing, Int}
+    return findfirst([GameTracing.looped(view(branch, firstindex(branch):(index - 1)), branch[index], loop) for index in eachindex(branch)])
+end
+
+"""
+`first_loop` under the shipped loop test at `target_precision`: one for the records of a unit circle, whose plane
+`(w, λ)` then measures as `(P w, λ / P)` does.
 """
 function first_loop(branch::AbstractVector, target_precision::Real)::Union{Nothing, Int}
-    return findfirst(
-        [
-            GameTracing.looped(view(branch, firstindex(branch):(index - 1)), branch[index], target_precision) for index in eachindex(branch)
-        ]
-    )
+    return first_loop(branch, shipped_loop(oftype(first(branch).param, target_precision)))
+end
+
+"""`laps` laps of eight steps round the unit circle from `start` radians, with zero precision tangents at its folds."""
+function octagon_branch(::Type{E}, start::Real, laps::Integer)::AbstractVector where {E <: Real}
+    return [
+        (; record..., tangent_precision = abs(record.tangent_precision) < sqrt(eps(E)) ? zero(E) : record.tangent_precision)
+            for record in (circle_record(E(start + pi * (index - 1) / 4), index, true) for index in 1:(8 * laps))
+    ]
 end
 
 @testset "a branch that goes round a closed loop is flagged $element" for element in (Float32, widen(Float32))
@@ -431,6 +444,14 @@ end
     @test flagged in (26, 27)
     # A lap whose records fall between the first lap's records passes the same fold.
     @test first_loop([circle_record(element(4 * pi * (index - 1) / 39), index, true) for index in 1:80], 1) == 26
+    # Steps that turn 68° put each fold estimate off the fold, yet within the reach of the lap's fold estimate.
+    @test first_loop([circle_record(element(2 * pi * (index - 1) * 10 / 53), index, true) for index in 1:19], 1) == 8
+    # Records on the folds, with zero precision tangents, hide no fold, whichever way it turns.
+    for start in (0, pi)
+        octagon = octagon_branch(element, start, 2)
+        @test count(record -> iszero(record.tangent_precision), octagon) == 4
+        @test first_loop(octagon, 1) == 12
+    end
     # Records without a tangent cross no fold; open paths never loop.
     @test isnothing(first_loop(circle_branch(element, 3, 20, false), 1))
     line = [branch_record([element(index) / 10], element(index) / 20, index) for index in 1:60]
@@ -451,11 +472,12 @@ end
         GameTracing.NoRedraw(),
         GameTracing.RedrawSlot(game, false, element(1) / 10),
         GameTracing.CorrectorSettings{typeof(element(1))}(),
+        shipped_loop(one(element)),
     )
     @test finalised(finalise, circle[10], circle[1:9])
     @test !finalised(finalise, circle[flagged], circle[1:(flagged - 1)])
 
-    opening = GameTracing.TraceProgress(zeros(element, 1), zero(element), 0, zero(element), zero(element), zeros(element, 1), zero(element), false, false, one(element))
+    opening = GameTracing.TraceProgress(zeros(element, 1), zero(element), 0, zero(element), zero(element), zeros(element, 1), zero(element), false, false, shipped_loop(one(element)))
     @test !GameTracing.branch_progress(circle[1:10], opening).looped
     progress = GameTracing.branch_progress(circle[1:flagged], opening)
     @test progress.looped && !progress.unmoved
@@ -506,8 +528,28 @@ end
         GameTracing.NoRedraw(),
         GameTracing.RedrawSlot(LogitGame(GAME, one(element)), false, element(1) / 10),
         GameTracing.CorrectorSettings{typeof(element(1))}(),
+        shipped_loop(one(element)),
     )
     @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), near)
+end
+
+"""
+Records of the open snake `λ = cos(2π w)` at `gaps`, with unit tangents along it. Its top folds lie at whole `w`, its
+bottom folds halfway between.
+"""
+function snake_branch(::Type{E}, gaps::AbstractVector)::AbstractVector where {E <: Real}
+    return [
+        (; branch_record([E(gap)], cospi(2 * E(gap)), index)..., gap_tangent = [inv(hypot(one(E), slope))], tangent_precision = slope / hypot(one(E), slope))
+            for (index, gap) in enumerate(gaps) for slope in (-2 * E(pi) * sinpi(2 * E(gap)),)
+    ]
+end
+
+@testset "a snake whose top folds lie a step apart closes no loop at the shipped reach ($element)" for element in (Float32, widen(Float32))
+    # Steps of 0.6 cross the top fold at 0, the bottom fold at 1/2 and the top fold at 1, a whole unit apart.
+    snake = snake_branch(element, [-3 // 10, 3 // 10, 7 // 10, 13 // 10])
+    @test isnothing(first_loop(snake, 1))
+    # A reach of one takes the two top folds for one: the steps' lengths sum to 1.2.
+    @test first_loop(snake, GameTracing.LoopTest(one(element), one(element))) == 4
 end
 
 """
@@ -521,12 +563,13 @@ function fold_crossings(::Type{E}, crossings::AbstractVector)::AbstractVector wh
     ]
 end
 
-@testset "two folds are one when they turn the same way and lie within their two steps ($element)" for element in (Float32, widen(Float32))
-    # Each crossing step is 0.1 long, so a top fold within 0.2 of the first top fold closes a loop.
-    @test first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (19 // 100, 1, 1)]), 1) == 6
-    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (21 // 100, 1, 1)]), 1))
+@testset "two folds are one when they turn the same way and lie within the reach of their two steps ($element)" for element in (Float32, widen(Float32))
+    # Each crossing step is 0.1 long, so a top fold within `reach` times 0.2 of the first top fold closes a loop.
+    bound = 2 * BifurcationKitSettings{element}().loop_reach / 10
+    @test first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (bound * 9 / 10, 1, 1)]), 1) == 6
+    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (bound * 11 / 10, 1, 1)]), 1))
     # A top fold next to a bottom fold, as near a cusp, closes no loop.
-    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (15 // 100, 1, -1)]), 1))
+    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (bound / 2, 1, -1)]), 1))
 end
 
 @testset "the loop test measures in the units P w and λ / P, so a rescaled branch flags the same record ($element)" for element in (Float32, widen(Float32))

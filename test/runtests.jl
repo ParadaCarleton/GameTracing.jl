@@ -14,6 +14,11 @@ const GAME = LinearGainPass(Float32[0 1; 1 0], Float32[0.5f0, -0.25f0])
 const TARGET_PRECISION = 2.0f0
 const WIDTH = 2
 
+"""The `LoopTest` of a trace to `target_precision` under the default `BifurcationKitSettings`."""
+function shipped_loop(target_precision::E)::GameTracing.LoopTest{E} where {E <: Real}
+    return GameTracing.LoopTest(target_precision, BifurcationKitSettings{E}().loop_reach)
+end
+
 # Every `*_tests.jl` file runs, in name order, so none can be left out; the code rules run last. One outer testset
 # keeps a failing file from aborting the rest: a failed top-level testset throws as it ends.
 # `Pkg.test(; test_args = ["name_tests.jl"])` runs only the named files, then the code rules.

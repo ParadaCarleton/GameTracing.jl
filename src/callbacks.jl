@@ -500,12 +500,23 @@ function within_reach(check::CorrectorReach, point::AbstractVector)::Bool
 end
 
 """
+    LoopTest(target_precision, reach)
+
+The units and tolerance of the loop test (`looped`). Distances are Euclidean on `[P gaps; param / P]`, `P` the trace's
+`target_precision`. Two fold estimates within `reach` times their two steps' lengths are one fold.
+"""
+struct LoopTest{E <: Real}
+    target_precision::E
+    reach::E
+end
+
+"""
     TraceProgress(gaps, precision, steps, precision_min, precision_max, gap_tangent, tangent_precision, unmoved,
-        looped, target_precision)
+        looped, loop)
 
 The last accepted point `(gaps, precision)` of a trace, its step count, the range of the precision
 over accepted points and the tangent there (both in payoff gaps), read from BifurcationKit's branch (`branch_progress`).
-`target_precision` is the trace's target, which scales the loop test's norm (`looped`).
+`loop` is the trace's `LoopTest`.
 `unmoved` marks a trace that stopped on an accepted point bitwise equal to the one before it (`TraceFinalise`), `looped` one that closed a loop of the branch (`looped`).
 """
 struct TraceProgress{E <: Real}
@@ -518,7 +529,7 @@ struct TraceProgress{E <: Real}
     tangent_precision::E
     unmoved::Bool
     looped::Bool
-    target_precision::E
+    loop::LoopTest{E}
 end
 
 """
@@ -561,15 +572,8 @@ function squared_distance(left::NamedTuple, right::NamedTuple, target_precision:
 end
 
 """
-Whether the step from `left` to `right`, two consecutive points with a `tangent_precision`, crosses a fold: their
-precision tangents have opposite signs. A fold turns the same way as the sign of `left.tangent_precision`.
-"""
-crosses_fold(left::NamedTuple, right::NamedTuple)::Bool = left.tangent_precision > 0 > right.tangent_precision ||
-    left.tangent_precision < 0 < right.tangent_precision
-
-"""
-The fold that the step from `left` to `right` crosses (`crosses_fold`): the point `(gaps, param)` of the step where
-the linear interpolation of the precision tangent is zero.
+The fold between `left` and `right`, two points whose precision tangents have opposite signs: the point
+`(gaps, param)` on the segment between them where the linear interpolation of the precision tangent is zero.
 """
 function fold_point(left::NamedTuple, right::NamedTuple)::NamedTuple
     weight = left.tangent_precision / (left.tangent_precision - right.tangent_precision)
@@ -577,30 +581,52 @@ function fold_point(left::NamedTuple, right::NamedTuple)::NamedTuple
 end
 
 """
-    looped(history, current, target_precision)
+Whether the fold between `left` and `right` (`fold_point`) is the fold `fold` of a step `span` long: their estimates
+lie within `loop.reach` times the two steps' lengths (`LoopTest`).
+"""
+function same_fold(left::NamedTuple, right::NamedTuple, fold::NamedTuple, span::Real, loop::LoopTest)::Bool
+    other = sqrt(squared_distance(left, right, loop.target_precision))
+    return squared_distance(fold_point(left, right), fold, loop.target_precision) <= (loop.reach * (span + other))^2
+end
+
+"""
+    looped(history, current, loop)
 
 Whether `current`, a point with `gaps`, `param` and `tangent_precision` after the branch records `history`, closes a
 loop of the branch (an isola). The branch solves an ODE, so it passes a regular point twice only on a closed curve, and
-each lap passes its folds again. The trace has looped when the step to `current` crosses a fold that a step of
-`history` crossed (`crosses_fold`):
-- The two folds turn the same way.
-- Their `fold_point`s lie within the two steps' lengths together, as each lies within its step of the true fold.
-Distances are plain Euclidean on `[P gaps; param / P]`, `P` the `target_precision`, as `TraceFinalise` holds no
-`TraceGeometry`. Off a fold, the test costs two comparisons per step.
+each lap passes its folds again. A fold lies between two points whose precision tangents have opposite signs, with only
+zero tangents between them. The trace has looped when it reaches `current` across a fold that `history` crossed:
+- The two folds turn the same way: the precision tangent changes sign in the same direction.
+- Their `fold_point`s are one fold under `loop` (`same_fold`).
+A step that turns `φ` radians puts its fold estimate about `φ / 8` of its length from the fold. Off a fold, the test
+costs two comparisons per step.
 """
-function looped(history::AbstractVector{R}, current::NamedTuple, target_precision::Real)::Bool where {R <: NamedTuple}
-    if isempty(history) || !crosses_fold(last(history), current)
+function looped(history::AbstractVector{R}, current::NamedTuple, loop::LoopTest)::Bool where {R <: NamedTuple}
+    if isempty(history) || iszero(current.tangent_precision) || sign(last(history).tangent_precision) == sign(current.tangent_precision)
         return false
     end
-    fold = fold_point(last(history), current)
-    reach = sqrt(squared_distance(last(history), current, target_precision))
-    for index in firstindex(history):(lastindex(history) - 1)
-        left, right = history[index], history[index + 1]
-        if crosses_fold(left, right) && signbit(left.tangent_precision) == signbit(last(history).tangent_precision) &&
-                squared_distance(fold_point(left, right), fold, target_precision) <=
-                (reach + sqrt(squared_distance(left, right, target_precision)))^2
+    # The last record with a nonzero precision tangent: a fold lies between it and `current` if their signs differ.
+    before = lastindex(history)
+    while before > firstindex(history) && iszero(history[before].tangent_precision)
+        before -= 1
+    end
+    if sign(history[before].tangent_precision) != -sign(current.tangent_precision)
+        return false
+    end
+    fold = fold_point(history[before], current)
+    span = sqrt(squared_distance(history[before], current, loop.target_precision))
+    turning = firstindex(history)
+    for index in (firstindex(history) + 1):before
+        record = history[index]
+        if iszero(record.tangent_precision)
+            continue
+        end
+        side = sign(history[turning].tangent_precision)
+        if side == -sign(record.tangent_precision) && side == sign(history[before].tangent_precision) &&
+                same_fold(history[turning], record, fold, span, loop)
             return true
         end
+        turning = index
     end
     return false
 end
@@ -621,7 +647,7 @@ function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::Tra
     end
     record = last(branch)
     unmoved = same_point(record, branch[end - 1])
-    closed = looped(view(branch, firstindex(branch):(lastindex(branch) - 1)), record, opening.target_precision)
+    closed = looped(view(branch, firstindex(branch):(lastindex(branch) - 1)), record, opening.loop)
     return TraceProgress{E}(
         copy(record.gaps),
         record.param,
@@ -632,30 +658,32 @@ function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::Tra
         record.tangent_precision,
         unmoved,
         closed,
-        opening.target_precision,
+        opening.loop,
     )
 end
 
 """
-    TraceFinalise(keep_going, redraw, slot, settings)
+    TraceFinalise(keep_going, redraw, slot, settings, loop)
 
 BifurcationKit's `finalise_solution` of one trace segment. An accepted point bitwise equal to the branch's last one (a
-step below the point's rounding) stops the trace, a stall, as does a point that closes a loop of the branch (`looped`). The trace goes on while `keep_going(logits,
+step below the point's rounding) stops the trace, a stall, as does a point that closes a loop of the branch (`looped`
+under the `LoopTest` `loop`). The trace goes on while `keep_going(logits,
 precision)` holds. Then `redraw(logits, precision, shift)` may return a new game, where `shift` is
 the point's `RootShift` check under `settings`: `slot`, a `Ref` to the current `RedrawSlot` (the constructor
 wraps the one it is given), takes it and the
 segment stops, for `trace_endpoint` to correct the point onto it and restart. A `redraw` that returns `nothing` or the
 current game swaps nothing. `JULIA_DEBUG=trace` lists every point.
 """
-struct TraceFinalise{A, D, S, C <: CorrectorSettings}
+struct TraceFinalise{A, D, S, C <: CorrectorSettings, L <: LoopTest}
     keep_going::A
     redraw::D
     slot::Base.RefValue{S}  # lint: ref # lint: non-public-access  by design: finalise_solution returns a Bool, and a redraw's swap reaches the trace as one immutable value here (RefValue is a Ref's concrete type)
     settings::C
+    loop::L
 end
 
-function TraceFinalise(keep_going::A, redraw::D, slot::S, settings::C)::TraceFinalise{A, D, S, C} where {A, D, S, C <: CorrectorSettings}
-    return TraceFinalise{A, D, S, C}(keep_going, redraw, Ref(slot), settings)  # lint: ref  see `slot`
+function TraceFinalise(keep_going::A, redraw::D, slot::S, settings::C, loop::L)::TraceFinalise{A, D, S, C, L} where {A, D, S, C <: CorrectorSettings, L <: LoopTest}
+    return TraceFinalise{A, D, S, C, L}(keep_going, redraw, Ref(slot), settings, loop)  # lint: ref  see `slot`
 end
 
 function (finalise::TraceFinalise)(
@@ -681,7 +709,7 @@ function (finalise::TraceFinalise)(
         return false
     end
     current = (; param = point.p, gaps = view(point.u, firstindex(point.u):(lastindex(point.u) - 1)), tangent_precision = tangent.p)
-    if looped(result.branch, current, finalise.slot[].game.target_precision)
+    if looped(result.branch, current, finalise.loop)
         return false
     end
     logits = logits_at(point.u)

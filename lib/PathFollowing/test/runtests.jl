@@ -5,7 +5,6 @@ using CommonSolve: init
 using ErrorTypes: is_error, unwrap, unwrap_error
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray, JLBackend
-using KernelAbstractions: KernelAbstractions
 using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
 using StaticArrays: SMatrix, SVector
@@ -165,9 +164,15 @@ function accepted(tracer::T, bound::Union{Nothing, Bound} = nothing)::Tuple{T, A
     return tracer, unwrap(outcome)
 end
 
-# JLArrays 0.3 runs a kernel on the CPU backend, which returns once it has finished, but defines no `synchronize`.
-# JLArrays 0.5 defines it, but its GPUArrays 12 caps LinearSolve below this suite's 5.18.
-KernelAbstractions.synchronize(::JLBackend)::Nothing = nothing
+"""A `Circle` whose `system!!` throws a `DomainError` past radius 2."""
+struct BrittleCircle{E <: Real}
+    radius::E
+end
+
+function (circle::BrittleCircle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    circle.radius > 2 && throw(DomainError(circle.radius, "BrittleCircle past radius 2"))
+    return Circle(circle.radius)(residual, jacobian, point)
+end
 
 """The bytes a warm `land!!` of `tracer` to `bound` allocates, after one landing to warm it."""
 function landing_bytes(tracer::Tracer, bound::Bound, max_steps::Integer)::Int
@@ -967,10 +972,24 @@ end
         tracer = unwrap(init(problems[2], settings; first_step = first_steps[2]))
         @test unwrap(landing_result(expected[2])) == unwrap(last(land!!(tracer, bound, 40)))
         @test unwrap_error(landing_result(expected[5])) == unwrap_error(init(problems[5], settings; first_step = first_steps[5]))
-        for storage in (identity, JLArray)
-            landings = land_batch(storage(problems), settings, storage(first_steps), bound, 40; workgroupsize = 2)
-            @test landings isa typeof(storage(expected)) && isequal(collect(landings), expected)
+        landings = land_batch(problems, settings, first_steps, bound, 40; workgroupsize = 2)
+        @test landings isa Vector{eltype(expected)} && isequal(landings, expected)
+        # JLArrays 0.3 defines no `synchronize`, so land_batch refuses it; its kernel launch returns once it has finished.
+        @test_throws "defines no KernelAbstractions.synchronize" land_batch(JLArray(problems), settings, JLArray(first_steps), bound, 40; workgroupsize = 2)
+        device_landings = similar(JLArray(problems), eltype(expected))
+        PathFollowing.land_kernel!(JLBackend(), 2)(device_landings, JLArray(problems), settings, JLArray(first_steps), bound, 40; ndrange = length(problems))
+        @test isequal(collect(device_landings), expected)
+    end
+
+    @testset "land_batch aborts loud when a callback throws in a work item past the host's check" begin
+        # The host's `init` sees radius 1; the work item for radius 3 throws.
+        problems = [CurveProblem(BrittleCircle(radius), SVector{2, E}(radius, 0), SVector{2, E}(0, 1)) for radius in E[1, 3]]
+        thrown = try
+            land_batch(problems, static_algorithm(E), E[1 // 10, 1 // 10], Bound(2, E(3) / 4), 40; workgroupsize = 1)
+        catch caught
+            caught
         end
+        @test occursin("BrittleCircle past radius 2", sprint(showerror, thrown))
     end
 
     @testset "land_batch checks on the host every input that init or a work item would throw on" begin
@@ -980,24 +999,25 @@ end
             checked(settings, first_steps; bound = bound, workgroupsize = 1, problems = storage([circle, circle])) =
                 PathFollowing.check_batch(problems, settings, storage(first_steps), bound, workgroupsize)
             @test_throws DimensionMismatch checked(static_algorithm(E), E[1 // 10])
-            @test_throws ArgumentError checked(static_algorithm(E; linear_solver = LUFactorization()), E[1 // 10, 1 // 10])
+            @test_throws "a static start needs linear_solver = StaticLU()" checked(static_algorithm(E; linear_solver = LUFactorization()), E[1 // 10, 1 // 10])
             # A `Vector` of metric weights keeps the algorithm off the device.
-            @test_throws ArgumentError checked(algorithm(E; linear_solver = StaticLU()), E[1 // 10, 1 // 10])
-            @test_throws ArgumentError checked(static_algorithm(E), E[1 // 10, 1 // 10]; workgroupsize = 0)
-            @test_throws ArgumentError checked(static_algorithm(E), E[1 // 10, 1 // 10]; bound = Bound(3, E(3) / 4))
-            @test_throws ArgumentError checked(static_algorithm(E), E[1 // 10, 0])
-            @test_throws ArgumentError checked(static_algorithm(E), E[NaN, 1 // 10])
+            @test_throws "an isbits algorithm" checked(algorithm(E; linear_solver = StaticLU()), E[1 // 10, 1 // 10])
+            @test_throws "workgroupsize must be positive" checked(static_algorithm(E), E[1 // 10, 1 // 10]; workgroupsize = 0)
+            @test_throws "the bound's coordinate" checked(static_algorithm(E), E[1 // 10, 1 // 10]; bound = Bound(3, E(3) / 4))
+            @test_throws "every first step" checked(static_algorithm(E), E[1 // 10, 0])
+            @test_throws "every first step" checked(static_algorithm(E), E[NaN, 1 // 10])
             other = E === Float32 ? Float64 : Float32
-            @test_throws ArgumentError checked(static_algorithm(other; metric = FixedWeights(SVector{2, E}(1, 1))), E[1 // 10, 1 // 10])
+            @test_throws "element type must be the start's" checked(static_algorithm(other; metric = FixedWeights(SVector{2, E}(1, 1))), E[1 // 10, 1 // 10])
             wide = CurveProblem(Circle(one(E)), SVector{3, E}(1, 0, 0), SVector{3, E}(0, 1, 0))
             @test_throws DimensionMismatch checked(static_algorithm(E), E[1 // 10, 1 // 10]; problems = storage([wide, wide]))
             fifteen = CurveProblem(Circle(one(E)), SVector{15, E}(ntuple(index -> E(index == 1), 15)), SVector{15, E}(ntuple(index -> E(index == 2), 15)))
             fifteen_weights = FixedWeights(SVector{15, E}(ntuple(_ -> one(E), 15)))
-            @test_throws ArgumentError checked(static_algorithm(E; metric = fifteen_weights), E[1 // 10, 1 // 10]; problems = storage([fifteen, fifteen]))
-            @test isnothing(checked(static_algorithm(E), E[1 // 10, 1 // 5]))
+            @test_throws "at most 14 × 14" checked(static_algorithm(E; metric = fifteen_weights), E[1 // 10, 1 // 10]; problems = storage([fifteen, fifteen]))
             @test isempty(land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, 20; workgroupsize = 1))
         end
-        @test_throws ArgumentError PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), E[1 // 10], bound, 1)
+        @test isnothing(PathFollowing.check_batch([circle, circle], static_algorithm(E), E[1 // 10, 1 // 5], bound, 1))
+        @test_throws "defines no KernelAbstractions.synchronize" PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), JLArray(E[1 // 10]), bound, 1)
+        @test_throws "the problems' device" PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), E[1 // 10], bound, 1)
         # A work item would read coordinate 3 of a 2-coordinate point and throw a BoundsError.
         @test_throws ArgumentError land_batch([circle], static_algorithm(E), E[1 // 10], Bound(3, E(3) / 4), 20; workgroupsize = 1)
     end

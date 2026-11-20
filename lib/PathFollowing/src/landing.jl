@@ -49,8 +49,10 @@ on that device, once the device has finished.
 Each start must be static (an `SVector`), with `linear_solver = StaticLU()`, and `algorithm` and the problems isbits.
 `workgroupsize` is the work items per group: the CPU backend runs each group on one thread, so use a small group there.
 
-The host checks the inputs before the launch (`check_batch`), as an exception in a work item aborts the whole launch.
-Only a `converged` that settles at a scale it may not (`Newton`) still throws on the device.
+An exception in a work item aborts the whole launch, so the host checks the inputs first (`check_batch`). A device
+cannot catch an exception, so a callback that throws in a work item still aborts the batch: `system!!`, `converged`,
+`distance`, `accept` or a metric. So do an invalid convergence scale (`Newton`) and a `system!!` that returns other
+array types at another point. The backend must define `KernelAbstractions.synchronize`; JLArrays 0.3 does not.
 """
 function land_batch(
         problems::AbstractVector{<:CurveProblem{<:Any, V}},
@@ -92,6 +94,8 @@ function check_batch(
     # One reduction on the device.
     mapreduce(valid_first_step, &, first_steps; init = true) || throw(ArgumentError("every first step must be positive and finite"))
     CommonSolve.init(element(problems, 1), algorithm; first_step = element(first_steps, 1))
+    # Checked before the launch, so a backend without it fails before the work.
+    applicable(KernelAbstractions.synchronize, backend) || throw(ArgumentError(lazy"$backend defines no KernelAbstractions.synchronize"))
     return nothing
 end
 

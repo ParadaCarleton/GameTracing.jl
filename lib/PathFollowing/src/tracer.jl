@@ -1,9 +1,10 @@
 """
 Why a trace ended: `Unresolved` (a predictor below the float type's resolution), `TooManyRefusals` (more refusals in
-one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not finite at the start) or `SingularStart`
-(no tangent at the start along `direction`).
+one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not finite at the start), `SingularStart`
+(no tangent at the start along `direction`), or `TooManySteps` (a `land!!` past its step budget). `NoFailure`
+marks a landing in a `Landing`; a `StepFailure` never holds it.
 """
-@enum FailureCause Unresolved TooManyRefusals NotFiniteStart SingularStart
+@enum FailureCause Unresolved TooManyRefusals NotFiniteStart SingularStart TooManySteps NoFailure
 
 """
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
@@ -44,6 +45,10 @@ struct StepFailure{E <: Real}
     last_refusal::Refusal
     step_length::E
     refusals::Int
+    function StepFailure(cause::FailureCause, last_refusal::Refusal, step_length::E, refusals::Integer)::StepFailure{E} where {E <: Real}
+        cause == NoFailure && throw(ArgumentError("a StepFailure needs a cause; NoFailure marks a landing"))
+        return new{E}(cause, last_refusal, step_length, refusals)
+    end
 end
 
 """

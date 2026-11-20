@@ -4,7 +4,8 @@ using Accessors: @reset
 using CommonSolve: init
 using ErrorTypes: is_error, unwrap, unwrap_error
 using GPUArraysCore: allowscalar
-using JLArrays: JLArray
+using JLArrays: JLArray, JLBackend
+using KernelAbstractions: KernelAbstractions
 using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
 using StaticArrays: SMatrix, SVector
@@ -164,9 +165,23 @@ function accepted(tracer::T, bound::Union{Nothing, Bound} = nothing)::Tuple{T, A
     return tracer, unwrap(outcome)
 end
 
+# JLArrays 0.3 runs a kernel on the CPU backend, which returns once it has finished, but defines no `synchronize`.
+KernelAbstractions.synchronize(::JLBackend)::Nothing = nothing
+
+"""The bytes a warm `land!!` of `tracer` to `bound` allocates, after one landing to warm it."""
+function landing_bytes(tracer::Tracer, bound::Bound, max_steps::Integer)::Int
+    land!!(tracer, bound, max_steps)
+    return @allocated land!!(tracer, bound, max_steps)
+end
+
 """The `StepFailure` of `tracer`'s next step toward `bound`; an accepted step throws."""
 function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::StepFailure
     return unwrap_error(last(step!!(tracer, bound)))
+end
+
+"""`algorithm(E)` with a static metric and `StaticLU`: isbits, so `land_batch!` takes it."""
+function static_algorithm(::Type{E}; overrides...)::PseudoArclength where {E <: Real}
+    return algorithm(E; metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU(), overrides...)
 end
 
 """Converged when the correction, times `scale`, moved no coordinate more than `tolerance`."""
@@ -908,6 +923,65 @@ end
             @test isbits(step_control) && isbits(settings)
             @test (step_control.target_contraction, step_control.target_correction, step_control.target_turn) === targets
         end
+    end
+
+    @testset "land!! steps to the bound and returns a copy of its point; on the bound it lands at once" begin
+        bound = Bound(2, E(3) / 4)
+        for (start, direction, settings) in ((E[1, 0], E[0, 1], algorithm(E)), (SVector{2, E}(1, 0), SVector{2, E}(0, 1), static_algorithm(E)))
+            tracer = unwrap(init(CurveProblem(Circle(one(E)), start, direction), settings; first_step = E(1) / 10))
+            tracer, landed = land!!(tracer, bound, 20)
+            point = unwrap(landed)
+            @test point == tracer.point && point[2] == bound.value
+            @test point[1] ≈ sqrt(1 - bound.value^2) atol = 100 * tolerance
+            start isa SVector || @test point !== tracer.point
+            steps = tracer.steps
+            tracer, again = land!!(tracer, bound, steps)
+            @test unwrap(again) == point && tracer.steps == steps
+            # The returned copy of a mutable point allocates; a static landing allocates nothing.
+            start isa SVector && @test landing_bytes(tracer, Bound(2, E(4) / 5), 40) == 0
+        end
+    end
+
+    @testset "land!! fails TooManySteps past its budget, and a failed step with that step's StepFailure" begin
+        bound = Bound(2, E(3) / 4)
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        tracer, landed = land!!(tracer, bound, 2)
+        @test tracer.steps == 2 && unwrap_error(landed) == StepFailure(TooManySteps, NoRefusal, tracer.step_length, 0)
+        edge = unwrap(init(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 4))
+        _, landed = land!!(edge, Bound(2, E(2)), 200)
+        @test unwrap_error(landed).last_refusal == SingularSystem
+        @test_throws ArgumentError StepFailure(NoFailure, NoRefusal, one(E), 0)
+    end
+
+    @testset "land_batch traces each problem as land!! does, one work item each, on Vector and JLArray storage" begin
+        settings = static_algorithm(E)
+        bound = Bound(2, E(3) / 4)
+        # Radius 1/2 never reaches the bound and runs out of steps; a NaN radius has no finite start.
+        radii = E[1, 2, 1 // 2, 3, NaN]
+        problems = [CurveProblem(Circle(radius), SVector{2, E}(radius, 0), SVector{2, E}(0, 1)) for radius in radii]
+        first_steps = E[1 // 10, 1 // 5, 1 // 10, 1 // 4, 1 // 10]
+        expected = [PathFollowing.landed(problem, settings, first_step, bound, 40) for (problem, first_step) in zip(problems, first_steps)]
+        @test [landing.cause for landing in expected] == [NoFailure, NoFailure, TooManySteps, NoFailure, NotFiniteStart]
+        @test all(landing -> landing.point[2] == bound.value, expected[[1, 2, 4]]) && expected[3].steps == 40
+        tracer = unwrap(init(problems[2], settings; first_step = first_steps[2]))
+        @test unwrap(landing_result(expected[2])) == unwrap(last(land!!(tracer, bound, 40)))
+        @test unwrap_error(landing_result(expected[5])) == unwrap_error(init(problems[5], settings; first_step = first_steps[5]))
+        for storage in (identity, JLArray)
+            landings = land_batch(storage(problems), settings, storage(first_steps), bound, 40; workgroupsize = 2)
+            @test landings isa typeof(storage(expected)) && isequal(collect(landings), expected)
+        end
+    end
+
+    @testset "land_batch refuses mismatched lengths, a mutable-storage algorithm and an empty work group" begin
+        problems = [CurveProblem(Circle(one(E)), SVector{2, E}(1, 0), SVector{2, E}(0, 1))]
+        bound = Bound(2, E(3) / 4)
+        batch(settings, first_steps; workgroupsize = 1) = land_batch(problems, settings, first_steps, bound, 20; workgroupsize)
+        @test_throws DimensionMismatch batch(static_algorithm(E), E[1 // 10, 1 // 10])
+        @test_throws ArgumentError batch(static_algorithm(E; linear_solver = LUFactorization()), E[1 // 10])
+        # A `Vector` of metric weights keeps the algorithm off the device.
+        @test_throws ArgumentError batch(algorithm(E; linear_solver = StaticLU()), E[1 // 10])
+        @test_throws ArgumentError batch(static_algorithm(E), E[1 // 10]; workgroupsize = 0)
+        @test only(batch(static_algorithm(E), E[1 // 10])).point[2] == bound.value
     end
 
     @testset "Into writes a mutable array in place and rebuilds a static one" begin

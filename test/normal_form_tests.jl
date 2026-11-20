@@ -178,13 +178,13 @@ end
 
 """Fill every float array in pass work `work` with NaN, so a read before a write shows in the pass's outputs."""
 function poison!(work::AbstractArray{<:AbstractFloat})::Nothing
-    fill!(work, NaN)
+    fill!(work, NaN32)
     return nothing
 end
 
 poison!(work::Union{Tuple, NamedTuple, AbstractArray})::Nothing = foreach(poison!, work)
 
-@testset "a NormalFormGains pass reads no work array before it writes it, so a trace can share them ($element)" for element in (Float32, Float64)
+@testset "a NormalFormGains pass reads no work array before it writes it, so a trace can share them ($element)" for element in (Float32, widen(Float32))
     rng = fresh_rng()
     for counts in ((2, 3), (2, 2, 2), (3, 2, 2, 2))
         gains = NormalFormGains(ntuple(_ -> randn(rng, element, counts...), length(counts)))

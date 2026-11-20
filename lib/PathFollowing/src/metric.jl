@@ -53,7 +53,7 @@ end
 """Throw unless `metric` has one weight per coordinate of `point`."""
 function matching_weights(metric::FixedWeights, point::AbstractVector)::Nothing
     length(metric.weights) == length(point) ||
-        throw(DimensionMismatch("$(length(metric.weights)) weights for points of $(length(point)) coordinates"))
+        throw(DimensionMismatch(lazy"$(length(metric.weights)) weights for points of $(length(point)) coordinates"))
     return nothing
 end
 

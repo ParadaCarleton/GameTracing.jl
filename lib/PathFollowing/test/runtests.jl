@@ -4,7 +4,7 @@ using Accessors: @reset
 using CommonSolve: init
 using ErrorTypes: is_error, unwrap, unwrap_error
 using GPUArraysCore: allowscalar
-using JLArrays: JLArray
+using JLArrays: JLArray, JLBackend
 using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
 using StaticArrays: SMatrix, SVector
@@ -164,9 +164,30 @@ function accepted(tracer::T, bound::Union{Nothing, Bound} = nothing)::Tuple{T, A
     return tracer, unwrap(outcome)
 end
 
+"""A `Circle` whose `system!!` throws a `DomainError` past radius 2."""
+struct BrittleCircle{E <: Real}
+    radius::E
+end
+
+function (circle::BrittleCircle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
+    circle.radius > 2 && throw(DomainError(circle.radius, "BrittleCircle past radius 2"))
+    return Circle(circle.radius)(residual, jacobian, point)
+end
+
+"""The bytes a warm `land!!` of `tracer` to `bound` allocates, after one landing to warm it."""
+function landing_bytes(tracer::Tracer, bound::Bound, max_steps::Integer)::Int
+    land!!(tracer, bound, max_steps)
+    return @allocated land!!(tracer, bound, max_steps)
+end
+
 """The `StepFailure` of `tracer`'s next step toward `bound`; an accepted step throws."""
 function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::StepFailure
     return unwrap_error(last(step!!(tracer, bound)))
+end
+
+"""`algorithm(E)` with a static metric and `StaticLU`: isbits, so `land_batch` takes it."""
+function static_algorithm(::Type{E}; overrides...)::PseudoArclength where {E <: Real}
+    return algorithm(E; metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU(), overrides...)
 end
 
 """Converged when the correction, times `scale`, moved no coordinate more than `tolerance`."""
@@ -897,6 +918,110 @@ end
         # A system that answers a static tracer with heap arrays would change the tracer's type.
         heap_answer = (residual, jacobian, _) -> (collect(residual), collect(jacobian))
         @test_throws ArgumentError init(CurveProblem(heap_answer, static_start...), algorithm(E; linear_solver = StaticLU()); first_step = E(1) / 10)
+    end
+
+    @testset "static settings are isbits with any target dropped, so a GPU kernel can take them" begin
+        check = HalfStepCheck{E}(; trigger = 13 // 10, tolerance = one(E) / 100)
+        for targets in ((one(E) / 4, one(E) / 10, one(E) / 10), (nothing, nothing, one(E) / 10), (one(E) / 4, nothing, nothing)), split_check in (nothing, check)
+            (target_contraction, target_correction, target_turn) = targets
+            step_control = StepControl(; target_contraction, target_correction, target_turn, max_step_growth = E(2), max_step = one(E) / 2)
+            settings = algorithm(E; step_control, split_check, metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU())
+            @test isbits(step_control) && isbits(settings)
+            @test (step_control.target_contraction, step_control.target_correction, step_control.target_turn) === targets
+        end
+    end
+
+    @testset "land!! steps to the bound and returns a copy of its point; on the bound it lands at once" begin
+        bound = Bound(2, E(3) / 4)
+        for (start, direction, settings) in ((E[1, 0], E[0, 1], algorithm(E)), (SVector{2, E}(1, 0), SVector{2, E}(0, 1), static_algorithm(E)))
+            tracer = unwrap(init(CurveProblem(Circle(one(E)), start, direction), settings; first_step = E(1) / 10))
+            tracer, landed = land!!(tracer, bound, 20)
+            point = unwrap(landed)
+            @test point == tracer.point && point[2] == bound.value
+            @test point[1] ≈ sqrt(1 - bound.value^2) atol = 100 * tolerance
+            start isa SVector || @test point !== tracer.point
+            steps = tracer.steps
+            tracer, again = land!!(tracer, bound, steps)
+            @test unwrap(again) == point && tracer.steps == steps
+            # The returned copy of a mutable point allocates; a static landing allocates nothing.
+            start isa SVector && @test landing_bytes(tracer, Bound(2, E(4) / 5), 40) == 0
+        end
+    end
+
+    @testset "land!! fails TooManySteps past its budget, and a failed step with that step's StepFailure" begin
+        bound = Bound(2, E(3) / 4)
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        tracer, landed = land!!(tracer, bound, 2)
+        @test tracer.steps == 2 && unwrap_error(landed) == StepFailure(TooManySteps, NoRefusal, tracer.step_length, 0)
+        edge = unwrap(init(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 4))
+        _, landed = land!!(edge, Bound(2, E(2)), 200)
+        @test unwrap_error(landed).last_refusal == SingularSystem
+        @test_throws ArgumentError StepFailure(NoFailure, NoRefusal, one(E), 0)
+    end
+
+    @testset "land_batch traces each problem as land!! does, one work item each, on Vector and JLArray storage" begin
+        settings = static_algorithm(E)
+        bound = Bound(2, E(3) / 4)
+        # Radius 1/2 never reaches the bound and runs out of steps; a NaN radius has no finite start.
+        radii = E[1, 2, 1 // 2, 3, NaN]
+        problems = [CurveProblem(Circle(radius), SVector{2, E}(radius, 0), SVector{2, E}(0, 1)) for radius in radii]
+        first_steps = E[1 // 10, 1 // 5, 1 // 10, 1 // 4, 1 // 10]
+        expected = [PathFollowing.landed(problem, settings, first_step, bound, 40) for (problem, first_step) in zip(problems, first_steps)]
+        @test [landing.cause for landing in expected] == [NoFailure, NoFailure, TooManySteps, NoFailure, NotFiniteStart]
+        @test all(landing -> landing.point[2] == bound.value, expected[[1, 2, 4]]) && expected[3].steps == 40
+        tracer = unwrap(init(problems[2], settings; first_step = first_steps[2]))
+        @test unwrap(landing_result(expected[2])) == unwrap(last(land!!(tracer, bound, 40)))
+        @test unwrap_error(landing_result(expected[5])) == unwrap_error(init(problems[5], settings; first_step = first_steps[5]))
+        landings = land_batch(problems, settings, first_steps, bound, 40; workgroupsize = 2)
+        @test landings isa Vector{eltype(expected)} && isequal(landings, expected)
+        # JLArrays 0.3 defines no `synchronize`, so land_batch refuses it; its kernel launch returns once it has finished.
+        @test_throws "defines no KernelAbstractions.synchronize" land_batch(JLArray(problems), settings, JLArray(first_steps), bound, 40; workgroupsize = 2)
+        device_landings = similar(JLArray(problems), eltype(expected))
+        PathFollowing.land_kernel!(JLBackend(), 2)(device_landings, JLArray(problems), settings, JLArray(first_steps), bound, 40; ndrange = length(problems))
+        @test isequal(collect(device_landings), expected)
+        # KernelAbstractions 0.9 drops the kernel's source lines. Once this fails, delete the COV_EXCL markers in landing.jl.
+        @test only(methods(PathFollowing.cpu_land_kernel!)).line == 0
+    end
+
+    @testset "land_batch aborts loud when a callback throws in a work item past the host's check" begin
+        # The host's `init` sees radius 1; the work item for radius 3 throws.
+        problems = [CurveProblem(BrittleCircle(radius), SVector{2, E}(radius, 0), SVector{2, E}(0, 1)) for radius in E[1, 3]]
+        thrown = try
+            land_batch(problems, static_algorithm(E), E[1 // 10, 1 // 10], Bound(2, E(3) / 4), 40; workgroupsize = 1)
+        catch caught
+            caught
+        end
+        @test occursin("BrittleCircle past radius 2", sprint(showerror, thrown))
+    end
+
+    @testset "land_batch checks on the host every input that init or a work item would throw on" begin
+        circle = CurveProblem(Circle(one(E)), SVector{2, E}(1, 0), SVector{2, E}(0, 1))
+        bound = Bound(2, E(3) / 4)
+        for storage in (identity, JLArray)
+            checked(settings, first_steps; bound = bound, workgroupsize = 1, problems = storage([circle, circle])) =
+                PathFollowing.check_batch(problems, settings, storage(first_steps), bound, workgroupsize)
+            @test_throws DimensionMismatch checked(static_algorithm(E), E[1 // 10])
+            @test_throws "a static start needs linear_solver = StaticLU()" checked(static_algorithm(E; linear_solver = LUFactorization()), E[1 // 10, 1 // 10])
+            # A `Vector` of metric weights keeps the algorithm off the device.
+            @test_throws "an isbits algorithm" checked(algorithm(E; linear_solver = StaticLU()), E[1 // 10, 1 // 10])
+            @test_throws "workgroupsize must be positive" checked(static_algorithm(E), E[1 // 10, 1 // 10]; workgroupsize = 0)
+            @test_throws "the bound's coordinate" checked(static_algorithm(E), E[1 // 10, 1 // 10]; bound = Bound(3, E(3) / 4))
+            @test_throws "every first step" checked(static_algorithm(E), E[1 // 10, 0])
+            @test_throws "every first step" checked(static_algorithm(E), E[NaN, 1 // 10])
+            other = E === Float32 ? Float64 : Float32
+            @test_throws "element type must be the start's" checked(static_algorithm(other; metric = FixedWeights(SVector{2, E}(1, 1))), E[1 // 10, 1 // 10])
+            wide = CurveProblem(Circle(one(E)), SVector{3, E}(1, 0, 0), SVector{3, E}(0, 1, 0))
+            @test_throws DimensionMismatch checked(static_algorithm(E), E[1 // 10, 1 // 10]; problems = storage([wide, wide]))
+            fifteen = CurveProblem(Circle(one(E)), SVector{15, E}(ntuple(index -> E(index == 1), 15)), SVector{15, E}(ntuple(index -> E(index == 2), 15)))
+            fifteen_weights = FixedWeights(SVector{15, E}(ntuple(_ -> one(E), 15)))
+            @test_throws "at most 14 × 14" checked(static_algorithm(E; metric = fifteen_weights), E[1 // 10, 1 // 10]; problems = storage([fifteen, fifteen]))
+            @test isempty(land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, 20; workgroupsize = 1))
+        end
+        @test isnothing(PathFollowing.check_batch([circle, circle], static_algorithm(E), E[1 // 10, 1 // 5], bound, 1))
+        @test_throws "defines no KernelAbstractions.synchronize" PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), JLArray(E[1 // 10]), bound, 1)
+        @test_throws "the problems' device" PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), E[1 // 10], bound, 1)
+        # A work item would read coordinate 3 of a 2-coordinate point and throw a BoundsError.
+        @test_throws ArgumentError land_batch([circle], static_algorithm(E), E[1 // 10], Bound(3, E(3) / 4), 20; workgroupsize = 1)
     end
 
     @testset "Into writes a mutable array in place and rebuilds a static one" begin

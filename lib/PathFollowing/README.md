@@ -4,24 +4,24 @@ Trace one solution curve of `H(x) = 0`, `H: ℝⁿ⁺¹ → ℝⁿ`, by pseudo-a
 
 Each step predicts along the tangent, corrects by Newton's method on the hyperplane normal to it, and sizes the
 next step from the corrector and the tangent's turn (Allgower and Georg, *Numerical Continuation Methods*, §6.1).
-The caller owns the loop and its stopping rule. Failures are values (ErrorTypes.jl), and a warm `step!` allocates
+The caller owns the loop and its stopping rule. Failures are values (ErrorTypes.jl), and a warm `step!!` allocates
 nothing.
 
 ```julia
 using PathFollowing
-using CommonSolve: init, step!
+using CommonSolve: init
 using ErrorTypes: is_error, unwrap
 using LinearSolve: LUFactorization
 
-# The unit circle: H(x, y) = x² + y² - 1, with its Jacobian, from one call.
-function circle!(residual, jacobian, point)
-    residual[1] = point[1]^2 + point[2]^2 - 1
-    jacobian[1, 1], jacobian[1, 2] = 2point[1], 2point[2]
-    return nothing
+# The unit circle: H(x, y) = x² + y² - 1 and its Jacobian, written into the arrays the tracer passes and returned.
+function circle!!(residual, jacobian, point)
+    residual = Into(residual) .= point[1]^2 + point[2]^2 - 1
+    jacobian = Into(jacobian) .= 2 .* transpose(point)
+    return residual, jacobian
 end
 
 # `scale` turns the last correction into an estimate of the error left in `iterate`.
-settled(previous, iterate, residual, scale) = scale * maximum(abs, iterate - previous) <= 1e-10
+settled(previous, iterate, residual, scale) = scale * maximum(abs.(iterate .- previous)) <= 1e-10
 
 algorithm = PseudoArclength(;
     corrector = Newton(;
@@ -37,18 +37,64 @@ algorithm = PseudoArclength(;
     linear_solver = LUFactorization(),
     max_refusals = 60,
 )
-tracer = unwrap(init(CurveProblem(circle!, [1.0, 0.0], [0.0, 1.0]), algorithm; first_step = 0.1))
+tracer = unwrap(init(CurveProblem(circle!!, [1.0, 0.0], [0.0, 1.0]), algorithm; first_step = 0.1))
 while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
-    outcome = step!(tracer)
+    global tracer, outcome = step!!(tracer)
     is_error(outcome) && break
 end
 ```
 
-`step!(tracer, Bound(coordinate, value))` stops at an exact value of one coordinate. A predictor that reaches the
+`step!!` returns the advanced tracer. Use only that tracer: a step changes a mutable tracer's arrays in place.
+
+`step!!(tracer, Bound(coordinate, value))` stops at an exact value of one coordinate. A predictor that reaches the
 value is cut there, and Newton's method corrects at that value. A corrected point past it refuses the step as
 `PastBound`, and a shorter step tries again. So the trace stops at the value's first crossing that a predictor or a
 corrected point shows. A curve that passes the value and comes back within one step goes unseen; keep the turn target
-small to keep steps short where the curve bends.
+small to keep steps short where the curve bends. `land!!(tracer, bound, max_steps)` steps until the point lies on the
+bound and returns it.
+
+## Storage and devices
+
+The tracer's arrays take the start's type. A `Vector` start traces on the CPU, and a GPU array start keeps each step
+on its GPU. A static start (`SVector`) gives static arrays throughout, with `linear_solver = StaticLU()`. A static
+trace allocates nothing, and one GPU thread can run it.
+
+`land_batch(problems, algorithm, first_steps, bound, max_steps; workgroupsize)` traces many static problems at once,
+one KernelAbstractions work item each, on the device that holds `problems`. It returns a `Landing` per problem;
+`landing_result` gives its landed point or its `StepFailure`.
+
+```julia
+using StaticArrays: SVector
+
+struct Circle
+    radius::Float32
+end
+(circle::Circle)(residual, jacobian, point) =
+    (Into(residual) .= sum(abs2, point) - circle.radius^2, Into(jacobian) .= 2 .* transpose(point))
+
+# Every part of a batch algorithm must be isbits: a callable struct, static weights, StaticLU.
+struct Settled
+    tolerance::Float32
+end
+(settled::Settled)(previous, iterate, residual, scale) = scale * maximum(abs.(iterate .- previous)) <= settled.tolerance
+
+static_algorithm = PseudoArclength(;
+    corrector = Newton(; max_iterations = 8, converged = Settled(1.0f-5), contraction_limit = 0.5f0, error_estimate = LastCorrection()),
+    step_control = StepControl(;
+        target_contraction = 0.25f0, target_correction = 0.1f0, target_turn = 0.1f0, max_step_growth = 2.0f0, max_step = 0.5f0,
+    ),
+    metric = FixedWeights(SVector(1.0f0, 1.0f0)),
+    orientation_check = DeterminantSign(),
+    split_check = nothing,
+    linear_solver = StaticLU(),
+    max_refusals = 60,
+)
+radii = range(1.0f0, 3.0f0; length = 1000)
+problems = [CurveProblem(Circle(radius), SVector(radius, 0.0f0), SVector(0.0f0, 1.0f0)) for radius in radii]
+# `CuArray(problems)` and `CuArray(first_steps)` trace on an NVIDIA GPU.
+landings = land_batch(problems, static_algorithm, fill(0.1f0, 1000), Bound(2, 0.5f0), 200; workgroupsize = 16)
+points = unwrap.(landing_result.(landings))
+```
 
 ## Settings
 
@@ -62,10 +108,11 @@ small to keep steps short where the curve bends.
   its largest length (`correction_bound`), and its refusal must lie under that length.
 - `metric`, `turn_metric`: the step metric and the turn metric, each a symmetric positive semidefinite operator
   frozen at every accepted point (`frozen_metric`). `FixedWeights` is the constant diagonal one.
-- `linear_solver`: any LinearSolve.jl algorithm for the bordered systems.
+- `linear_solver`: any LinearSolve.jl algorithm for the bordered systems of a mutable start, or `StaticLU()` for a
+  static start of at most 14 coordinates.
 - `orientation_check`: `DeterminantSign` refuses a step where `sign det([J; tᵀ])` changes. A long step near a fold can
-  land where the oriented tangent runs back along the curve; this check catches it. A persistent change is accepted
-  as a bifurcation crossing. `nothing` switches the check off.
+  land where the oriented tangent runs back along the curve; this check catches it. At a bifurcation the trace closes
+  in on the crossing and fails `Unresolved`. `nothing` switches the check off.
 - `split_check`: `HalfStepCheck(; trigger, tolerance)` runs a step with factor at least `trigger` again in two half
   steps. The second ends on the step's own hyperplane and must reach the corrected point within `tolerance`, or the
   step is refused (`SplitMismatch`). A corrector can converge on another branch that passes its predictor, with every
@@ -74,6 +121,6 @@ small to keep steps short where the curve bends.
 
 ## Failures
 
-`init` fails `NotFiniteStart` or `SingularStart`. `step!` fails `Unresolved` when the predictor falls below the
-float type's resolution or a retry rounds back to the refused step, and `TooManyRefusals` past `max_refusals`. Each
-failure names the last `Refusal`.
+`init` fails `NotFiniteStart` or `SingularStart`. `step!!` fails `Unresolved` when the predictor falls below the
+float type's resolution or a retry rounds back to the refused step, and `TooManyRefusals` past `max_refusals`.
+`land!!` also fails `TooManySteps` past its step budget. Each failure names the last `Refusal`.

@@ -61,8 +61,8 @@ The largest regret of any player of `gains` at `logits`: its best strategy's exp
 The gains and strategies go into `work` (`regret_workspace`).
 """
 function max_regret!(work::NamedTuple, gains::NormalFormGains, logits::AbstractVector{E})::E where {E <: Real}
-    write_gains!(work.pass, work.gain, gains, logits)
-    return maximum(player_regret.(view.((work.gain,), logit_ranges(gains)), work.pass.strategies))
+    pass, gain = write_gains!!(work.pass, work.gain, gains, logits)
+    return maximum(player_regret.(view.((gain,), logit_ranges(gains)), pass.strategies))
 end
 
 """`max_regret!` in work arrays of its own."""

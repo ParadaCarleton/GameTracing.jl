@@ -1,19 +1,23 @@
+using PathFollowing: Into
+using StaticArrays: SArray, SMatrix, SVector, Size, StaticVector
+
 """
     NormalFormGains(payoffs)
 
-The `pass!` of a normal-form game with any number of strategies per player. `payoffs[p][s]` is player `p`'s payoff at
+The `pass!!` of a normal-form game with any number of strategies per player. `payoffs[p][s]` is player `p`'s payoff at
 the pure profile `s`; every array has one type and one size, each player's strategy count along its own axis. Player
 `p`'s logits are `z_pk = log(π_pk / π_p1)` for its strategies `k ≥ 2`, against its first strategy, stacked player by
 player (`logit_ranges`). Its gains are `G_pk = U_p(k, π) - U_p(1, π)`, its expected payoffs against the rivals' mixed
 strategies, which do not depend on the precision. A pass writes into work arrays from `pass_workspace`; called
-without them, it builds its own.
+without them, it builds its own. Static payoffs (`SArray`) and logits (`SVector`) take static work arrays, so a pass
+is isbits and runs in a GPU kernel; the arithmetic is the mutable pass's, step for step.
 """
 struct NormalFormGains{N, A <: AbstractArray{<:Real, N}}
     payoffs::NTuple{N, A}
 
     function NormalFormGains(payoffs::NTuple{N, A})::NormalFormGains{N, A} where {N, A <: AbstractArray{<:Real, N}}
         if !allequal(size.(payoffs))
-            throw(ArgumentError("every player's payoff array must have one size; got $(size.(payoffs))"))
+            throw(ArgumentError(lazy"every player's payoff array must have one size; got $(size.(payoffs))"))
         end
         return new{N, A}(payoffs)
     end
@@ -43,7 +47,7 @@ end
 """
 The work arrays of a `gains` pass at logits of element type `E`: each player's mixed strategy, room for one player's
 expected payoffs and its payoff sensitivities to each rival's strategies, and the tensors and joint weights of
-`contract_payoff!`.
+`contract_payoff!!`.
 """
 function pass_workspace(gains::NormalFormGains, ::AbstractVector{E})::NamedTuple where {E <: Real}
     counts = size(first(gains.payoffs))
@@ -54,18 +58,51 @@ function pass_workspace(gains::NormalFormGains, ::AbstractVector{E})::NamedTuple
     return (; strategies = zeros.(E, counts), expected = zeros(E, widest), sensitivities, tensors, spare, joint)
 end
 
-"""Write into `strategy` the mixed strategy `softmax([0; logits])` of a player whose logits are against its first strategy."""
-function reference_softmax!(strategy::AbstractVector{E}, logits::AbstractVector{E})::AbstractVector{E} where {E <: Real}
-    shift = max(zero(E), maximum(logits; init = zero(E)))
-    strategy[begin] = exp(-shift)
-    view(strategy, (firstindex(strategy) + 1):lastindex(strategy)) .= exp.(logits .- shift)
-    strategy ./= sum(strategy)
-    return strategy
+"""
+`pass_workspace` for static payoffs at static logits: the same arrays, static, so the pass is isbits. Every player
+must have one strategy count (`ArgumentError` otherwise): the pass indexes its players' arrays at run time, and a
+tuple of static arrays of one type keeps that index type-stable.
+"""
+function pass_workspace(::NormalFormGains{N, A}, ::StaticVector{<:Any, E})::NamedTuple where {N, A <: SArray, E <: Real}
+    counts = Tuple(Size(A))
+    allequal(counts) || throw(ArgumentError(lazy"a static pass needs one strategy count per player; got $counts"))
+    count, entries = first(counts), prod(counts)
+    strategy, entry_vector = zeros(SVector{count, E}), zeros(SVector{entries, E})
+    return (;
+        strategies = ntuple(Returns(strategy), Val(N)),
+        expected = strategy,
+        sensitivities = ntuple(Returns(zeros(SMatrix{count, count, E})), Val(N)),
+        tensors = ntuple(Returns(entry_vector), Val(tensor_count(N - 1))),
+        spare = entry_vector,
+        joint = entry_vector,
+    )
+end
+
+"""
+`strategy` set to the mixed strategy `softmax([0; logits[range]])` of a player whose logits in `range` are against its
+first strategy (`Into`). Use the returned strategy.
+"""
+@inline function reference_softmax!!(strategy::V, logits::AbstractVector{E}, range::UnitRange{Int})::V where {E <: Real, V <: AbstractVector{E}}
+    shift = zero(E)
+    for index in range
+        shift = max(shift, logits[index])
+    end
+    strategy = set_entry!!(strategy, exp(-shift), firstindex(strategy))
+    for (offset, index) in enumerate(range)
+        strategy = set_entry!!(strategy, exp(logits[index] - shift), firstindex(strategy) + offset)
+    end
+    total = sum(strategy)
+    return Into(strategy) .= strategy ./ total
+end
+
+"""Each player's strategy of `strategies` set to its mixed strategy at the stacked `logits` (`reference_softmax!!`)."""
+@inline function softmax_strategies(strategies::S, logits::AbstractVector{<:Real}, ranges::Tuple)::S where {S <: Tuple}
+    return reference_softmax!!.(strategies, (logits,), ranges)
 end
 
 """Each player's mixed strategy at the stacked `logits` of `gains`, in fresh vectors."""
 function mixed_strategies(gains::NormalFormGains, logits::AbstractVector{E})::Tuple where {E <: Real}
-    return reference_softmax!.(zeros.(E, size(first(gains.payoffs))), view.((logits,), logit_ranges(gains)))
+    return softmax_strategies(zeros.(E, size(first(gains.payoffs))), logits, logit_ranges(gains))
 end
 
 """The axis of the rival at `position` among the axes of a payoff array but `player`'s."""
@@ -74,214 +111,245 @@ function rival_axis(position::Integer, player::Integer)::Integer
 end
 
 """
-The tensors `contract_payoff!` holds at once for `rivals` rivals: one per halving of the rivals down to one
-(`write_marginals!`), and at least one.
+The tensors `contract_payoff!!` holds at once for `rivals` rivals: one per halving of the rivals down to one
+(`write_marginals!!`), and at least one. Foldable, so a static workspace sizes its tuple at compile time.
 """
-function tensor_count(rivals::Integer)::Integer
+Base.@assume_effects :foldable function tensor_count(rivals::Integer)::Integer
     return rivals <= 2 ? 1 : 1 + tensor_count(cld(rivals, 2))
 end
 
 """
-Write into the front of `buffer` the weights of the adjacent axes `group` taken as one axis: at each joint index, the
-product of each axis' strategy weight, the first axis fastest. Return that front.
+`buffer` with the weights of the adjacent axes `group` taken as one axis in its front, and their count: at each joint
+index, the product of each axis' strategy weight, the first axis fastest. Use the returned buffer.
 """
-@inline function group_weights!(
-        buffer::AbstractVector{E},
+@inline function group_weights!!(
+        buffer::B,
         strategies::NTuple{N, AbstractVector{E}},
         group::AbstractUnitRange{<:Integer},
-    )::AbstractVector{E} where {N, E <: Real}
+    )::Tuple{B, Int} where {N, E <: Real, B <: AbstractVector{E}}
     filled = 1
-    buffer[1] = one(E)
+    buffer = set_entry!!(buffer, one(E), 1)
     for axis in group
         weights = strategies[axis]
         # The last slice first: each product reads the front before the first slice overwrites it.
         for slice in reverse(eachindex(weights)), entry in filled:-1:1
-            buffer[(slice - 1) * filled + entry] = buffer[entry] * weights[slice]
+            buffer = set_entry!!(buffer, buffer[entry] * weights[slice], (slice - 1) * filled + entry)
         end
         filled *= length(weights)
     end
-    return view(buffer, 1:filled)
+    return buffer, filled
 end
 
 """
-    contract_axes!(target, source, dims, group, weights)
+    contract_axes!!(target, source, dims, group, weights, weight_count)
 
 Contract the adjacent axes `group` of the tensor `source` of size `dims`, read in linear order, into `target`: the
-slices along the group, each times its joint weight in `weights` (`group_weights!`), summed. Return the new size, one
-along `group`. A block past the group holds one `stride`-long run per slice. The inner loop runs along a run when it
-is at least as long as the slices are many, else across the blocks; each entry adds its slices in order either way.
+slices along the group, each times its joint weight among the first `weight_count` of `weights` (`group_weights!!`),
+summed. Return `target` and the new size, one along `group`. A block past the group holds one `stride`-long run per
+slice. The inner loop runs along a run when it is at least as long as the slices are many, else across the blocks;
+each entry adds its slices in order either way.
 """
-@inline function contract_axes!(
-        target::AbstractVector{E},
+@inline function contract_axes!!(
+        target::T,
         source::AbstractArray{<:Real},
         dims::NTuple{N, Integer},
         group::AbstractUnitRange{<:Integer},
         weights::AbstractVector{E},
-    )::NTuple{N, Integer} where {N, E <: Real}
+        weight_count::Integer,
+    )::Tuple{T, NTuple{N, Integer}} where {N, E <: Real, T <: AbstractVector{E}}
     numbers = ntuple(identity, Val(N))
     inside = first(group) .<= numbers .<= last(group)
     stride, width = prod(ifelse.(numbers .< first(group), dims, 1)), prod(ifelse.(inside, dims, 1))
     blocks = prod(ifelse.(numbers .> last(group), dims, 1))
-    fitting = length(source) >= stride * width * blocks && length(target) >= stride * blocks && length(weights) == width
+    fitting = length(source) >= stride * width * blocks && length(target) >= stride * blocks
+    fitting &= weight_count == width && length(weights) >= width
     if Base.has_offset_axes(target, source, weights) || !fitting
-        throw(DimensionMismatch("cannot contract axes $group of size $dims from $(length(source)) into $(length(target))"))
+        throw(DimensionMismatch(lazy"cannot contract axes $group of size $dims from $(length(source)) into $(length(target))"))
     end
     if stride >= width
-        first_weight = first(weights)
+        first_weight = weights[1]
         @inbounds for block in 0:(blocks - 1)
             into, from = block * stride, block * stride * width
             @simd for inner in 1:stride
-                target[into + inner] = first_weight * source[from + inner]
+                target = set_entry!!(target, first_weight * source[from + inner], into + inner)
             end
             for slice in 2:width
                 weight, offset = weights[slice], from + (slice - 1) * stride
                 @simd for inner in 1:stride
-                    target[into + inner] += weight * source[offset + inner]
+                    target = set_entry!!(target, target[into + inner] + weight * source[offset + inner], into + inner)
                 end
             end
         end
     else
-        first_weight, step = first(weights), stride * width
+        first_weight, step = weights[1], stride * width
         @inbounds for inner in 1:stride
             @simd for block in 0:(blocks - 1)
-                target[block * stride + inner] = first_weight * source[block * step + inner]
+                target = set_entry!!(target, first_weight * source[block * step + inner], block * stride + inner)
             end
             for slice in 2:width
                 weight, offset = weights[slice], (slice - 1) * stride + inner
                 @simd for block in 0:(blocks - 1)
-                    target[block * stride + inner] += weight * source[block * step + offset]
+                    into = block * stride + inner
+                    target = set_entry!!(target, target[into] + weight * source[block * step + offset], into)
                 end
             end
         end
     end
-    return ifelse.(inside, 1, dims)
+    return target, ifelse.(inside, 1, dims)
 end
 
 """
-    contract_rivals!(target, spare, joint, source, dims, positions, player, strategies)
+    contract_rivals!!(target, spare, joint, source, dims, positions, player, strategies)
 
 Contract the axes of the rivals at `positions` (`rival_axis`) of the tensor `source` of size `dims` with their mixed
-`strategies` into `target`. The axes form one group (`contract_axes!`), or two around `player`'s own: the upper group
-goes first, into `spare`. `joint` holds each group's weights (`group_weights!`). Return the new size.
+`strategies` into `target`. The axes form one group (`contract_axes!!`), or two around `player`'s own: the upper group
+goes first, into `spare`. `joint` holds each group's weights (`group_weights!!`). Return the three buffers and the new
+size; use the returned buffers.
 """
-@inline function contract_rivals!(
-        target::AbstractVector{E},
-        spare::AbstractVector{E},
-        joint::AbstractVector{E},
+@inline function contract_rivals!!(
+        target::T,
+        spare::S,
+        joint::J,
         source::AbstractArray{<:Real},
         dims::NTuple{N, Integer},
         positions::AbstractUnitRange{<:Integer},
         player::Integer,
         strategies::NTuple{N, AbstractVector{E}},
-    )::NTuple{N, Integer} where {N, E <: Real}
+    )::Tuple{T, S, J, NTuple{N, Integer}} where {N, E <: Real, T <: AbstractVector{E}, S <: AbstractVector{E}, J <: AbstractVector{E}}
     lowest, highest = rival_axis(first(positions), player), rival_axis(last(positions), player)
     if lowest < player < highest
         upper, lower = (player + 1):highest, lowest:(player - 1)
-        reduced = contract_axes!(spare, source, dims, upper, group_weights!(joint, strategies, upper))
-        return contract_axes!(target, spare, reduced, lower, group_weights!(joint, strategies, lower))
+        joint, filled = group_weights!!(joint, strategies, upper)
+        spare, reduced = contract_axes!!(spare, source, dims, upper, joint, filled)
+        joint, filled = group_weights!!(joint, strategies, lower)
+        target, reduced = contract_axes!!(target, spare, reduced, lower, joint, filled)
+        return target, spare, joint, reduced
     end
-    return contract_axes!(target, source, dims, lowest:highest, group_weights!(joint, strategies, lowest:highest))
+    joint, filled = group_weights!!(joint, strategies, lowest:highest)
+    target, reduced = contract_axes!!(target, source, dims, lowest:highest, joint, filled)
+    return target, spare, joint, reduced
 end
 
 """
-Write into `marginal` the tensor `tensor` of size `dims`, all of whose axes but `player`'s and `rival`'s have size one,
-as a matrix: `player`'s strategies down, `rival`'s across.
+`marginal` set to the tensor `tensor` of size `dims`, all of whose axes but `player`'s and `rival`'s have size one,
+as a matrix: `player`'s strategies down, `rival`'s across. Use the returned marginal.
 """
-function write_marginal!(
-        marginal::AbstractMatrix,
+function write_marginal!!(
+        marginal::M,
         tensor::AbstractArray{<:Real},
         dims::NTuple{N, Integer},
         player::Integer,
         rival::Integer,
-    )::Nothing where {N}
+    )::M where {N, M <: AbstractMatrix}
     own_count, rival_count = dims[player], dims[rival]
     if prod(dims) != own_count * rival_count
-        throw(DimensionMismatch("a tensor of size $dims has axes besides those of players $player and $rival"))
+        throw(DimensionMismatch(lazy"a tensor of size $dims has axes besides those of players $player and $rival"))
     end
     checkbounds(marginal, 1:own_count, 1:rival_count)
     checkbounds(tensor, 1:(own_count * rival_count))
     own_stride, rival_stride = player < rival ? (1, own_count) : (rival_count, 1)
     @inbounds for column in 1:rival_count, row in 1:own_count
-        marginal[row, column] = tensor[1 + (row - 1) * own_stride + (column - 1) * rival_stride]
+        marginal = set_entry!!(marginal, tensor[1 + (row - 1) * own_stride + (column - 1) * rival_stride], row, column)
     end
-    return nothing
+    return marginal
 end
 
 """
-Write into `work.sensitivities` the marginals of the tensor `tensor` of size `dims` for rivals `first_rival` and
-`second_rival` (`write_marginal!`): all of its axes but `player`'s and theirs have size one. One pass: each entry, times
-one rival's weight, adds to the other rival's marginal, the other rival's strategies in order.
+`work` with the marginals of the tensor `tensor` of size `dims` for rivals `first_rival` and `second_rival` in its
+sensitivities (`write_marginal!!`): all of its axes but `player`'s and theirs have size one. One pass: each entry, times
+one rival's weight, adds to the other rival's marginal, the other rival's strategies in order. Use the returned work.
 """
-function write_pair_marginals!(
-        work::NamedTuple,
+function write_pair_marginals!!(
+        work::W,
         tensor::AbstractArray{<:Real},
         dims::NTuple{N, Integer},
         player::Integer,
         first_rival::Integer,
         second_rival::Integer,
-    )::Nothing where {N}
+    )::W where {N, W <: NamedTuple}
     own_count, first_count, second_count = dims[player], dims[first_rival], dims[second_rival]
     if prod(dims) != own_count * first_count * second_count
-        throw(DimensionMismatch("a tensor of size $dims has axes besides those of players $player, $first_rival and $second_rival"))
+        throw(DimensionMismatch(lazy"a tensor of size $dims has axes besides those of players $player, $first_rival and $second_rival"))
     end
     strides = accumulate(*, (1, Base.front(dims)...))
     own_stride, first_stride, second_stride = strides[player], strides[first_rival], strides[second_rival]
-    first_marginal = @view work.sensitivities[first_rival][1:own_count, 1:first_count]
-    second_marginal = @view work.sensitivities[second_rival][1:own_count, 1:second_count]
+    first_marginal, second_marginal = work.sensitivities[first_rival], work.sensitivities[second_rival]
     first_weights, second_weights = work.strategies[first_rival], work.strategies[second_rival]
     checkbounds(tensor, 1:prod(dims))
     checkbounds(first_weights, 1:first_count)
     checkbounds(second_weights, 1:second_count)
-    fill!(first_marginal, zero(eltype(first_marginal)))
-    fill!(second_marginal, zero(eltype(second_marginal)))
+    checkbounds(first_marginal, 1:own_count, 1:first_count)
+    checkbounds(second_marginal, 1:own_count, 1:second_count)
+    blank = zero(eltype(first_marginal))
+    @inbounds for column in 1:first_count, own in 1:own_count
+        first_marginal = set_entry!!(first_marginal, blank, own, column)
+    end
+    @inbounds for column in 1:second_count, own in 1:own_count
+        second_marginal = set_entry!!(second_marginal, blank, own, column)
+    end
     @inbounds for second_strategy in 1:second_count, first_strategy in 1:first_count
         base = 1 + (first_strategy - 1) * first_stride + (second_strategy - 1) * second_stride
         first_weight, second_weight = first_weights[first_strategy], second_weights[second_strategy]
         for own in 1:own_count
             entry = tensor[base + (own - 1) * own_stride]
-            first_marginal[own, first_strategy] += second_weight * entry
-            second_marginal[own, second_strategy] += first_weight * entry
+            first_marginal = set_entry!!(first_marginal, first_marginal[own, first_strategy] + second_weight * entry, own, first_strategy)
+            second_marginal = set_entry!!(second_marginal, second_marginal[own, second_strategy] + first_weight * entry, own, second_strategy)
         end
     end
-    return nothing
+    sensitivities = with_item!!(with_item!!(work.sensitivities, first_rival, first_marginal), second_rival, second_marginal)
+    return merge(work, (; sensitivities))
 end
 
 """
-    write_marginals!(work, tensor, dims, positions, player, depth, every_rival)
+    write_marginals!!(work, tensor, dims, positions, player, depth, every_rival)
 
-For each rival `q` at `positions` (`rival_axis`), the tensor `tensor` of size `dims` with every axis but `player`'s and
-`q`'s contracted, into `work.sensitivities[q]`. The other rivals' axes are already contracted. Contract each half of
-the rivals in turn and recurse into the other half, in `work.tensors[depth]`, down to two rivals
-(`write_pair_marginals!`): a few passes over `tensor` in all. Without `every_rival`, write only the first rival's
-marginal, by the first branch alone: it rounds as with `every_rival`.
+`work` with, for each rival `q` at `positions` (`rival_axis`), the tensor `tensor` of size `dims` with every axis but
+`player`'s and `q`'s contracted, in its sensitivities `q`. The other rivals' axes are already contracted. Contract each
+half of the rivals in turn and recurse into the other half, in its tensors `depth`, down to two rivals
+(`write_pair_marginals!!`): a few passes over `tensor` in all. Without `every_rival`, write only the first rival's
+marginal, by the first branch alone: it rounds as with `every_rival`. Use the returned work.
 """
-function write_marginals!(
-        work::NamedTuple,
+function write_marginals!!(
+        work::W,
         tensor::AbstractArray{<:Real},
         dims::NTuple{N, Integer},
         positions::AbstractUnitRange{<:Integer},
         player::Integer,
         depth::Integer,
         every_rival::Bool,
-    )::Nothing where {N}
+    )::W where {N, W <: NamedTuple}
     first_axis, last_axis = rival_axis(first(positions), player), rival_axis(last(positions), player)
     if first_axis == last_axis
-        write_marginal!(work.sensitivities[first_axis], tensor, dims, player, first_axis)
-        return nothing
+        marginal = write_marginal!!(work.sensitivities[first_axis], tensor, dims, player, first_axis)
+        return merge(work, (; sensitivities = with_item!!(work.sensitivities, first_axis, marginal)))
     end
     if every_rival && length(positions) == 2
-        write_pair_marginals!(work, tensor, dims, player, first_axis, last_axis)
-        return nothing
+        return write_pair_marginals!!(work, tensor, dims, player, first_axis, last_axis)
     end
     lower, upper = halves(positions)
-    target = work.tensors[depth]
-    reduced = contract_rivals!(target, work.spare, work.joint, tensor, dims, upper, player, work.strategies)
-    write_marginals!(work, target, reduced, lower, player, depth + 1, every_rival)
+    work, target, reduced = contracted_rivals!!(work, tensor, dims, upper, player, depth)
+    work = write_marginals!!(work, target, reduced, lower, player, depth + 1, every_rival)
     if every_rival
-        reduced = contract_rivals!(target, work.spare, work.joint, tensor, dims, lower, player, work.strategies)
-        write_marginals!(work, target, reduced, upper, player, depth + 1, every_rival)
+        work, target, reduced = contracted_rivals!!(work, tensor, dims, lower, player, depth)
+        work = write_marginals!!(work, target, reduced, upper, player, depth + 1, every_rival)
     end
-    return nothing
+    return work
+end
+
+"""
+`contract_rivals!!` of the rivals at `positions` of `tensor` into `work`'s tensors `depth`: the work, that tensor and
+its size. Use the returned work.
+"""
+@inline function contracted_rivals!!(
+        work::W,
+        tensor::AbstractArray{<:Real},
+        dims::NTuple{N, Integer},
+        positions::AbstractUnitRange{<:Integer},
+        player::Integer,
+        depth::Integer,
+    )::Tuple{W, AbstractVector, NTuple{N, Integer}} where {N, W <: NamedTuple}
+    target, spare, joint, reduced = contract_rivals!!(work.tensors[depth], work.spare, work.joint, tensor, dims, positions, player, work.strategies)
+    return merge(work, (; tensors = with_item!!(work.tensors, depth, target), spare, joint)), target, reduced
 end
 
 """The lower and upper halves of `positions`, the upper one the larger when their count is odd."""
@@ -292,7 +360,7 @@ end
 
 """
 Whether the work arrays `work` (`pass_workspace`) fit `payoff`: each player's strategy on its axis, room for
-`player`'s expected payoffs and sensitivities, and tensors for `contract_payoff!`.
+`player`'s expected payoffs and sensitivities, and tensors for `contract_payoff!!`.
 """
 function fits_workspace(work::NamedTuple, payoff::AbstractArray, player::Integer)::Bool
     (; strategies, sensitivities, expected, tensors, spare, joint) = work
@@ -307,118 +375,130 @@ function fits_workspace(work::NamedTuple, payoff::AbstractArray, player::Integer
 end
 
 """
-    contract_payoff!(work, payoff, player; slopes)
+    contract_payoff!!(work, payoff, player; slopes)
 
-`player`'s expected payoffs `U_p(k, π)` into `work.expected`, at the strategies `π` in `work.strategies`: `payoff`
-with each rival's axis contracted with its mixed strategy. With `slopes`, also its payoff sensitivities
-`∂U_p(k) / ∂π_qj` to each rival `q` into `work.sensitivities[q]`: `payoff` with every axis but `p`'s and `q`'s
-contracted (`write_marginals!`).
+`work` with `player`'s expected payoffs `U_p(k, π)` in the front of its `expected`, at the strategies `π` in its
+`strategies`: `payoff` with each rival's axis contracted with its mixed strategy. With `slopes`, also its payoff
+sensitivities `∂U_p(k) / ∂π_qj` to each rival `q` in its `sensitivities[q]`: `payoff` with every axis but `p`'s and
+`q`'s contracted (`write_marginals!!`). Use the returned work.
 """
-function contract_payoff!(work::NamedTuple, payoff::AbstractArray{<:Real, N}, player::Integer; slopes::Bool)::AbstractVector where {N}
+function contract_payoff!!(work::W, payoff::AbstractArray{<:Real, N}, player::Integer; slopes::Bool)::W where {W <: NamedTuple, N}
     if !fits_workspace(work, payoff, player)
-        throw(DimensionMismatch("work arrays of sizes $(size.(work.strategies)) do not fit payoffs of size $(size(payoff))"))
+        throw(DimensionMismatch(lazy"work arrays of sizes $(size.(work.strategies)) do not fit payoffs of size $(size(payoff))"))
     end
-    expected, rivals = view(work.expected, axes(payoff, player)), 1:(N - 1)
+    own = axes(payoff, player)
     if N == 1
-        expected .= payoff
-    else
-        # Without slopes, only the first rival's marginal, by the same steps: the gains round alike either way.
-        write_marginals!(work, payoff, size(payoff), rivals, player, 1, slopes)
-        rival = rival_axis(first(rivals), player)
-        weights, marginal = work.strategies[rival], work.sensitivities[rival]
-        checkbounds(marginal, eachindex(expected), eachindex(weights))
-        first_weight = first(weights)
-        # Down the marginal's columns: each entry adds the rival's strategies in order.
-        @inbounds for own in eachindex(expected)
-            expected[own] = first_weight * marginal[own, 1]
+        expected = work.expected
+        for index in own
+            expected = set_entry!!(expected, payoff[index], index)
         end
-        @inbounds for other in 2:length(weights)
-            weight = weights[other]
-            @simd for own in eachindex(expected)
-                expected[own] += weight * marginal[own, other]
-            end
+        return merge(work, (; expected))
+    end
+    # Without slopes, only the first rival's marginal, by the same steps: the gains round alike either way.
+    work = write_marginals!!(work, payoff, size(payoff), 1:(N - 1), player, 1, slopes)
+    rival = rival_axis(1, player)
+    weights, marginal, expected = work.strategies[rival], work.sensitivities[rival], work.expected
+    checkbounds(marginal, own, eachindex(weights))
+    checkbounds(expected, own)
+    first_weight = first(weights)
+    # Down the marginal's columns: each entry adds the rival's strategies in order.
+    @inbounds for index in own
+        expected = set_entry!!(expected, first_weight * marginal[index, 1], index)
+    end
+    @inbounds for other in 2:length(weights)
+        weight = weights[other]
+        @simd for index in own
+            expected = set_entry!!(expected, expected[index] + weight * marginal[index, other], index)
         end
     end
-    return expected
+    return merge(work, (; expected))
 end
 
 """
-    write_gains!(work, gain, gains, logits)
+    write_gains!!(work, gain, gains, logits)
 
-Each player's gains `G_pk = U_p(k, π) - U_p(1, π)` of `gains` at the stacked `logits`, into `gain`. The mixed strategies
-`π` stay in `work.strategies` (`pass_workspace`).
+Each player's gains `G_pk = U_p(k, π) - U_p(1, π)` of `gains` at the stacked `logits`, in `gain`. The mixed
+strategies `π` stay in the work's `strategies` (`pass_workspace`). Return the work and `gain`; use the returned ones.
 """
-function write_gains!(
-        work::NamedTuple,
-        gain::AbstractVector,
-        gains::NormalFormGains,
-        logits::AbstractVector{E},
-    )::Nothing where {E <: Real}
+function write_gains!!(work::W, gain::G, gains::NormalFormGains, logits::AbstractVector{E})::Tuple{W, G} where {E <: Real, W <: NamedTuple, G <: AbstractVector}
     ranges = logit_ranges(gains)
-    reference_softmax!.(work.strategies, view.((logits,), ranges))
+    work = merge(work, (; strategies = softmax_strategies(work.strategies, logits, ranges)))
     for (player, payoff) in pairs(gains.payoffs)
-        write_player_gain!(view(gain, ranges[player]), contract_payoff!(work, payoff, player; slopes = false))
+        work = contract_payoff!!(work, payoff, player; slopes = false)
+        gain = write_player_gain!!(gain, ranges[player], work.expected, size(payoff, player))
     end
-    return nothing
+    return work, gain
 end
 
-"""Write into `gain` a player's gains: its `expected` payoffs after the first strategy's, less the first's."""
-function write_player_gain!(gain::AbstractVector, expected::AbstractVector)::Nothing
-    gain .= view(expected, (firstindex(expected) + 1):lastindex(expected)) .- first(expected)
-    return nothing
+"""
+`gain` with a player's gains in its `range`: the player's `count` expected payoffs in `expected`, each after the
+first's less the first's. Use the returned gain.
+"""
+@inline function write_player_gain!!(gain::G, range::UnitRange{Int}, expected::AbstractVector, count::Integer)::G where {G <: AbstractVector}
+    if length(range) != count - 1
+        throw(DimensionMismatch(lazy"a range of $(length(range)) gains does not fit $count expected payoffs"))
+    end
+    reference = expected[begin]
+    for (offset, index) in enumerate(range)
+        gain = set_entry!!(gain, expected[begin + offset] - reference, index)
+    end
+    return gain
 end
 
 function (gains::NormalFormGains)(
-        work::NamedTuple,
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
-        logits::AbstractVector{E},
+        work::W,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
+        logits::AbstractVector{<:Real},
         ::Real,
-    )::Nothing where {E <: Real}
+    )::Tuple{W, G, S, P} where {W <: NamedTuple, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     ranges = logit_ranges(gains)
-    reference_softmax!.(work.strategies, view.((logits,), ranges))
-    fill!(gain_slope, zero(E))
-    fill!(gain_precision_slope, zero(E))
+    work = merge(work, (; strategies = softmax_strategies(work.strategies, logits, ranges)))
+    gain_slope, gain_precision_slope = zero!!(gain_slope), zero!!(gain_precision_slope)
     for (player, payoff) in pairs(gains.payoffs)
-        expected = contract_payoff!(work, payoff, player; slopes = true)
-        write_player_gain!(view(gain, ranges[player]), expected)
+        work = contract_payoff!!(work, payoff, player; slopes = true)
+        gain = write_player_gain!!(gain, ranges[player], work.expected, size(payoff, player))
         for (rival, rival_range) in pairs(ranges)
             if rival != player
-                write_gain_slope!(@view(gain_slope[ranges[player], rival_range]), payoff, work, player, rival)
+                gain_slope = write_gain_slope!!(gain_slope, ranges[player], rival_range, payoff, work, player, rival)
             end
         end
     end
-    return nothing
+    return work, gain, gain_slope, gain_precision_slope
 end
 
 function (gains::NormalFormGains)(
-        gain::AbstractVector,
-        gain_slope::AbstractMatrix,
-        gain_precision_slope::AbstractVector,
+        gain::G,
+        gain_slope::S,
+        gain_precision_slope::P,
         logits::AbstractVector,
         precision::Real,
-    )::Nothing
-    return gains(pass_workspace(gains, logits), gain, gain_slope, gain_precision_slope, logits, precision)
+    )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
+    _, gain, gain_slope, gain_precision_slope = gains(pass_workspace(gains, logits), gain, gain_slope, gain_precision_slope, logits, precision)
+    return gain, gain_slope, gain_precision_slope
 end
 
 """
-    write_gain_slope!(block, payoff, work, player, rival)
+    write_gain_slope!!(gain_slope, rows, columns, payoff, work, player, rival)
 
-`∂G_pk / ∂z_qj` of `player` `p` in the logits of `rival` `q`, into `block`, from the sensitivities `D_ki = ∂U_p(k) /
-∂π_qi` and expected payoffs in `work` (`contract_payoff!`). With `∂π_qi / ∂z_qj = π_qi (δ_ij - π_qj)` and
-`Σ_i D_ki π_qi = U_p(k)`, `∂U_p(k) / ∂z_qj = π_qj (D_kj - U_p(k))`; a gain takes its strategy's row less the first's.
+`gain_slope` with `∂G_pk / ∂z_qj` of `player` `p` in the logits of `rival` `q` in its block `rows` by `columns`, from
+the sensitivities `D_ki = ∂U_p(k) / ∂π_qi` and expected payoffs in `work` (`contract_payoff!!`). With
+`∂π_qi / ∂z_qj = π_qi (δ_ij - π_qj)` and `Σ_i D_ki π_qi = U_p(k)`, `∂U_p(k) / ∂z_qj = π_qj (D_kj - U_p(k))`; a gain
+takes its strategy's row less the first's. Use the returned gain slope.
 """
-function write_gain_slope!(
-        block::AbstractMatrix{E},
+function write_gain_slope!!(
+        gain_slope::S,
+        rows::UnitRange{Int},
+        columns::UnitRange{Int},
         payoff::AbstractArray,
         work::NamedTuple,
         player::Integer,
         rival::Integer,
-    )::Nothing where {E <: Real}
+    )::S where {S <: AbstractMatrix}
     own, other = axes(payoff, player), axes(payoff, rival)
-    if size(block) != (length(own) - 1, length(other) - 1)
-        throw(DimensionMismatch("a block of size $(size(block)) does not fit $(length(own)) by $(length(other)) strategies"))
+    if (length(rows), length(columns)) != (length(own) - 1, length(other) - 1)
+        throw(DimensionMismatch(lazy"a block of size $((length(rows), length(columns))) does not fit $(length(own)) by $(length(other)) strategies"))
     end
     # Loops: a broadcast over small views spends more on alias checks and axes than on its sums. One bounds check per
     # array lets the inner loop vectorize.
@@ -426,16 +506,18 @@ function write_gain_slope!(
     checkbounds(rival_strategy, other)
     checkbounds(sensitivity, own, other)
     checkbounds(expected, own)
-    # Block row and column `i` hold strategies `i + shift` of `player` and `rival`: the first strategy has none.
-    row_shift, column_shift = first(own) + 1 - firstindex(block, 1), first(other) + 1 - firstindex(block, 2)
+    checkbounds(gain_slope, rows, columns)
+    # Row and column `i` of the block hold strategies `i + shift` of `player` and `rival`: the first strategy has none.
+    row_shift, column_shift = first(own) + 1 - first(rows), first(other) + 1 - first(columns)
     first_expected = expected[first(own)]
-    @inbounds for column in axes(block, 2)
+    @inbounds for column in columns
         later = column + column_shift
         weight, first_sensitivity = rival_strategy[later], sensitivity[first(own), later]
         # The broadcast this loop replaced summed in this order. The Float32 noise bound in `opening_tests.jl` is tight.
-        @simd for row in axes(block, 1)
-            block[row, column] = weight * (((sensitivity[row + row_shift, later] - expected[row + row_shift]) - first_sensitivity) + first_expected)
+        @simd for row in rows
+            slope = weight * (((sensitivity[row + row_shift, later] - expected[row + row_shift]) - first_sensitivity) + first_expected)
+            gain_slope = set_entry!!(gain_slope, slope, row, column)
         end
     end
-    return nothing
+    return gain_slope
 end

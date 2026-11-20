@@ -47,6 +47,7 @@ export LogitGame,
     branch_projection
 
 include("failure.jl")
+include("storage.jl")
 include("bordered.jl")
 include("geometry.jl")
 include("fisher.jl")

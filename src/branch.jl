@@ -35,8 +35,9 @@ reachable(precision::Real)::Bool = precision >= 0 && isfinite(precision)
     pass_workspace(pass!, logits)
 
 The work arrays `pass!` needs beyond its outputs, in the element type and length of `logits`, or `nothing` (the
-default) when it needs none. Each `BranchWorkspace` builds its own, so a game shared by two traces stays safe. A pass
-with work arrays is called as `pass!(work, gain, gain_slope, gain_precision_slope, z, λ)`.
+default) when it needs none. A pass with work arrays is called as `pass!(work, gain, gain_slope, gain_precision_slope, z, λ)`.
+A trace builds them once per game and shares them across every evaluation of that game, so a pass writes each work
+array before it reads it. Each trace builds its own, so a game shared by two traces stays safe.
 """
 pass_workspace(::Any, ::AbstractVector)::Nothing = nothing
 
@@ -107,12 +108,14 @@ function run_pass!(
 end
 
 """
+    BranchWorkspace(point, pass_work)
     BranchWorkspace(game, point)
 
-A residual, Jacobian, logits and `game`'s pass work arrays (`pass_workspace`) for branch points like
+A residual, Jacobian, logits and a game's pass work arrays `pass_work` (`pass_workspace`) for branch points like
 `point = [w; λ]`, refilled by every call of the one callable that owns it. BifurcationKit consumes each result
-before calling that callable again, so the fused system and the Jacobian each own one workspace per trace; a shared
-one would let `J` overwrite a residual `FJ` returned.
+before calling that callable again, so the residual, fused system and Jacobian each own one workspace per segment; a
+shared one would let `J` overwrite a residual `FJ` returned. They share the pass work, which no pass reads before it
+writes (`pass_workspace`). The form with `game` builds fresh pass work, for a single evaluation outside a trace.
 """
 struct BranchWorkspace{E <: Real, W}
     residual::Vector{E}
@@ -121,30 +124,35 @@ struct BranchWorkspace{E <: Real, W}
     pass_work::W
 end
 
-function BranchWorkspace(game::LogitGame, point::AbstractVector{E})::BranchWorkspace{E} where {E <: Real}
+function BranchWorkspace(point::AbstractVector{E}, pass_work::Any)::BranchWorkspace{E} where {E <: Real}
     return BranchWorkspace(
         Vector{E}(undef, length(point)),
         Matrix{E}(undef, length(point), length(point)),
         Vector{E}(undef, length(point) - 1),
-        pass_workspace(game.pass!, payoff_gaps(point)),
+        pass_work,
     )
 end
 
+function BranchWorkspace(game::LogitGame, point::AbstractVector{E})::BranchWorkspace{E} where {E <: Real}
+    return BranchWorkspace(point, pass_workspace(game.pass!, payoff_gaps(point)))
+end
+
 """
-    GameResidual(game)
+    GameResidual(game, workspace)
 
 BifurcationKit's `F(x, pin)` of `game`'s branch in payoff gaps, with the precision carried as the state's
 last coordinate: `x = [w; λ]`, `F = [w - G(λ w, λ); λ - pin]`. The logits are `z = λ w`,
 so `F = 0` is `z = λ G(z, λ)`, and `F` stays regular at `λ = 0`.
-`pin` is BifurcationKit's continuation parameter, which only pins `λ`. Each call fills a fresh `BranchWorkspace`:
-BifurcationKit keeps its problem's `F` apart from the fused system.
+`pin` is BifurcationKit's continuation parameter, which only pins `λ`. Each call refills `workspace` and returns a
+copy of its residual, which BifurcationKit may keep past its next call of `F`.
 """
-struct GameResidual{G <: LogitGame}
+struct GameResidual{G <: LogitGame, W <: BranchWorkspace}
     game::G
+    workspace::W
 end
 
-function (residual::GameResidual)(point::AbstractVector{E}, pin::Real)::AbstractVector{E} where {E <: Real}
-    return branch_system!(BranchWorkspace(residual.game, point), residual.game, point, pin).residual
+function (residual::GameResidual)(point::AbstractVector{E}, pin::Real)::Vector{E} where {E <: Real}
+    return copy(branch_system!(residual.workspace, residual.game, point, pin).residual)
 end
 
 """
@@ -223,13 +231,14 @@ function branch_system!(
 end
 
 """
-    trace_start(game, flat)
+    trace_start(game, flat, pass_work)
 
-The branch's start `[w; 0]` at zero precision: the gaps `G(0, 0)` that the `flat` logits (all zero) face.
+The branch's start `[w; 0]` at zero precision: the gaps `G(0, 0)` that the `flat` logits (all zero) face, from one
+pass on `game`'s work arrays `pass_work` (`pass_workspace`).
 """
-function trace_start(game::LogitGame, flat::AbstractVector{E})::AbstractVector{E} where {E <: Real}
+function trace_start(game::LogitGame, flat::AbstractVector{E}, pass_work::Any)::AbstractVector{E} where {E <: Real}
     start = [flat; zero(E)]
-    payoff_gaps(start) .= .-payoff_gaps(branch_system!(BranchWorkspace(game, start), game, start, zero(E)).residual)
+    payoff_gaps(start) .= .-payoff_gaps(branch_system!(BranchWorkspace(start, pass_work), game, start, zero(E)).residual)
     return start
 end
 
@@ -256,23 +265,24 @@ function (pin_slope::PinSlope{E})(::AbstractVector{E}, ::Any)::AbstractVector{E}
 end
 
 """
-    branch_problem(game, start, pin; record_from_solution)
+    branch_problem(game, start, pin, pass_work; record_from_solution)
 
 BifurcationKit's problem for `game`'s branch from `start = [w; λ]` at `pin`, with the fused system and
-exact `∂F/∂pin` supplied. The system and Jacobian each own a `BranchWorkspace`.
+exact `∂F/∂pin` supplied. The residual, system and Jacobian each own a `BranchWorkspace` on the pass work `pass_work`.
 """
 function branch_problem(
         game::LogitGame,
         start::AbstractVector{E},
-        pin::Real;
+        pin::Real,
+        pass_work::Any;
         record_from_solution::Any,
     )::BifurcationKit.AbstractBifurcationProblem where {E <: Real}
     return BifurcationKit.BifurcationProblem(
-        GameResidual(game),
+        GameResidual(game, BranchWorkspace(start, pass_work)),
         start,
         pin;
-        J = GameJacobian(game, BranchWorkspace(game, start)),
-        FJ = GameSystem(game, BranchWorkspace(game, start)),
+        J = GameJacobian(game, BranchWorkspace(start, pass_work)),
+        FJ = GameSystem(game, BranchWorkspace(start, pass_work)),
         delta = one(E),
         inplace = false,
         R01 = PinSlope(start),

@@ -235,7 +235,7 @@ end
     @test first_residual === second_residual === workspace.residual
     @test first_jacobian === second_jacobian === workspace.jacobian
     residual, jacobian = system(point, 0.5f0)
-    @test residual == GameTracing.GameResidual(game)(point, 0.5f0)
+    @test residual == branch_residual(game, point, 0.5f0)
     @test jacobian ==
         GameTracing.GameJacobian(game, GameTracing.BranchWorkspace(game, point))(
         point,
@@ -246,8 +246,8 @@ end
         moved = copy(point)
         moved[column] += step
         slope = (
-            GameTracing.GameResidual(game)(moved, 0.5f0) .-
-                GameTracing.GameResidual(game)(point, 0.5f0)
+            branch_residual(game, moved, 0.5f0) .-
+                branch_residual(game, point, 0.5f0)
         ) ./
             step
         @test maximum(abs, slope .- jacobian[:, column]) < 1.0f-2
@@ -257,7 +257,7 @@ end
 @testset "the trace starts at the gaps the flat logits face, where the system is regular" begin
     pass = ThresholdPass(6.0f0, 3.0f0)
     game = LogitGame(pass, 2.0f0)
-    start = GameTracing.trace_start(game, zeros(Float32, 1))
+    start = GameTracing.trace_start(game, zeros(Float32, 1), pass_workspace(pass, zeros(Float32, 1)))
     gains = evaluated(pass, zeros(Float32, 1), 1.0f0).precision_slope
     @test GameTracing.payoff_gaps(start) ≈ gains
     @test last(start) == 0
@@ -289,8 +289,8 @@ end
         for column in eachindex(point)
             step = 1.0f-2
             nudge = setindex!(zeros(Float32, length(point)), step, column)
-            upper = GameTracing.GameResidual(game)(point .+ nudge, last(point))
-            lower = GameTracing.GameResidual(game)(point .- nudge, last(point))
+            upper = branch_residual(game, point .+ nudge, last(point))
+            lower = branch_residual(game, point .- nudge, last(point))
             # Truncation h² M₃ / 6 and rounding eps / h each stay under 1e-3 of the Jacobian's scale here.
             @test maximum(abs, (upper .- lower) ./ 2step .- jacobian[:, column]) <
                 1.0f-3 * (1 + maximum(abs, jacobian))
@@ -300,13 +300,27 @@ end
     @test residual_norm(pass, traced.logits, 3.0f0) < 1.0f-4
 end
 
+@testset "the residual reuses one workspace and keeps each result past its next call" begin
+    game = LogitGame(GAME, TARGET_PRECISION)
+    point = Float32[0.3f0, -0.2f0, 0.6f0]
+    workspace = GameTracing.BranchWorkspace(game, point)
+    residual = GameTracing.GameResidual(game, workspace)
+    first_residual = residual(point, 0.5f0)
+    kept = copy(first_residual)
+    second_residual = residual(point .+ 0.1f0, 0.5f0)
+    @test first_residual == kept
+    @test first_residual !== workspace.residual !== second_residual
+    @test second_residual == workspace.residual
+end
+
 @testset "a Jacobian call leaves the residual the fused system returned" begin
     bifurcation_kit = GameTracing.BifurcationKit
     point = Float32[0.3f0, -0.2f0, 0.6f0]
     problem = GameTracing.branch_problem(
         LogitGame(GAME, TARGET_PRECISION),
         point,
-        0.5f0;
+        0.5f0,
+        pass_workspace(GAME, GameTracing.payoff_gaps(point));
         record_from_solution = GameTracing.trace_record_point,
     )
     residual, _ = bifurcation_kit.residual_and_jacobian(problem, point, 0.5f0)
@@ -321,7 +335,8 @@ end
     problem = GameTracing.branch_problem(
         game,
         zeros(Float32, WIDTH + 1),
-        0.0f0;
+        0.0f0,
+        pass_workspace(GAME, zeros(Float32, WIDTH));
         record_from_solution = GameTracing.trace_record_point,
     )
     iterator = GameTracing.BifurcationKit.ContIterable(
@@ -374,7 +389,8 @@ end
     problem = GameTracing.branch_problem(
         LogitGame(GAME, TARGET_PRECISION),
         zeros(Float32, WIDTH + 1),
-        0.0f0;
+        0.0f0,
+        pass_workspace(GAME, zeros(Float32, WIDTH));
         record_from_solution = GameTracing.trace_record_point,
     )
     iterator = GameTracing.BifurcationKit.ContIterable(

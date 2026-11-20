@@ -25,7 +25,7 @@ end
 """
 function rounded_residual(game::LogitGame, point::AbstractVector{E}, pin::E)::Vector where {E <: AbstractFloat}
     number = Rounded{E, widen(E)}
-    return GameTracing.GameResidual(game)(number.(point), number(pin))
+    return branch_residual(game, number.(point), number(pin))
 end
 
 """`frozen` with each value it holds as an exact `number` (`Rounded`), so its products bound their own rounding."""
@@ -84,7 +84,7 @@ function rounding_explanation(gains::NormalFormGains, failure::TraceFailure, set
     )
     noise = [rounding_bound.(rounded_residual(game, stalled_iterate, stalled_pin)); rounding_bound(rounded_arclength_row)]
     bound = 2 .* (abs.(amplification) * noise) .+ eps(element) .* abs.(GameTracing.logits_at(stalled_iterate))
-    residual = [GameTracing.GameResidual(game)(stalled_iterate, stalled_pin); arclength_row]
+    residual = [branch_residual(game, stalled_iterate, stalled_pin); arclength_row]
     roundoff = eps(element) / 2
     residual_bound = 2 .* noise .+ abs.(widen.(bordered)) * (roundoff .* abs.(widen.([stalled_iterate; stalled_pin])))
     return (; bound, residual, residual_bound, noise, amplification)
@@ -171,10 +171,10 @@ end
     (; stalled_iterate, stalled_pin, correction) = failure.context
     game_32 = LogitGame(gains_32, FAR_TARGET)
     bounded = rounded_residual(game_32, stalled_iterate, stalled_pin)
-    computed = GameTracing.GameResidual(game_32)(stalled_iterate, stalled_pin)
+    computed = branch_residual(game_32, stalled_iterate, stalled_pin)
     @test [entry.value for entry in bounded] == computed
     game_big = LogitGame(NormalFormGains(map(payoff -> big.(payoff), payoffs_32)), big(FAR_TARGET))
-    measured = abs.(big.(computed) .- GameTracing.GameResidual(game_big)(big.(stalled_iterate), big(stalled_pin)))
+    measured = abs.(big.(computed) .- branch_residual(game_big, big.(stalled_iterate), big(stalled_pin)))
     @test all(measured .<= rounding_bound.(bounded))
     # A correction within the bound is rounding noise. One past it is not, nor is an iterate 64 ulps or a gap off the root.
     explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
@@ -230,7 +230,7 @@ end
         trace_endpoint(LogitGame(gains_wide, wide(FAR_TARGET)), GameTracing.logit_count(gains_wide), settings_wide; keep_going = StopAtPrecision(wide(5))),
     ).context
     game_wide = LogitGame(gains_wide, wide(FAR_TARGET))
-    residual = GameTracing.GameResidual(game_wide)
+    residual = GameTracing.GameResidual(game_wide, GameTracing.BranchWorkspace(game_wide, [early.gaps; early.precision]))
     jacobian = GameTracing.GameJacobian(game_wide, GameTracing.BranchWorkspace(game_wide, [early.gaps; early.precision]))
     newton = (point, _) -> point .- jacobian(point, early.precision) \ residual(point, early.precision)
     polished = foldl(newton, 1:3; init = [early.gaps; early.precision])
@@ -495,10 +495,10 @@ end
     rng = Xoshiro(0x0123456789abcdef + width)
     game = LogitGame(LinearGainPass(randn(rng, Float32, width, width), randn(rng, Float32, width)), TARGET_PRECISION)
     settings = BifurcationKitSettings{Float32}()
-    start = GameTracing.trace_start(game, zeros(Float32, width))
+    start = GameTracing.trace_start(game, zeros(Float32, width), pass_workspace(game.pass!, zeros(Float32, width)))
     system = GameTracing.branch_system!(GameTracing.BranchWorkspace(game, start), game, start, last(start))
     @test system.jacobian[1:width, 1:width] == I(width)
-    closed = GameTracing.opening_tangent(game, start).tangent
+    closed = GameTracing.opening_tangent(game, start, pass_workspace(game.pass!, zeros(Float32, width))).tangent
     factored = factored_opening_tangent(game, start, settings)
     @test closed ./ last(closed) ≈ factored ./ last(factored) atol = 1.0f-5
 end

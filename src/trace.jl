@@ -276,15 +276,16 @@ function added_options(own::NamedTuple, options::NamedTuple)::NamedTuple
 end
 
 """
-    trace_iterator(game, start, settings, finalise, corrector, step_length, max_steps)
+    trace_iterator(game, pass_work, start, settings, finalise, corrector, step_length, max_steps)
 
-BifurcationKit's PALC iterator over `game`'s branch from `start = [w; λ]` toward `game.target_precision`, with
-`finalise` at each accepted point, `corrector` (`CorrectorReach`) at each Newton iterate and a branch of
-`trace_record_point` records. BifurcationKit's constructors are not inferable, so each is built in its own function
-and passed on without a named local; it runs once per segment.
+BifurcationKit's PALC iterator over `game`'s branch from `start = [w; λ]` toward `game.target_precision`, on the
+game's pass work `pass_work`, with `finalise` at each accepted point, `corrector` (`CorrectorReach`) at each Newton
+iterate and a branch of `trace_record_point` records. BifurcationKit's constructors are not inferable, so each is
+built in its own function and passed on without a named local; it runs once per segment.
 """
 function trace_iterator(
         game::LogitGame,
+        pass_work::Any,
         start::AbstractVector{E},
         settings::BifurcationKitSettings{E},
         finalise::TraceFinalise,
@@ -293,7 +294,7 @@ function trace_iterator(
         max_steps::Integer,
     )::BifurcationKit.ContIterable where {E <: Real}
     return continuation_iterator(
-        branch_problem(game, start, last(start); record_from_solution = trace_record_point),
+        branch_problem(game, start, last(start), pass_work; record_from_solution = trace_record_point),
         palc_algorithm(settings, game, length(start) - 1),
         continuation_options(
             settings,
@@ -394,15 +395,16 @@ struct OpeningTangent{E <: Real}
 end
 
 """
-    opening_tangent(game, start)
+    opening_tangent(game, start, pass_work)
 
 The branch's `OpeningTangent` at the flat `start = [w; 0]`. At precision zero play is uniform whatever the gaps, so
-`∂F/∂w` is the identity and the tangent is `(-∂F/∂λ, 1)`, read from one evaluation of the game's Jacobian. A secant
-start instead turns by radians at a near crossing, where rounding in its second solve is large against the branch's bend.
+`∂F/∂w` is the identity and the tangent is `(-∂F/∂λ, 1)`, read from one evaluation of the game's Jacobian on its pass
+work `pass_work`. A secant start instead turns by radians at a near crossing, where rounding in its second solve is
+large against the branch's bend.
 """
-function opening_tangent(game::LogitGame, start::AbstractVector{E})::OpeningTangent{E} where {E <: Real}
+function opening_tangent(game::LogitGame, start::AbstractVector{E}, pass_work::Any)::OpeningTangent{E} where {E <: Real}
     width = length(start) - 1
-    system = branch_system!(BranchWorkspace(game, start), game, start, last(start))
+    system = branch_system!(BranchWorkspace(start, pass_work), game, start, last(start))
     return OpeningTangent([-system.jacobian[1:width, end]; one(E)])
 end
 
@@ -436,7 +438,9 @@ function trace_endpoint(
         context::NamedTuple = (;),
     )::TraceResult{E} where {E <: Real}
     flat = zeros(E, width)
-    traced_start = trace_start(game, flat)
+    # One set of pass work arrays serves every evaluation of the game; a redraw's swap brings the new game's.
+    pass_work = pass_workspace(game.pass!, flat)
+    traced_start = trace_start(game, flat, pass_work)
     # The start is a root for every finite game; a non-finite gain shows in its gaps.
     if !all(isfinite, traced_start)
         return Err(
@@ -464,11 +468,11 @@ function trace_endpoint(
     finalise = TraceFinalise(
         keep_going,
         redraw,
-        RedrawSlot(game, false, opening_step(game, settings.step_metric, settings.max_step)),
+        RedrawSlot(game, false, opening_step(game, settings.step_metric, settings.max_step), pass_work),
         settings.corrector,
     )
     return redrawn_trace(
-        guarded_trace(traced_start, opening_tangent(game, traced_start), settings, finalise, accept_corrected, opening),
+        guarded_trace(traced_start, opening_tangent(game, traced_start, pass_work), settings, finalise, accept_corrected, opening),
         finalise,
         settings,
         accept_corrected,
@@ -493,11 +497,11 @@ function redrawn_trace(
     (; progress) = outcome
     slot = finalise.slot[]
     if !isnothing(outcome.exception) || !slot.pending
-        return reached_state(progress, outcome, slot.game, settings, context)
+        return reached_state(progress, outcome, slot.game, slot.pass_work, settings, context)
     end
     finalise.slot[] = restated(slot; pending = false)
     if progress.steps >= settings.max_steps
-        return reached_state(progress, outcome, slot.game, settings, context)
+        return reached_state(progress, outcome, slot.game, slot.pass_work, settings, context)
     end
     return redrawn_trace(
         with_earlier_accuracy(
@@ -559,6 +563,7 @@ function guarded_trace(
         segment_branch(
             trace_iterator(
                 finalise.slot[].game,
+                finalise.slot[].pass_work,
                 start,
                 settings,
                 finalise,
@@ -790,18 +795,20 @@ function restart_opening(
 end
 
 """
-    reached_state(progress, outcome, game, settings, context)
+    reached_state(progress, outcome, game, pass_work, settings, context)
 
 The `TraceResult` (`Ok(Traced)` or `Err(TraceFailure)`) of a trace whose `progress` holds the last accepted point and
 whose `outcome` (`guarded_trace`) is the last corrector's step length, its `exhausted` record, or the BifurcationKit
 exception that ended it. A corrector at rounding noise fails `PrecisionExhausted`. Its context carries the stalled Newton
 iterate `stalled_iterate = [w; λ]`, its precision `lambda`, its last `correction` in logits, and its step's
-`stalled_pin` and `stalled_arclength`. A point at the target passes one more Newton correction (`verified_endpoint`).
+`stalled_pin` and `stalled_arclength`. A point at the target passes one more Newton correction (`verified_endpoint`)
+on `game`'s pass work `pass_work`.
 """
 function reached_state(
         progress::TraceProgress{E},
         outcome::NamedTuple,
         game::LogitGame,
+        pass_work::Any,
         settings::BifurcationKitSettings{E},
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
@@ -817,7 +824,7 @@ function reached_state(
         )
     end
     if isnothing(outcome.exception) && progress.precision == E(target_precision)
-        return verified_endpoint(progress, outcome, game, settings, context)
+        return verified_endpoint(progress, outcome, game, pass_work, settings, context)
     end
     # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move,
     # spent steps, or else `keep_going` or a refusal (`STOP_CAUSES`).
@@ -844,11 +851,12 @@ function reached_state(
 end
 
 """
-    verified_endpoint(progress, outcome, game, settings, context)
+    verified_endpoint(progress, outcome, game, pass_work, settings, context)
 
 The `TraceResult` at `progress`, the last accepted point, on the target. One more iteration of the corrector that
 landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's method with `λ` pinned at the bound
-(`_corrector_at_bound`), so the check is that step: a dense LU solve of `game`'s branch Jacobian, as `DefaultLS`. That
+(`_corrector_at_bound`), so the check is that step: a dense LU solve of `game`'s branch Jacobian on its pass work
+`pass_work`, as `DefaultLS`. That
 corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
 
 An exact root needs no correction, as BifurcationKit's own test passes it. A singular Jacobian fails `Singular`. An
@@ -861,12 +869,13 @@ function verified_endpoint(
         progress::TraceProgress{E},
         outcome::NamedTuple,
         game::LogitGame,
+        pass_work::Any,
         settings::BifurcationKitSettings{E},
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
     (; gaps, precision) = progress
     point = [gaps; precision]
-    system = branch_system!(BranchWorkspace(game, point), game, point, precision)
+    system = branch_system!(BranchWorkspace(point, pass_work), game, point, precision)
     if all(iszero, system.residual)
         return Ok(Traced(logits_at(point), progress.steps, E(outcome.logit_accuracy)))
     end

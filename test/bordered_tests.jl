@@ -161,7 +161,8 @@ end
     problem = GameTracing.branch_problem(
         LogitGame(GAME, TARGET_PRECISION),
         start,
-        0.0f0;
+        0.0f0,
+        pass_workspace(GAME, zeros(Float32, WIDTH));
         record_from_solution = GameTracing.trace_record_point,
     )
     iter = kit.ContIterable(

@@ -233,6 +233,7 @@ end
         progress,
         (; step_length = 0.0f0, accepted_step = 0.0f0, exhausted = nothing, logit_accuracy = 0.0f0, unresolved = false, exception = "Stopping continuation."),
         LogitGame(GAME, TARGET_PRECISION),
+        pass_workspace(GAME, progress.gaps),
         BifurcationKitSettings{Float32}(; max_steps = 10),
         (;),
     )
@@ -249,7 +250,7 @@ end
 function reached_at(game::LogitGame, gaps::AbstractVector{E}, accuracy::E)::GameTracing.TraceResult{E} where {E <: Real}
     target = E(game.target_precision)
     progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false)
-    return GameTracing.reached_state(progress, ran_outcome(accuracy), game, BifurcationKitSettings{E}(), (;))
+    return GameTracing.reached_state(progress, ran_outcome(accuracy), game, pass_workspace(game.pass!, progress.gaps), BifurcationKitSettings{E}(), (;))
 end
 
 @testset "the endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
@@ -320,7 +321,7 @@ end
     finalise = GameTracing.TraceFinalise(
         GameTracing.AcceptAll(),
         GameTracing.NoRedraw(),
-        GameTracing.RedrawSlot(game, false, 0.1f0),
+        GameTracing.RedrawSlot(game, false, 0.1f0, pass_workspace(game.pass!, zeros(Float32, WIDTH))),
         GameTracing.CorrectorSettings{Float32}(),
     )
     start, moved = branch_record(Float32[0, 0], 0.0f0, 0),
@@ -357,6 +358,7 @@ end
             progress,
             outcome,
             game,
+            pass_workspace(game.pass!, progress.gaps),
             settings,
             (;),
         )
@@ -369,7 +371,7 @@ end
     @test stuck.unmoved
     @test stuck.steps == 2
     # A stall that spends the step budget is still a stall; moving points that spend it are not.
-    stalled = unwrap_error(GameTracing.reached_state(stuck, outcome, game, settings, (;)))
+    stalled = unwrap_error(GameTracing.reached_state(stuck, outcome, game, pass_workspace(game.pass!, stuck.gaps), settings, (;)))
     @test stalled.cause == GameTracing.TraceStuck
     @test stalled.context.unmoved
     spent = GameTracing.branch_progress(
@@ -382,6 +384,7 @@ end
             spent,
             outcome,
             game,
+            pass_workspace(game.pass!, spent.gaps),
             settings,
             (;),
         )
@@ -415,7 +418,7 @@ end
     finalise = GameTracing.TraceFinalise(
         GameTracing.AcceptAll(),
         GameTracing.NoRedraw(),
-        GameTracing.RedrawSlot(LogitGame(GAME, one(element)), false, element(1) / 10),
+        GameTracing.RedrawSlot(LogitGame(GAME, one(element)), false, element(1) / 10, pass_workspace(GAME, zeros(element, 1))),
         GameTracing.CorrectorSettings{typeof(element(1))}(),
     )
     @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), 2:length(branch))

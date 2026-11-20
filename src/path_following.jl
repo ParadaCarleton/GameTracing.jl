@@ -362,10 +362,12 @@ function path_init(
     )::Result{<:PathFollowing.Tracer{E}, PathFollowing.StepFailure{E}} where {E <: Real}
     game = LogitGame(gains, one(E))
     width = logit_count(gains)
-    start = trace_start(game, zeros(E, width))
+    flat = zeros(E, width)
+    pass_work = pass_workspace(game.pass!, flat)
+    start = trace_start(game, flat, pass_work)
     direction = setindex!(zeros(E, width + 1), one(E), width + 1)
     return CommonSolve.init(
-        PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(game, start)), start, direction),
+        PathFollowing.CurveProblem(QRESystem(game, BranchWorkspace(start, pass_work)), start, direction),
         path_algorithm(settings, gains);
         first_step = opening_step(game, settings.step_metric, settings.max_step),
     )

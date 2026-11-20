@@ -6,52 +6,57 @@ the trace builds no `RootShift`.
 struct NoRedraw end
 
 """
-    ShiftedGame(game, point, factorization, shift, shift_move, within)
+    ShiftedGame(game, point, factorization, shift, shift_move, within, pass_work)
 
 A candidate `game` at the accepted point `point = [w; λ]` (`RootShift`): its bordered Jacobian `[∂F/∂x; bᵀ]` there,
-factored, its root `shift` `δ`, that shift's largest logit move `shift_move`, and whether the move is `within` the
-check's limit. A non-finite map or Jacobian at `point` has no factorization (`nothing`), a NaN shift and is never
-`within`; a restart on it fails as LAPACK's check of a non-finite matrix does, at the swap point.
+factored, its root `shift` `δ`, that shift's largest logit move `shift_move`, whether the move is `within` the
+check's limit, and the game's pass work arrays (`pass_workspace`), which a swap hands on to the trace. A non-finite
+map or Jacobian at `point` has no factorization (`nothing`), a NaN shift and is never `within`; a restart on it fails
+as LAPACK's check of a non-finite matrix does, at the swap point.
 """
-struct ShiftedGame{G <: LogitGame, E <: Real}
+struct ShiftedGame{G <: LogitGame, E <: Real, W}
     game::G
     point::Vector{E}
     factorization::Union{Nothing, LU{E, Matrix{E}, Vector{Int}}}
     shift::Vector{E}
     shift_move::E
     within::Bool
+    pass_work::W
 end
 
 """
-    RedrawSlot(game, pending, step_length)
+    RedrawSlot(game, pending, step_length, pass_work)
 
 The game a trace runs on, whether `redraw` swapped it since the last restart (`pending`), the arclength step the
 trace last held, which a restart carries on, and the swapped game's factored bordered Jacobian at the swap point and
 root `shift` there (`ShiftedGame`), from which the restart takes its tangent and its start. `shift` is empty until a
-swap. `TraceFinalise` holds the current one.
+swap. `pass_work` is the game's pass work arrays (`pass_workspace`), which every evaluation of the game shares.
+`TraceFinalise` holds the current one.
 """
-struct RedrawSlot{G <: LogitGame, E <: Real}
+struct RedrawSlot{G <: LogitGame, E <: Real, W}
     game::G
     pending::Bool
     step_length::E
     factorization::Union{Nothing, LU{E, Matrix{E}, Vector{Int}}}
     shift::Vector{E}
+    pass_work::W
 end
 
-function RedrawSlot(game::G, pending::Bool, step_length::E)::RedrawSlot{G, E} where {G <: LogitGame, E <: Real}
-    return RedrawSlot{G, E}(game, pending, step_length, nothing, E[])
+function RedrawSlot(game::G, pending::Bool, step_length::E, pass_work::W)::RedrawSlot{G, E, W} where {G <: LogitGame, E <: Real, W}
+    return RedrawSlot{G, E, W}(game, pending, step_length, nothing, E[], pass_work)
 end
 
-"""`slot` with the given fields replaced."""
+"""`slot` with the given fields replaced. New pass work must have the type of the old, as a game's must."""
 function restated(
-        slot::RedrawSlot{G, E};
+        slot::RedrawSlot{G, E, W};
         game::G = slot.game,
         pending::Bool = slot.pending,
         step_length::Real = slot.step_length,
         factorization::Union{Nothing, LU{E, Matrix{E}, Vector{Int}}} = slot.factorization,
         shift::AbstractVector{E} = slot.shift,
-    )::RedrawSlot{G, E} where {G <: LogitGame, E <: Real}
-    return RedrawSlot{G, E}(game, pending, step_length, factorization, shift)
+        pass_work::W = slot.pass_work,
+    )::RedrawSlot{G, E, W} where {G <: LogitGame, E <: Real, W}
+    return RedrawSlot{G, E, W}(game, pending, step_length, factorization, shift, pass_work)
 end
 
 """
@@ -115,12 +120,12 @@ function (check::RootShift{E})(game::LogitGame)::ShiftedGame{typeof(game), E} wh
     system = branch_system!(BranchWorkspace(game, point), game, point, last(point))
     bordered = [@view(system.jacobian[1:width, :]); transpose(border)]
     if !(all(isfinite, bordered) && all(isfinite, system.residual))
-        return ShiftedGame(game, point, nothing, fill(E(NaN32), width + 1), E(NaN32), false)
+        return ShiftedGame(game, point, nothing, fill(E(NaN32), width + 1), E(NaN32), false, system.pass_work)
     end
     factorization = lu(bordered)
     shift = factorization \ [.-system.residual[1:width]; zero(E)]
     move = logit_change(point, point .+ shift)
-    return ShiftedGame(game, point, factorization, shift, move, within_limit(check.limit, move))
+    return ShiftedGame(game, point, factorization, shift, move, within_limit(check.limit, move), system.pass_work)
 end
 
 """
@@ -199,5 +204,7 @@ function swapped(
             )
         )
     end
-    return restated(slot; redrawn.game, pending = true, redrawn.factorization, shift = redrawn.within ? redrawn.shift : zero(redrawn.shift))
+    return restated(
+        slot; redrawn.game, pending = true, redrawn.factorization, shift = redrawn.within ? redrawn.shift : zero(redrawn.shift), redrawn.pass_work,
+    )
 end

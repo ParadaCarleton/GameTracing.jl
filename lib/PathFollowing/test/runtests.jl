@@ -185,7 +185,7 @@ function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::St
     return unwrap_error(last(step!!(tracer, bound)))
 end
 
-"""`algorithm(E)` with a static metric and `StaticLU`: isbits, so `land_batch!` takes it."""
+"""`algorithm(E)` with a static metric and `StaticLU`: isbits, so `land_batch` takes it."""
 function static_algorithm(::Type{E}; overrides...)::PseudoArclength where {E <: Real}
     return algorithm(E; metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU(), overrides...)
 end
@@ -979,6 +979,8 @@ end
         device_landings = similar(JLArray(problems), eltype(expected))
         PathFollowing.land_kernel!(JLBackend(), 2)(device_landings, JLArray(problems), settings, JLArray(first_steps), bound, 40; ndrange = length(problems))
         @test isequal(collect(device_landings), expected)
+        # KernelAbstractions 0.9 drops the kernel's source lines. Once this fails, delete the COV_EXCL markers in landing.jl.
+        @test only(methods(PathFollowing.cpu_land_kernel!)).line == 0
     end
 
     @testset "land_batch aborts loud when a callback throws in a work item past the host's check" begin

@@ -99,10 +99,14 @@ function check_batch(
     return nothing
 end
 
+# KernelAbstractions 0.9's @kernel drops these source lines, so no run counts them (fixed in 0.10, JuliaGPU/KernelAbstractions.jl#734).
+# The land_batch testsets run this kernel; a test fails once the lines survive, to remove these markers.
+# COV_EXCL_START
 @kernel function land_kernel!(landings, @Const(problems), algorithm, @Const(first_steps), bound, max_steps)
     index = @index(Global, Linear)
     landings[index] = landed(problems[index], algorithm, first_steps[index], bound, max_steps)
 end
+# COV_EXCL_STOP
 
 """`problem` traced from its start to `bound` (`land!!`), as a `Landing`."""
 function landed(

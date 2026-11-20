@@ -134,7 +134,8 @@ end
 The `RedrawSlot` after a `redraw` hook's result `redrawn`, `slot` itself unless it swaps the game: `nothing` and the current game do not; a new game
 swaps as the `ShiftedGame` that `check` (`RootShift`) builds for it, and a `ShiftedGame` the hook returned must come
 from `check`. A swap sets `pending`, the factorization and the root shift the restart reads; a shift beyond the corrector's reach (not `within`) is dropped, so a root out of reach fails stuck at the swap instead of jumping branches. A game of another type, or with another
-target precision, is a caller error: the trace's precision would change meaning.
+target precision, is a caller error: the trace's precision would change meaning. So is pass work (`pass_workspace`) of
+another type: the trace holds one type of work.
 """
 function swapped(slot::RedrawSlot{G, E}, ::RootShift, ::Nothing)::RedrawSlot{G, E} where {G <: LogitGame, E <: Real}
     return slot
@@ -203,6 +204,9 @@ function swapped(
                 "a redrawn game has target precision $(redrawn.game.target_precision), not the trace's $(slot.game.target_precision)",
             )
         )
+    end
+    if !(redrawn.pass_work isa typeof(slot.pass_work))
+        throw(ArgumentError("a redrawn game's pass work has type $(typeof(redrawn.pass_work)), not the trace's $(typeof(slot.pass_work))"))
     end
     return restated(
         slot; redrawn.game, pending = true, redrawn.factorization, shift = redrawn.within ? redrawn.shift : zero(redrawn.shift), redrawn.pass_work,

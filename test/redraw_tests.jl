@@ -234,7 +234,7 @@ end
     @test endpoint.logit_accuracy == outcome.logit_accuracy
 end
 
-@testset "a redrawn game must keep the trace's target precision, and a hook's ShiftedGame must come from this point" begin
+@testset "a redrawn game must keep the trace's target precision and pass work type, and a hook's ShiftedGame must come from this point" begin
     game = LogitGame(GAME, TARGET_PRECISION)
     slot = GameTracing.RedrawSlot(game, false, 0.1f0, pass_workspace(game.pass!, zeros(Float32, WIDTH)))
     check = GameTracing.RootShift(Float32[0.1f0, 0.2f0, 0.5f0], Float32[0, 0, 1], nothing)
@@ -248,7 +248,10 @@ end
     @test next.game === flipped.game
     @test next.factorization === flipped.factorization
     @test next.step_length == slot.step_length
+    @test next.pass_work === flipped.pass_work
     @test !slot.pending
+    # The pass has no work arrays (`nothing`), so a slot that holds a vector of them refuses its work.
+    @test_throws ArgumentError GameTracing.swapped(GameTracing.RedrawSlot(game, false, 0.1f0, Float32[]), check, flipped)
     elsewhere = GameTracing.RootShift(copy(check.point), check.border, nothing)(game)
     @test_throws ArgumentError GameTracing.swapped(slot, check, elsewhere)
 end

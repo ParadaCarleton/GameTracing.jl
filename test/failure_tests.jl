@@ -302,8 +302,8 @@ function finalised(
         point::NamedTuple,
         branch::AbstractVector,
     )::Bool
-    # BifurcationKit calls `finalise` before it saves the point to the branch.
-    tangent = (; u = zero([point.gaps; point.param]), p = one(point.param))
+    # BifurcationKit calls `finalise` before it saves the point to the branch, with the point's tangent.
+    tangent = (; u = [point.gap_tangent; point.tangent_precision], p = point.tangent_precision)
     # Only a redraw reads the algorithm, so a flat game of the records' width serves.
     width = length(point.gaps)
     flat = LogitGame(LinearGainPass(zeros(typeof(point.param), width, width), zeros(typeof(point.param), width)), TARGET_PRECISION)
@@ -470,6 +470,44 @@ end
     )
     @test failure.cause == GameTracing.TraceStuck
     @test failure.context.looped
+end
+
+"""
+The records of a switchback in the (gap, param) plane: up a sheet with a wiggle, a left U-turn, down a sheet, a right
+U-turn and up a third sheet. Sheets take steps of 0.3 and U-turns of 0.05, so adjacent sheets lie closer than a step.
+"""
+function switchback_branch(::Type{E})::AbstractVector where {E <: Real}
+    turn = [E(pi) * index / 5 for index in 1:4]
+    headings = [zeros(E, 4); fill(E(1) / 5, 2); zeros(E, 6); turn; fill(E(pi), 20); reverse(turn); zeros(E, 24)]
+    lengths = [fill(E(3) / 10, 12); fill(E(1) / 20, 4); fill(E(3) / 10, 20); fill(E(1) / 20, 4); fill(E(3) / 10, 24)]
+    # Record `k` holds the point reached by the steps before it, heading `headings[k]`; the branch starts at (0, 3).
+    gaps = cumsum([zero(E); (lengths .* sin.(headings))[1:(end - 1)]])
+    params = E(3) .+ cumsum([zero(E); (lengths .* cos.(headings))[1:(end - 1)]])
+    return [
+        (; gaps = [gaps[index]], gap_tangent = [sin(headings[index])], tangent_precision = cos(headings[index]), param = params[index], step = index)
+            for index in eachindex(headings)
+    ]
+end
+
+@testset "a switchback whose sheets lie closer than a step closes no loop ($element)" for element in (Float32, widen(Float32))
+    branch = switchback_branch(element)
+    # Records on later sheets lie closer to a record on an earlier sheet than to the record before them.
+    near = [
+        index for index in 3:length(branch) if any(
+            earlier -> GameTracing.squared_distance(branch[index], branch[earlier], 1) < GameTracing.squared_distance(branch[index], branch[index - 1], 1),
+            1:(index - 2),
+        )
+    ]
+    @test length(near) > 20
+    @test isnothing(first_loop(branch, 1))
+    # `TraceFinalise` hands the loop test the accepted point's tangent, so it keeps the trace going there.
+    finalise = GameTracing.TraceFinalise(
+        GameTracing.AcceptAll(),
+        GameTracing.NoRedraw(),
+        GameTracing.RedrawSlot(LogitGame(GAME, one(element)), false, element(1) / 10),
+        GameTracing.CorrectorSettings{typeof(element(1))}(),
+    )
+    @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), near)
 end
 
 @testset "the loop test measures in the units P w and λ / P, so a rescaled branch flags the same record ($element)" for element in (Float32, widen(Float32))

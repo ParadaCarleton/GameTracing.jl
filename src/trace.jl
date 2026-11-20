@@ -824,7 +824,7 @@ function reached_state(
         )
     end
     if isnothing(outcome.exception) && progress.precision == E(target_precision)
-        return verified_endpoint(progress, outcome, game, pass_work, settings, context)
+        return verified_endpoint(progress, outcome, game, pass_work, settings.corrector, context)
     end
     # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move,
     # spent steps, or else `keep_going` or a refusal (`STOP_CAUSES`).
@@ -851,7 +851,7 @@ function reached_state(
 end
 
 """
-    verified_endpoint(progress, outcome, game, pass_work, settings, context)
+    verified_endpoint(progress, outcome, game, pass_work, corrector, context)
 
 The `TraceResult` at `progress`, the last accepted point, on the target. One more iteration of the corrector that
 landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's method with `λ` pinned at the bound
@@ -860,8 +860,8 @@ landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's met
 corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
 
 An exact root needs no correction, as BifurcationKit's own test passes it. A singular Jacobian fails `Singular`. An
-unsettled correction (as `settled`: past `logit_tolerance` beyond `settle_ulps` ulps of each logit; NaN included) fails
-`PrecisionExhausted`. Its `correction` runs from the endpoint (`gaps`, `precision`) to `stalled_iterate`, a plain
+unsettled correction (as `settled`: past `corrector.logit_tolerance` beyond `settle_ulps` ulps of each logit; NaN
+included) fails `PrecisionExhausted`. Its `correction` runs from the endpoint (`gaps`, `precision`) to `stalled_iterate`, a plain
 Newton iterate at pin `lambda`, arclength zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the
 correction.
 """
@@ -870,7 +870,7 @@ function verified_endpoint(
         outcome::NamedTuple,
         game::LogitGame,
         pass_work::Any,
-        settings::BifurcationKitSettings{E},
+        corrector::CorrectorSettings{E},
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
     (; gaps, precision) = progress
@@ -884,7 +884,7 @@ function verified_endpoint(
         return Err(TraceFailure(Singular, stopped_context(progress, outcome, context)))
     end
     corrected = point .- factorization \ system.residual
-    (; logit_tolerance, settle_ulps) = settings.corrector
+    (; logit_tolerance, settle_ulps) = corrector
     correction, excess = logit_corrections(point, corrected, settle_ulps * eps(E), one(E))
     if !(excess <= logit_tolerance)
         @debug "trace stopped" _group = :trace reason = :unsettled_endpoint correction

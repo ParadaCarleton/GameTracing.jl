@@ -154,7 +154,7 @@ struct GameResidual{G <: LogitGame, W <: BranchWorkspace}
     workspace::W
 end
 
-function (residual::GameResidual)(point::AbstractVector{E}, pin::Real)::Vector{E} where {E <: Real}
+function (residual::GameResidual)(point::AbstractVector{E}, pin::Real)::AbstractVector{E} where {E <: Real}
     return copy(branch_system!(residual.workspace, residual.game, point, pin).residual)
 end
 

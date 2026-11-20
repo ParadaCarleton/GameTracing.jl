@@ -344,8 +344,6 @@ end
         zeros(Float32, WIDTH),
         1.0f0,
         false,
-        false,
-        TARGET_PRECISION,
     )
     degenerate = zeros(Float32, WIDTH + 1)
     # A swapped game that was non-finite at the swap point has no factorization (`ShiftedGame`).

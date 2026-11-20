@@ -44,7 +44,7 @@ The `logits` of a trace at its target precision, a root of the game in effect th
 over every segment, and `logit_accuracy`. On BifurcationKit that is the largest last Newton correction in logits of any
 accepted point and of the endpoint's check (`verified_endpoint`), at most the corrector's `logit_tolerance` plus
 `settle_ulps` ulps of the largest logit it moved. On PathFollowing it is the endpoint check's correction in logits
-(`verified_landing`).
+(`verified_landing`), at most `endpoint_tolerance` plus `endpoint_ulps` ulps of that logit.
 """
 struct Traced{E <: Real}
     logits::Vector{E}

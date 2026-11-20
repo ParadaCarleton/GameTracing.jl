@@ -253,7 +253,7 @@ end
     @test below.context.precision == 0 && isempty(recorder.precisions)
     poisoned = NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0]))
     @test unwrap_error(logit_solve(poisoned; settings = PathFollowingSettings{element}())).cause == GameTracing.NotFinite
-    @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = PathFollowingSettings{element}())).context.reason == :NotFiniteStart
+    @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = PathFollowingSettings{element}())).context.reason == :not_finite_start
     # Step control without its turn and contraction terms still solves.
     plain = PathFollowingSettings{element}(; target_contraction = nothing, target_turn = nothing)
     @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)

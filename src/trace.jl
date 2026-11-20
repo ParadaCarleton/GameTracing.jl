@@ -412,14 +412,54 @@ end
     trace_endpoint(game, width, settings; keep_going, accept_corrected, redraw, context)
 
 Follow `game`'s branch of `width` logits from the flat start (zero logits, the only root at precision zero) to
-`game.target_precision`, and return `Ok(Traced)` logits there or `Err(TraceFailure)` for the failure that stopped short (a `TraceResult`).
+`game.target_precision` on the engine of `settings` (`engine_endpoint`). Return `Ok(Traced)` logits there or
+`Err(TraceFailure)` for the failure that stopped short (a `TraceResult`).
 
 `keep_going(logits, λ)` runs at each accepted point before the next step's corrector, and `false` stops the trace.
 `accept_corrected(logits, λ, converged)` runs as each corrector ends, and `false` refuses a converged point, which
-halves the step. A trace that stops short fails with `NoConvergence` when it spends `settings.max_steps` and `TraceStuck` otherwise (a step below the float type's resolution, an unchanged accepted point, or a
-refusal); a non-finite start or a broken linear solve fails `NotFinite` or `Singular`. The point at the target passes
-one more Newton correction there or fails (`verified_endpoint`). A zero target returns the flat start, with no step.
-`context` rides on every failure.
+shrinks the step. `redraw(logits, λ, shift)` swaps the game mid-trace; only `BifurcationKitSettings` runs it
+(`check_redraw`). `context` rides on every failure.
+
+A non-finite start fails `NotFinite`, and a zero target returns the flat start with no step. A trace that stops short
+fails `NoConvergence` when it spends `settings.max_steps`, and `TraceStuck`, `Singular` or `PrecisionExhausted`
+otherwise. The point at the target passes one more Newton correction there, settled in logits, or fails.
+"""
+function trace_endpoint(
+        game::LogitGame,
+        width::Integer,
+        settings::EngineSettings{E};
+        keep_going::Any = AcceptAll(),
+        accept_corrected::Any = AcceptAll(),
+        redraw::Any = NoRedraw(),
+        context::NamedTuple = (;),
+    )::TraceResult{E} where {E <: Real}
+    check_redraw(settings, redraw)
+    flat = zeros(E, width)
+    # One set of pass work arrays serves every evaluation of the game; a redraw's swap brings the new game's.
+    pass_work = pass_workspace(game.pass!!, flat)
+    start = trace_start(game, flat, pass_work)
+    # The start is a root for every finite game; a non-finite gain shows in its gaps.
+    if !all(isfinite, start)
+        return Err(TraceFailure(NotFinite, failure_context(context, (; logits = flat, precision = zero(E)))))
+    end
+    # The flat start is the only root at precision zero, so a zero target takes no step. Checked in `E`, where a tiny
+    # target rounds to 0.
+    if iszero(E(game.target_precision))
+        return Ok(Traced(flat, 0, zero(E)))
+    end
+    return engine_endpoint(game, start, pass_work, settings, (; keep_going, accept_corrected, redraw), context)
+end
+
+"""Throw an `ArgumentError` unless the engine of `settings` runs `redraw`: only BifurcationKit redraws a game mid-trace."""
+check_redraw(::BifurcationKitSettings, ::Any)::Nothing = nothing
+
+"""
+    engine_endpoint(game, start, pass_work, settings::BifurcationKitSettings, callbacks, context)
+
+`trace_endpoint` on BifurcationKit from the finite `start = [w; 0]` (`trace_start`) on `game`'s pass work `pass_work`,
+to a nonzero target, with `callbacks = (; keep_going, accept_corrected, redraw)`. A refusal by `accept_corrected`
+halves the step. A stop short of the target fails `TraceStuck` for a step below the float type's resolution, an
+unchanged accepted point or a refusal, and `Singular` for a broken linear solve. The endpoint passes `verified_endpoint`.
 
 `redraw(logits, λ, shift)` runs at each accepted point short of the target precision that `keep_going` passes, and returns
 `nothing`, a new game of the same type and target precision, or the `ShiftedGame` that `shift(game)` (`RootShift`)
@@ -428,43 +468,17 @@ refine a draw that does not before it returns; the restart reuses its factorizat
 trace restarts there along the new map's tangent, oriented by the old one, with the step it held, and its next
 corrector lands on the new map under the same step control. The endpoint, with no step after it, is never redrawn.
 """
-function trace_endpoint(
+function engine_endpoint(
         game::LogitGame,
-        width::Integer,
-        settings::BifurcationKitSettings{E};
-        keep_going::Any = AcceptAll(),
-        accept_corrected::Any = AcceptAll(),
-        redraw::Any = NoRedraw(),
-        context::NamedTuple = (;),
+        start::AbstractVector{E},
+        pass_work::Any,
+        settings::BifurcationKitSettings{E},
+        callbacks::NamedTuple,
+        context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
-    flat = zeros(E, width)
-    # One set of pass work arrays serves every evaluation of the game; a redraw's swap brings the new game's.
-    pass_work = pass_workspace(game.pass!!, flat)
-    traced_start = trace_start(game, flat, pass_work)
-    # The start is a root for every finite game; a non-finite gain shows in its gaps.
-    if !all(isfinite, traced_start)
-        return Err(
-            TraceFailure(
-                NotFinite,
-                failure_context(context, (; logits = flat, precision = zero(E))),
-            )
-        )
-    end
-    # The flat start is the only root at precision zero, so a zero target takes no step. Checked in `E`, where a tiny
-    # target rounds to 0.
-    if iszero(E(game.target_precision))
-        return Ok(Traced(flat, 0, zero(E)))
-    end
-    opening = TraceProgress(
-        payoff_gaps(traced_start)[:],
-        zero(E),
-        0,
-        zero(E),
-        zero(E),
-        zero(flat),
-        zero(E),
-        false,
-    )
+    (; keep_going, accept_corrected, redraw) = callbacks
+    gaps = payoff_gaps(start)[:]
+    opening = TraceProgress(gaps, zero(E), 0, zero(E), zero(E), zero(gaps), zero(E), false)
     finalise = TraceFinalise(
         keep_going,
         redraw,
@@ -472,7 +486,7 @@ function trace_endpoint(
         settings.corrector,
     )
     return redrawn_trace(
-        guarded_trace(traced_start, opening_tangent(game, traced_start, pass_work), settings, finalise, accept_corrected, opening),
+        guarded_trace(start, opening_tangent(game, start, pass_work), settings, finalise, accept_corrected, opening),
         finalise,
         settings,
         accept_corrected,

@@ -59,6 +59,21 @@ struct LogitDistance{E <: Real} <: CorrectorDistance{E}
 end
 
 """
+    LogitSettled(tolerance, rounding)
+
+PathFollowing's `converged` over points `[w; λ]`: the last correction, times Newton's `scale`, moved no logit more
+than `tolerance` past `rounding` times that logit's own size (`logit_corrections`).
+"""
+struct LogitSettled{E <: Real}
+    tolerance::E
+    rounding::E
+end
+
+function (settled::LogitSettled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
+    return last(logit_corrections(previous, iterate, settled.rounding, scale)) <= settled.tolerance
+end
+
+"""
 `tolerance`, which must lie under `target_correction` when one is set. A corrector that settles looser than its
 target first correction leaves step control nothing to measure, and the reach passes any move within its noise.
 """
@@ -81,7 +96,7 @@ end
 """
     PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
                              target_contraction, target_turn, max_step_growth, reach, orientation_check, split_check,
-                             max_refusals, min_step_ulps, step_metric, linear_solver)
+                             max_refusals, min_step_ulps, step_metric, linear_solver, endpoint_tolerance, endpoint_ulps)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve` and
 `trace_endpoint`. The trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
@@ -116,6 +131,9 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 - `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck`.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`.
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
+- `endpoint_tolerance`, `endpoint_ulps`: `trace_endpoint`'s last Newton correction at the target must move no logit more
+  than `endpoint_tolerance` past `endpoint_ulps` ulps of its size (`LogitSettled`, `verified_landing`). The defaults
+  are BifurcationKit's `logit_tolerance` and `settle_ulps`, so both engines bound `Traced.logit_accuracy` alike.
 """
 struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineSettings{E}
     max_step::E
@@ -134,6 +152,7 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     min_step_ulps::Int
     step_metric::TraceGeometry{E}
     linear_solver::L
+    endpoint_check::LogitSettled{E}
 end
 
 # On logitnash_speed.jl's games and 100 larger ones, a 1 rad turn target took 14-18% fewer steps than 0.3 and kept every
@@ -161,11 +180,14 @@ function PathFollowingSettings{E}(;
         # Both engines' default. At growth 1.1 it took 35-68% fewer hard_games steps than the summed metric.
         step_metric::TraceGeometry{E} = default_step_metric(E),
         linear_solver::L = LinearSolve.LUFactorization(),
+        endpoint_tolerance::Real = 1.0f-4,
+        endpoint_ulps::Integer = 16,
     )::PathFollowingSettings{E, L, D} where {E <: Real, L, D <: CorrectorDistance{E}}
     return PathFollowingSettings{E, L, D}(
         E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
         optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
         split_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
+        LogitSettled(E(endpoint_tolerance), endpoint_ulps * eps(E)),
     )
 end
 
@@ -216,21 +238,6 @@ end
 function (system::QRESystem)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     residual, jacobian, _, _ = branch_rows!!(residual, jacobian, system.logits, system.pass_work, system.game, point)
     return residual, jacobian
-end
-
-"""
-    LogitSettled(tolerance, rounding)
-
-PathFollowing's `converged` over points `[w; λ]`: the last correction, times Newton's `scale`, moved no logit more
-than `tolerance` past `rounding` times that logit's own size (`logit_corrections`).
-"""
-struct LogitSettled{E <: Real}
-    tolerance::E
-    rounding::E
-end
-
-function (settled::LogitSettled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
-    return last(logit_corrections(previous, iterate, settled.rounding, scale)) <= settled.tolerance
 end
 
 """
@@ -307,7 +314,7 @@ or `FisherRaoChange` over its `logit_ranges` (`checked_ranges`).
 """
 corrector_measure(::LogitDistance, ::Any, ::Integer)::Function = logit_change
 
-function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::FisherRaoChange
+function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::FisherRaoChange # lint: concrete-return  generic in the ranges' type, which logit_ranges(pass!!) picks and no argument binds
     return FisherRaoChange(checked_ranges(logit_ranges(pass!!), width))
 end
 
@@ -392,11 +399,14 @@ one, where PathFollowing measures the precision; a `Bound` sets where the steps 
 isbits problem.
 """
 function path_problem(pass!!::Any, flat::AbstractVector{E})::PathFollowing.CurveProblem where {E <: Real}
-    game = LogitGame(pass!!, one(E))
     pass_work = pass_workspace(pass!!, flat)
-    start = trace_start(game, flat, pass_work)
+    return path_problem(pass!!, flat, trace_start(LogitGame(pass!!, one(E)), flat, pass_work), pass_work)
+end
+
+"""`path_problem` from a `start` (`trace_start`) already built on the pass work `pass_work`."""
+function path_problem(pass!!::Any, flat::AbstractVector{E}, start::AbstractVector{E}, pass_work::Any)::PathFollowing.CurveProblem where {E <: Real}
     direction = set_entry!!(zero(start), one(E), lastindex(start))
-    return PathFollowing.CurveProblem(QRESystem(game, zero(flat), pass_work), start, direction)
+    return PathFollowing.CurveProblem(QRESystem(LogitGame(pass!!, one(E)), zero(flat), pass_work), start, direction)
 end
 
 """The first step of a trace of `problem` (`path_problem`) under `settings` (`opening_step`)."""
@@ -406,7 +416,7 @@ end
 
 """
 PathFollowing's `init` of `problem` (`path_problem`) under `settings`, its corrected points judged by `accept`
-(`PositivePrecision`): a `Tracer` from the flat start toward rising `λ`, or the `StepFailure` there (`start_failure`).
+(`PositivePrecision`): a `Tracer` from the flat start toward rising `λ`, or the `StepFailure` there.
 """
 function path_init(
         problem::PathFollowing.CurveProblem,
@@ -414,15 +424,6 @@ function path_init(
         accept::PositivePrecision,
     )::Result{<:PathFollowing.Tracer{E}, PathFollowing.StepFailure{E}} where {E <: Real}
     return CommonSolve.init(problem, path_algorithm(settings, problem, accept); first_step = path_first_step(problem, settings))
-end
-
-"""
-The `TraceFailure` of PathFollowing's start `failure` over `width` logits, `context` on it: `NotFinite` for a non-finite
-start, `Singular` otherwise, at the flat start with no step.
-"""
-function start_failure(failure::PathFollowing.StepFailure{E}, width::Integer, context::NamedTuple)::TraceFailure where {E <: Real}
-    cause = ifelse(failure.cause == PathFollowing.NotFiniteStart, NotFinite, Singular)
-    return TraceFailure(cause, failure_context(context, (; reason = Symbol(failure.cause), precision = zero(E), logits = zeros(E, width), steps = 0)))
 end
 
 """
@@ -442,11 +443,17 @@ function stopped_context(
     return failure_context(context, (; reason, precision = last(point), logits, gaps, steps, step_length, details...))
 end
 
+# The cause and reason of the trace that each PathFollowing `StepFailure` cause ends; the last two fail at the start.
+const PATH_FAILURES = (;
+    TooManySteps = (NoConvergence, :max_steps), Unresolved = (TraceStuck, :unresolved_step), TooManyRefusals = (TraceStuck, :refusals),
+    NotFiniteStart = (NotFinite, :not_finite_start), SingularStart = (Singular, :singular_start),
+)
+
 """
     TraceFailure(failure::PathFollowing.StepFailure, point, steps, context)
 
 The failure of PathFollowing's `failure` that stopped a trace at `point = [w; λ]` after `steps` steps, `context` on
-it: `NoConvergence` for `TooManySteps`, else `TraceStuck` for `Unresolved` or `TooManyRefusals`, with the refusals.
+it, with the cause and reason of `PATH_FAILURES` and the refusals.
 """
 function TraceFailure(
         failure::PathFollowing.StepFailure{E},
@@ -454,12 +461,9 @@ function TraceFailure(
         steps::Integer,
         context::NamedTuple,
     )::TraceFailure where {E <: Real}
-    if failure.cause == PathFollowing.TooManySteps
-        return TraceFailure(NoConvergence, stopped_context(:max_steps, point, steps, failure.step_length, context, (;)))
-    end
-    reason = ifelse(failure.cause == PathFollowing.Unresolved, :unresolved_step, :refusals)
+    cause, reason = getfield(PATH_FAILURES, Symbol(failure.cause))
     details = (; failure.last_refusal, failure.refusals)
-    return TraceFailure(TraceStuck, stopped_context(reason, point, steps, failure.step_length, context, details))
+    return TraceFailure(cause, stopped_context(reason, point, steps, failure.step_length, context, details))
 end
 
 """
@@ -498,8 +502,9 @@ function engine_points(
         tolerance::E,
         context::NamedTuple,
     )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
-    started = path_init(path_problem(gains, zeros(E, logit_count(gains))), settings, PositivePrecision(AcceptAll()))
-    is_error(started) && return Err(start_failure(unwrap_error(started), logit_count(gains), context))
+    problem = path_problem(gains, zeros(E, logit_count(gains)))
+    started = path_init(problem, settings, PositivePrecision(AcceptAll()))
+    is_error(started) && return Err(TraceFailure(unwrap_error(started), problem.start, 0, context))
     return recorded_points(unwrap(started), BranchRecorder(gains, tolerance), maximum_precision, settings.max_steps, context)
 end
 
@@ -534,8 +539,9 @@ function engine_lambdas(
         precisions::AbstractVector{E},
         settings::PathFollowingSettings{E},
     )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
-    started = path_init(path_problem(gains, zeros(E, logit_count(gains))), settings, PositivePrecision(AcceptAll()))
-    is_error(started) && return Err(start_failure(unwrap_error(started), logit_count(gains), (;)))
+    problem = path_problem(gains, zeros(E, logit_count(gains)))
+    started = path_init(problem, settings, PositivePrecision(AcceptAll()))
+    is_error(started) && return Err(TraceFailure(unwrap_error(started), problem.start, 0, (;)))
     return landed_lambdas(unwrap(started), precisions, settings.max_steps)
 end
 
@@ -586,69 +592,59 @@ end
 kept_going(keep_going::Any, point::AbstractVector)::Bool = keep_going(logits_at(point), last(point))
 kept_going(::AcceptAll, ::AbstractVector)::Bool = true
 
+check_redraw(::PathFollowingSettings, ::NoRedraw)::Nothing = nothing
+function check_redraw(::PathFollowingSettings, redraw::Any)::Nothing
+    throw(ArgumentError(lazy"PathFollowing traces one game: pass BifurcationKitSettings to redraw it; got redraw = $redraw"))
+end
+
 """
-    trace_endpoint(game, width, settings::PathFollowingSettings; keep_going, accept_corrected, redraw, context)
+    engine_endpoint(game, start, pass_work, settings::PathFollowingSettings, callbacks, context)
 
-`trace_endpoint` on PathFollowing: `game`'s branch of `width` logits from the flat start to `game.target_precision`, as
-one trace whose steps stop there (`stepped_landing!!`). It returns the BifurcationKit trace's `TraceResult`.
-
-`keep_going(logits, λ)` runs at each accepted point, and `false` short of the target fails the trace `TraceStuck`.
-`accept_corrected(logits, λ, converged)` runs on each converged corrector (`converged` is `true`), and `false` refuses
-the point, which shrinks the step (`PositivePrecision`). `redraw` must be `NoRedraw()`: a redraw needs
-`BifurcationKitSettings` (`ArgumentError` otherwise). `context` rides on every failure.
-
-A non-finite start fails `NotFinite`, and a zero target returns the flat start with no step, as on BifurcationKit. A
-trace that stops short fails `NoConvergence` when it spends `settings.max_steps`, and `TraceStuck` for PathFollowing's
-`Unresolved` or `TooManyRefusals`, with its `last_refusal` (`TraceFailure`). The point at the target passes one more
-Newton correction there or fails (`verified_landing`).
+`trace_endpoint` on PathFollowing from the finite `start = [w; 0]` (`trace_start`) on `game`'s pass work `pass_work`,
+to a nonzero target: one trace whose steps stop there (`stepped_landing!!`), with `callbacks = (; keep_going,
+accept_corrected, redraw)`. `accept_corrected` sees converged points only (`converged` is `true`), and its `false`
+refuses the point, which shrinks the step (`PositivePrecision`). A stop short of the target fails `TraceStuck` for
+PathFollowing's `Unresolved` or `TooManyRefusals`, with its `last_refusal`, and a start PathFollowing refuses fails
+`NotFinite` or `Singular` (`PATH_FAILURES`). The endpoint passes `verified_landing`.
 """
-function trace_endpoint(
+function engine_endpoint(
         game::LogitGame,
-        width::Integer,
-        settings::PathFollowingSettings{E};
-        keep_going::Any = AcceptAll(),
-        accept_corrected::Any = AcceptAll(),
-        redraw::Any = NoRedraw(),
-        context::NamedTuple = (;),
+        start::AbstractVector{E},
+        pass_work::Any,
+        settings::PathFollowingSettings{E},
+        callbacks::NamedTuple,
+        context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
-    if !(redraw isa NoRedraw)
-        throw(ArgumentError(lazy"PathFollowing traces one game: pass BifurcationKitSettings to redraw it; got redraw = $redraw"))
-    end
-    flat = zeros(E, width)
-    problem = path_problem(game.pass!!, flat)
-    # As on BifurcationKit: a non-finite gain shows in the start's gaps, and a zero target (checked in `E`) takes no step.
-    if !all(isfinite, problem.start)
-        return Err(TraceFailure(NotFinite, failure_context(context, (; logits = flat, precision = zero(E)))))
-    end
-    target = E(game.target_precision)
-    iszero(target) && return Ok(Traced(flat, 0, zero(E)))
-    started = path_init(problem, settings, PositivePrecision(accept_corrected))
-    is_error(started) && return Err(start_failure(unwrap_error(started), width, context))
-    return landed_endpoint(unwrap(started), target, settings.max_steps, keep_going, context)
+    problem = path_problem(game.pass!!, zero(start[begin:(end - 1)]), start, pass_work)
+    started = path_init(problem, settings, PositivePrecision(callbacks.accept_corrected))
+    is_error(started) && return Err(TraceFailure(unwrap_error(started), start, 0, context))
+    return landed_endpoint(unwrap(started), E(game.target_precision), settings, callbacks.keep_going, context)
 end
 
 """`trace_endpoint` on a started `tracer`, behind a function barrier: its landing at `target` (`stepped_landing!!`), checked."""
 function landed_endpoint(
         tracer::PathFollowing.Tracer{E},
         target::E,
-        max_steps::Integer,
+        settings::PathFollowingSettings{E},
         keep_going::Any,
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
-    tracer, landed = stepped_landing!!(tracer, target, max_steps, keep_going, context)
+    tracer, landed = stepped_landing!!(tracer, target, settings.max_steps, keep_going, context)
     is_error(landed) && return Err(unwrap_error(landed))
-    return verified_landing(tracer, context)
+    return verified_landing(tracer, settings.endpoint_check, context)
 end
 
 """
 The `TraceResult` at `tracer`'s point on its target precision, after one more Newton correction there with `λ` pinned
 (`branch_system!`), the check of BifurcationKit's `verified_endpoint`. An exact root needs none. A singular Jacobian
-fails `Singular` (reason `:singular_endpoint`). A correction that the trace's own corrector would not settle on
-(`settle_test`, NaN included) fails `PrecisionExhausted` (reason `:unsettled_endpoint`). Its context carries the
-correction's largest logit move `correction` and its iterate `stalled_iterate` at pin `lambda`, as BifurcationKit's
-does. Else the point is `Ok(Traced)`, its `logit_accuracy` that logit move.
+fails `Singular` (reason `:singular_endpoint`). The correction must settle under the trace's own corrector
+(`settle_test`) and in logits (`endpoint_check`, a `LogitSettled`), else it fails `PrecisionExhausted` (reason
+`:unsettled_endpoint`, NaN included). Its context carries the correction's largest logit move `correction` and its
+iterate `stalled_iterate` at pin `lambda`, as BifurcationKit's does. Else the point is `Ok(Traced)`, its
+`logit_accuracy` that logit move. The logit test bounds the endpoint's logits where the default `StrategyDistance`
+does not: a strategy off the support counts by its probability.
 """
-function verified_landing(tracer::PathFollowing.Tracer{E}, context::NamedTuple)::TraceResult{E} where {E <: Real}
+function verified_landing(tracer::PathFollowing.Tracer{E}, endpoint_check::LogitSettled{E}, context::NamedTuple)::TraceResult{E} where {E <: Real}
     (; point, steps) = tracer
     (; game, pass_work) = tracer.problem.system!!
     precision = last(point)
@@ -662,7 +658,8 @@ function verified_landing(tracer::PathFollowing.Tracer{E}, context::NamedTuple):
     end
     corrected = point .- factorization \ system.residual
     correction = logit_change(point, corrected)
-    if !tracer.algorithm.corrector.converged(point, corrected, system.residual, one(E))
+    settled = tracer.algorithm.corrector.converged(point, corrected, system.residual, one(E))
+    if !(settled && endpoint_check(point, corrected, system.residual, one(E)))
         stall = (; lambda = precision, correction, stalled_iterate = corrected, stalled_pin = precision, stalled_arclength = zero(E))
         return Err(TraceFailure(PrecisionExhausted, stopped_context(:unsettled_endpoint, point, steps, tracer.step_length, context, stall)))
     end
@@ -751,7 +748,7 @@ end
 
 """
 The `ProfileResult` of a batch trace of `gains` to precision `precision` that ended in `landing`: the profile there, or
-the failure `logit_solve_lambda` gives (`start_failure` before the first step, a `StepFailure` after).
+the failure `logit_solve_lambda` gives, with no `lam` in its context when it fails at the start.
 """
 function landed_profile(
         gains::NormalFormGains{N},
@@ -762,7 +759,7 @@ function landed_profile(
     is_error(landed) || return Ok(LogitQREProfile(gains, precision, collect(logits_at(unwrap(landed)))))
     failure = unwrap_error(landed)
     if failure.cause == PathFollowing.NotFiniteStart || failure.cause == PathFollowing.SingularStart
-        return Err(start_failure(failure, logit_count(gains), (;)))
+        return Err(TraceFailure(failure, landing.point, 0, (;)))
     end
     return Err(TraceFailure(failure, landing.point, landing.steps, (; lam = precision)))
 end

@@ -127,7 +127,7 @@ end
     @test refused.context.reason in (:refusals, :unresolved_step)
     # A non-finite Jacobian at a finite start fails there as `NotFinite`; BifurcationKit's fails `Singular` or `TraceStuck`.
     nan_slope = unwrap_error(trace_endpoint(LogitGame(NaNSlopePass(linear), target), 2, settings; context = (; label = :slope)))
-    @test (nan_slope.cause, nan_slope.context.reason, nan_slope.context.label) == (GameTracing.NotFinite, :NotFiniteStart, :slope)
+    @test (nan_slope.cause, nan_slope.context.reason, nan_slope.context.label) == (GameTracing.NotFinite, :not_finite_start, :slope)
     @test (nan_slope.context.precision, nan_slope.context.logits, nan_slope.context.steps) == (0, zeros(element, 2), 0)
 end
 
@@ -170,7 +170,7 @@ function landed_at(game::LogitGame, gaps::AbstractVector{E}, settings::PathFollo
     problem = GameTracing.path_problem(game.pass!!, zero(gaps))
     tracer = unwrap(GameTracing.path_init(problem, settings, GameTracing.PositivePrecision(GameTracing.AcceptAll())))
     tracer.point .= [gaps; E(game.target_precision)]
-    return GameTracing.verified_landing(tracer, (; label = :landed))
+    return GameTracing.verified_landing(tracer, settings.endpoint_check, (; label = :landed))
 end
 
 @testset "the PathFollowing endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
@@ -188,6 +188,15 @@ end
     @test unsettled.context.stalled_iterate[1] ≈ 1 // 2
     @test unsettled.context.gaps == element[1 // 2 + 4 * tolerance]
     @test isapprox(unsettled.context.correction, 4 * tolerance; atol = 4 * eps(element))
+    # A strategy off the support moves almost no Fisher–Rao distance for a large logit move. `G = 10` puts the root at
+    # `w = 10`, logit 100 at λ = 10, so a point at logit 90 corrects by 10: the logit test refuses what Fisher–Rao passes.
+    saturated = LogitGame(LinearGainPass(zeros(element, 1, 1), element[10]), element(10))
+    far = unwrap_error(landed_at(saturated, element[9], settings))
+    @test (far.cause, far.context.reason) == (GameTracing.PrecisionExhausted, :unsettled_endpoint)
+    @test isapprox(far.context.correction, 10; rtol = 4 * eps(element))
+    loose = PathFollowingSettings{element}(; endpoint_tolerance = 20)
+    @test loose.endpoint_check == GameTracing.LogitSettled(element(20), 16 * eps(element))
+    @test isapprox(unwrap(landed_at(saturated, element[9], loose)).logit_accuracy, 10; rtol = 4 * eps(element))
     # `G = logistic(z) + b` has Jacobian `1 - λ/4` at `w = 0`, singular at λ = 4. With `b = -1/2`, `w = 0` is an exact
     # root there and needs no correction; with `b = 0` it is no root, and Newton's method has no step.
     exact = unwrap(landed_at(LogitGame(LinearGainPass(ones(element, 1, 1), element[-1 // 2]), element(4)), zeros(element, 1), settings))

@@ -344,8 +344,6 @@ end
         zeros(Float32, WIDTH),
         1.0f0,
         false,
-        false,
-        TARGET_PRECISION,
     )
     degenerate = zeros(Float32, WIDTH + 1)
     # A swapped game that was non-finite at the swap point has no factorization (`ShiftedGame`).
@@ -389,7 +387,7 @@ end
     )
     state = GameTracing.opened_state(iterator, zeros(Float32, WIDTH + 1), Float32[0, 0, 1.0f-3])
     opening = GameTracing.TraceProgress{Float32}(
-        zeros(Float32, WIDTH), 0.0f0, 0, 0.0f0, 0.0f0, zeros(Float32, WIDTH), 1.0f0, false, false, TARGET_PRECISION,
+        zeros(Float32, WIDTH), 0.0f0, 0, 0.0f0, 0.0f0, zeros(Float32, WIDTH), 1.0f0, false,
     )
     ended = GameTracing.ended_segment(
         GameTracing.thrown_failure(SingularException(2)),

@@ -228,8 +228,6 @@ end
         zeros(Float32, 2),
         0.0f0,
         false,
-        false,
-        TARGET_PRECISION,
     )
     result = GameTracing.reached_state(
         progress,
@@ -250,7 +248,7 @@ end
 """`reached_state` of a trace of `game` to `gaps` on its target, its accepted points settled within `accuracy`."""
 function reached_at(game::LogitGame, gaps::AbstractVector{E}, accuracy::E)::GameTracing.TraceResult{E} where {E <: Real}
     target = E(game.target_precision)
-    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false, false, target)
+    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false)
     return GameTracing.reached_state(progress, ran_outcome(accuracy), game, BifurcationKitSettings{E}(), (;))
 end
 
@@ -302,8 +300,8 @@ function finalised(
         point::NamedTuple,
         branch::AbstractVector,
     )::Bool
-    # BifurcationKit calls `finalise` before it saves the point to the branch.
-    tangent = (; u = zero([point.gaps; point.param]), p = one(point.param))
+    # BifurcationKit calls `finalise` before it saves the point to the branch, with the point's tangent.
+    tangent = (; u = [point.gap_tangent; point.tangent_precision], p = point.tangent_precision)
     # Only a redraw reads the algorithm, so a flat game of the records' width serves.
     width = length(point.gaps)
     flat = LogitGame(LinearGainPass(zeros(typeof(point.param), width, width), zeros(typeof(point.param), width)), TARGET_PRECISION)
@@ -346,8 +344,6 @@ end
         zeros(Float32, 2),
         0.0f0,
         false,
-        false,
-        TARGET_PRECISION,
     )
     @test GameTracing.branch_progress([start], opening) === opening
     progress = GameTracing.branch_progress([start, moved], opening)
@@ -393,93 +389,34 @@ end
         GameTracing.NoConvergence
 end
 
-"""A branch record at `angle` on the unit circle in the (gap, param) plane, tangent along the circle if `turning`."""
-function circle_record(angle::E, step::Integer, turning::Bool)::NamedTuple where {E <: Real}
-    tangent_scale = turning ? one(E) : zero(E)
-    return (;
-        gaps = [cos(angle)], gap_tangent = [-sin(angle) * tangent_scale], tangent_precision = cos(angle) * tangent_scale,
-        param = sin(angle), step,
-    )
-end
-
-"""The records of `laps` laps of `per_lap` steps round the unit circle, from its first point."""
-function circle_branch(
-        ::Type{E},
-        laps::Integer,
-        per_lap::Integer,
-        turning::Bool,
-    )::AbstractVector where {E <: Real}
-    return [circle_record(E(2 * pi * (index - 1) / per_lap), index, turning) for index in 1:(laps * per_lap)]
-end
-
 """
-The 1-based index of the first record of `branch` that `looped` flags against the records before it, or `nothing`, at
-`target_precision`: one for the records of a unit circle, whose plane `(w, λ)` then measures as `(P w, λ / P)` does.
+The records of a switchback in the (gap, param) plane: up a sheet with a wiggle, a left U-turn, down a sheet, a right
+U-turn and up a third sheet. Sheets take steps of 0.3 and U-turns of 0.05, so adjacent sheets lie closer than a step.
 """
-function first_loop(branch::AbstractVector, target_precision::Real)::Union{Nothing, Int}
-    return findfirst(
-        [
-            GameTracing.looped(view(branch, firstindex(branch):(index - 1)), branch[index], target_precision) for index in eachindex(branch)
-        ]
-    )
-end
-
-@testset "a branch that goes round a closed loop is flagged $element" for element in (Float32, widen(Float32))
-    circle = circle_branch(element, 3, 20, true)
-    flagged = first_loop(circle, 1)
-    # Fenchel's gate: no flag before the tangents have turned through 2π, which takes 21 records.
-    @test !isnothing(flagged) && 21 <= flagged <= 52
-    # The gate alone holds back a loop whose tangents never turn; open paths never loop.
-    @test isnothing(first_loop(circle_branch(element, 3, 20, false), 1))
-    line = [branch_record([element(index) / 10], element(index) / 20, index) for index in 1:60]
-    @test isnothing(first_loop(line, 1))
-    # A path that comes within a step of its anchor without its precision ever turning back is no loop.
-    rising = [(; record..., tangent_precision = abs(record.tangent_precision) + one(element)) for record in circle]
-    @test isnothing(first_loop(rising, 1))
-    # A stalled record has no direction, so it turns nothing.
-    stalled = (; line[1]..., gap_tangent = [zero(element)], tangent_precision = zero(element))
-    @test GameTracing.tangent_turn(stalled, line[2], 1) == 0
-    s_curve = [
-        (; branch_record([element(index) / 10], sin(element(index) / 5), index)..., gap_tangent = [one(element)], tangent_precision = cos(element(index) / 5))
-            for index in 1:60
+function switchback_branch(::Type{E})::AbstractVector where {E <: Real}
+    turn = [E(pi) * index / 5 for index in 1:4]
+    headings = [zeros(E, 4); fill(E(1) / 5, 2); zeros(E, 6); turn; fill(E(pi), 20); reverse(turn); zeros(E, 24)]
+    lengths = [fill(E(3) / 10, 12); fill(E(1) / 20, 4); fill(E(3) / 10, 20); fill(E(1) / 20, 4); fill(E(3) / 10, 24)]
+    # Record `k` holds the point reached by the steps before it, heading `headings[k]`; the branch starts at (0, 3).
+    gaps = cumsum([zero(E); (lengths .* sin.(headings))[1:(end - 1)]])
+    params = E(3) .+ cumsum([zero(E); (lengths .* cos.(headings))[1:(end - 1)]])
+    return [
+        (; gaps = [gaps[index]], gap_tangent = [sin(headings[index])], tangent_precision = cos(headings[index]), param = params[index], step = index)
+            for index in eachindex(headings)
     ]
-    @test isnothing(first_loop(s_curve, 1))
+end
 
-    game = LogitGame(GAME, one(element))
+@testset "a switchback whose sheets lie closer than a step keeps the trace going ($element)" for element in (Float32, widen(Float32))
+    branch = switchback_branch(element)
+    distance(left::NamedTuple, right::NamedTuple)::element = hypot(only(left.gaps) - only(right.gaps), left.param - right.param)
+    # Records on later sheets lie closer to a record on an earlier sheet than to the record before them.
+    near = [index for index in 3:length(branch) if any(earlier -> distance(branch[index], branch[earlier]) < distance(branch[index], branch[index - 1]), 1:(index - 2))]
+    @test length(near) > 20
     finalise = GameTracing.TraceFinalise(
         GameTracing.AcceptAll(),
         GameTracing.NoRedraw(),
-        GameTracing.RedrawSlot(game, false, element(1) / 10),
+        GameTracing.RedrawSlot(LogitGame(GAME, one(element)), false, element(1) / 10),
         GameTracing.CorrectorSettings{typeof(element(1))}(),
     )
-    @test finalised(finalise, circle[10], circle[1:9])
-    @test !finalised(finalise, circle[flagged], circle[1:(flagged - 1)])
-
-    opening = GameTracing.TraceProgress(zeros(element, 1), zero(element), 0, zero(element), zero(element), zeros(element, 1), zero(element), false, false, one(element))
-    @test !GameTracing.branch_progress(circle[1:10], opening).looped
-    progress = GameTracing.branch_progress(circle[1:flagged], opening)
-    @test progress.looped && !progress.unmoved
-    failure = unwrap_error(
-        GameTracing.reached_state(
-            progress,
-            (; step_length = zero(element), accepted_step = zero(element), exhausted = nothing, logit_accuracy = zero(element), unresolved = false, exception = nothing),
-            game,
-            BifurcationKitSettings{element}(; max_steps = 1000),
-            (;),
-        )
-    )
-    @test failure.cause == GameTracing.TraceStuck
-    @test failure.context.looped
-end
-
-@testset "the loop test measures in the units P w and λ / P, so a rescaled branch flags the same record ($element)" for element in (Float32, widen(Float32))
-    circle = circle_branch(element, 3, 20, true)
-    for target in element.((1 // 4, 3, 1000))
-        # The circle's plane is `(P w, λ / P)`: its points in `(w, λ)` divide the gaps by P and multiply the precision.
-        rescaled = [
-            (; record..., gaps = record.gaps ./ target, gap_tangent = record.gap_tangent ./ target, tangent_precision = record.tangent_precision * target, param = record.param * target)
-                for record in circle
-        ]
-        @test first_loop(rescaled, target) == first_loop(circle, 1)
-    end
+    @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), 2:length(branch))
 end

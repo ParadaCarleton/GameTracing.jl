@@ -460,8 +460,6 @@ function trace_endpoint(
         zero(flat),
         zero(E),
         false,
-        false,
-        E(game.target_precision),
     )
     finalise = TraceFinalise(
         keep_going,
@@ -673,8 +671,6 @@ function restarted_segment(
         restart.gap_tangent,
         restart.tangent_precision,
         opening.unmoved,
-        opening.looped,
-        opening.target_precision,
     )
     return opened_segment(iterator, opened_state(iterator, start, restart.opening), opened)
 end
@@ -823,7 +819,7 @@ function reached_state(
     if isnothing(outcome.exception) && progress.precision == E(target_precision)
         return verified_endpoint(progress, outcome, game, settings, context)
     end
-    # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move, a loop of the branch,
+    # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move,
     # spent steps, or else `keep_going` or a refusal (`STOP_CAUSES`).
     reason = if uncorrected_start(outcome.exception)
         :uncorrected_start
@@ -833,8 +829,6 @@ function reached_state(
         :unresolved_step
     elseif progress.unmoved
         :unmoved
-    elseif progress.looped
-        :loop
     elseif progress.steps >= settings.max_steps
         :max_steps
     else
@@ -893,7 +887,7 @@ end
 
 # The cause a trace that stops short for each reason fails with.
 const STOP_CAUSES = (;
-    uncorrected_start = TraceStuck, solver_blowup = Singular, max_steps = NoConvergence, unmoved = TraceStuck, unresolved_step = TraceStuck, loop = TraceStuck,
+    uncorrected_start = TraceStuck, solver_blowup = Singular, max_steps = NoConvergence, unmoved = TraceStuck, unresolved_step = TraceStuck,
     stopped_short = TraceStuck,
 )
 
@@ -901,7 +895,7 @@ const STOP_CAUSES = (;
     stopped_context(progress, outcome, context)
 
 The context of a trace that stopped at `progress`'s last accepted point after `outcome`: `context` (`failure_context`), the steps, the
-precision and its range, the `unmoved`, `unresolved` and `looped` flags, the logits and payoff `gaps`, the step held, the arclength step of the last accepted point (`accepted_step`,
+precision and its range, the `unmoved` and `unresolved` flags, the logits and payoff `gaps`, the step held, the arclength step of the last accepted point (`accepted_step`,
 zero when no step was accepted), the tangent in logits and in payoff gaps (`gap_tangent`, `tangent_precision`), the
 `logit_accuracy` of its accepted points and the exception.
 """
@@ -914,7 +908,7 @@ function stopped_context(
         context, (;
             progress.steps,
             progress.precision,
-            progress.precision_min, progress.precision_max, progress.unmoved, outcome.unresolved, progress.looped,
+            progress.precision_min, progress.precision_max, progress.unmoved, outcome.unresolved,
             logits = progress.precision .* progress.gaps,
             progress.gaps,
             step_length = E(outcome.step_length),

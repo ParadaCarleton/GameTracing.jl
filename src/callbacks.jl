@@ -1,5 +1,4 @@
 using BifurcationKit: BifurcationKit
-using LinearAlgebra: dot
 using Logging: @debug
 """
     CorrectorSettings{E}(; reach, max_kl, logit_tolerance, settle_ulps, pin_tolerance, contraction_limit,
@@ -501,13 +500,11 @@ function within_reach(check::CorrectorReach, point::AbstractVector)::Bool
 end
 
 """
-    TraceProgress(gaps, precision, steps, precision_min, precision_max, gap_tangent, tangent_precision, unmoved,
-        looped, target_precision)
+    TraceProgress(gaps, precision, steps, precision_min, precision_max, gap_tangent, tangent_precision, unmoved)
 
 The last accepted point `(gaps, precision)` of a trace, its step count, the range of the precision
 over accepted points and the tangent there (both in payoff gaps), read from BifurcationKit's branch (`branch_progress`).
-`target_precision` is the trace's target, which scales the loop test's norm (`looped`).
-`unmoved` marks a trace that stopped on an accepted point bitwise equal to the one before it (`TraceFinalise`), `looped` one that closed a loop of the branch (`looped`).
+`unmoved` marks a trace that stopped on an accepted point bitwise equal to the one before it (`TraceFinalise`).
 """
 struct TraceProgress{E <: Real}
     gaps::Vector{E}
@@ -518,8 +515,6 @@ struct TraceProgress{E <: Real}
     gap_tangent::Vector{E}
     tangent_precision::E
     unmoved::Bool
-    looped::Bool
-    target_precision::E
 end
 
 """
@@ -549,70 +544,11 @@ same_point(record::NamedTuple, other::NamedTuple)::Bool = record.param == other.
     record.gaps == other.gaps
 
 """
-    tangent_turn(left, right, target_precision)
-
-The angle in radians between two branch records' tangents `[gap_tangent; tangent_precision]`, in the Euclidean product
-of the units `P w` and `λ / P`, `P` the `target_precision`; zero when either is zero.
-"""
-function tangent_turn(left::R, right::R, target_precision::Real)::fieldtype(R, :param) where {R <: NamedTuple}
-    scale = oftype(left.tangent_precision, target_precision)^2
-    # Two square roots: the product of the squared lengths could overflow at a far target.
-    lengths = sqrt(scale * dot(left.gap_tangent, left.gap_tangent) + left.tangent_precision^2 / scale) *
-        sqrt(scale * dot(right.gap_tangent, right.gap_tangent) + right.tangent_precision^2 / scale)
-    if lengths == 0
-        return zero(lengths)
-    end
-    cosine = (scale * dot(left.gap_tangent, right.gap_tangent) + left.tangent_precision * right.tangent_precision / scale) / lengths
-    return acos(clamp(cosine, -one(cosine), one(cosine)))
-end
-
-"""
-The squared Euclidean distance between two points with `gaps` and `param`, such as branch records, in the units `P w`
-and `λ / P`, `P` the `target_precision`.
-"""
-function squared_distance(left::NamedTuple, right::NamedTuple, target_precision::Real)::typeof(left.param)
-    scale = oftype(left.param, target_precision)^2
-    total = zero(left.param)
-    for index in eachindex(left.gaps, right.gaps)
-        total += abs2(left.gaps[index] - right.gaps[index])
-    end
-    return scale * total + abs2(left.param - right.param) / scale
-end
-
-"""
-    looped(history, current, target_precision)
-
-Whether `current`, a point with `gaps` and `param` that follows the branch records `history`, closes a loop of the
-branch (an isola). Gates: the precision tangent changes sign between the anchor and `current` (a closed curve returns to its starting precision), and the tangents of `history` have turned through at least 2π in total (`tangent_turn`), as a closed
-curve must (Fenchel's theorem). Then Brent's cycle detection: the anchor is the record at the largest power-of-two index
-not after the last record (indices from 1), and the trace has looped when `current` lies closer to the anchor than the
-last step is long, with the anchor at least two records before `current`. Distances are plain Euclidean on
-`[P gaps; param / P]`, `P` the `target_precision`, as `TraceFinalise` holds no `TraceGeometry`.
-"""
-function looped(history::AbstractVector{R}, current::NamedTuple, target_precision::Real)::Bool where {R <: NamedTuple}
-    anchor_index = prevpow(2, max(length(history), 1))
-    if anchor_index > length(history) - 1
-        return false
-    end
-    anchor = history[firstindex(history) + anchor_index - 1]
-    if !(squared_distance(current, anchor, target_precision) < squared_distance(current, last(history), target_precision))
-        return false
-    end
-    # A closed curve returns to its starting precision, so its precision tangent changes sign along the lap.
-    precision_tangents = [record.tangent_precision for record in view(history, (firstindex(history) + anchor_index - 1):lastindex(history))]
-    if !(minimum(precision_tangents) < 0 < maximum(precision_tangents))
-        return false
-    end
-    turn = sum(tangent_turn.(view(history, firstindex(history):(lastindex(history) - 1)), view(history, (firstindex(history) + 1):lastindex(history)), target_precision))
-    return turn >= 2 * oftype(turn, pi)
-end
-
-"""
     branch_progress(branch, opening)
 
 The `TraceProgress` after a segment whose BifurcationKit `branch` of `trace_record_point` records starts at the point of
 `opening`, the progress before the segment: its last record, its steps counted on from `opening.steps`, the precision
-range of both, `unmoved` when its last two records hold the same point and `looped` when its last record closes a loop (`looped`). A branch of its start alone accepted no
+range of both, and `unmoved` when its last two records hold the same point. A branch of its start alone accepted no
 point and leaves `opening` as it was, tangent included.
 """
 function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::TraceProgress{
@@ -623,7 +559,6 @@ function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::Tra
     end
     record = last(branch)
     unmoved = same_point(record, branch[end - 1])
-    closed = looped(view(branch, firstindex(branch):(lastindex(branch) - 1)), record, opening.target_precision)
     return TraceProgress{E}(
         copy(record.gaps),
         record.param,
@@ -633,8 +568,6 @@ function branch_progress(branch::AbstractVector, opening::TraceProgress{E})::Tra
         copy(record.gap_tangent),
         record.tangent_precision,
         unmoved,
-        closed,
-        opening.target_precision,
     )
 end
 
@@ -642,7 +575,7 @@ end
     TraceFinalise(keep_going, redraw, slot, settings)
 
 BifurcationKit's `finalise_solution` of one trace segment. An accepted point bitwise equal to the branch's last one (a
-step below the point's rounding) stops the trace, a stall, as does a point that closes a loop of the branch (`looped`). The trace goes on while `keep_going(logits,
+step below the point's rounding) stops the trace, a stall. The trace goes on while `keep_going(logits,
 precision)` holds. Then `redraw(logits, precision, shift)` may return a new game, where `shift` is
 the point's `RootShift` check under `settings`: `slot`, a `Ref` to the current `RedrawSlot` (the constructor
 wraps the one it is given), takes it and the
@@ -680,10 +613,6 @@ function (finalise::TraceFinalise)(
             ),
             last(result.branch),
         )
-        return false
-    end
-    current = (; param = point.p, gaps = view(point.u, firstindex(point.u):(lastindex(point.u) - 1)))
-    if looped(result.branch, current, finalise.slot[].game.target_precision)
         return false
     end
     logits = logits_at(point.u)

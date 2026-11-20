@@ -1,0 +1,124 @@
+RUNNER | Intel(R) Core(TM) i7-4720HQ CPU @ 2.60GHz | target haswell | threads 1 | Julia 1.13.4
+SCOPE | logitnash_speed.jl, 10 seeds, 0.5 s per timing, src a1846b3, BifurcationKit irv d026017d (tree df575c19), ssh-dev with all 8 CPUs reserved; one run outside hq used one core until 01:01:54Z, the first 2.3 of 14 min (1-min load 2.28 at 00:59:41Z, decaying to 1.00 by 01:07:11Z, then 1.00-1.07)
+size       solver                    tol solved    steps     median s     median B    max gap
+2x2        BifurcationKit Float64    1e-04  10/10        8    1.325e-04    4.310e+04   7.37e-04
+2x2        BifurcationKit Float32    1e-04  10/10        8    1.251e-04    3.774e+04   7.37e-04
+2x2        StrategyDistance Float64    1e-04  10/10        8    7.154e-05    1.285e+04   7.37e-04
+2x2        StrategyDistance Float32    1e-04  10/10        8    7.199e-05    1.104e+04   7.37e-04
+2x2        LogitDistance Float64    1e-04  10/10        9    6.742e-05    1.264e+04   8.32e-04
+2x2        LogitDistance Float32    1e-04  10/10        9    6.783e-05    1.082e+04   8.32e-04
+2x2        LogitNash               1e-04  10/10       45    1.262e-04    1.632e+03   0.00e+00
+2x2        BifurcationKit Float64    1e-06  10/10        9    1.414e-04    4.450e+04   1.14e-05
+2x2        StrategyDistance Float64    1e-06  10/10        9    7.610e-05    1.307e+04   2.86e-05
+2x2        LogitDistance Float64    1e-06  10/10       10    7.272e-05    1.358e+04   2.62e-05
+2x2        LogitNash               1e-06  10/10       48    1.368e-04    1.632e+03   0.00e+00
+3x3        BifurcationKit Float64    1e-04  10/10       10    1.705e-04    5.048e+04   1.57e-03
+3x3        BifurcationKit Float32    1e-04  10/10       10    1.674e-04    4.282e+04   1.57e-03
+3x3        StrategyDistance Float64    1e-04  10/10       10    1.038e-04    1.608e+04   3.82e-03
+3x3        StrategyDistance Float32    1e-04  10/10       10    1.109e-04    1.322e+04   3.82e-03
+3x3        LogitDistance Float64    1e-04  10/10       12    1.079e-04    1.629e+04   2.39e-03
+3x3        LogitDistance Float32    1e-04  10/10       12    1.089e-04    1.334e+04   2.39e-03
+3x3        LogitNash               1e-04  10/10       53    2.107e-04    2.016e+03   0.00e+00
+3x3        BifurcationKit Float64    1e-06  10/10       11    1.780e-04    5.203e+04   2.20e-05
+3x3        StrategyDistance Float64    1e-06  10/10       11    1.098e-04    1.634e+04   2.40e-05
+3x3        LogitDistance Float64    1e-06  10/10       14    1.167e-04    1.667e+04   1.01e-05
+3x3        LogitNash               1e-06  10/10       56    2.252e-04    2.016e+03   0.00e+00
+5x5        BifurcationKit Float64    1e-04  10/10       16    3.845e-04    8.013e+04   5.07e-04
+5x5        BifurcationKit Float32    1e-04  10/10       16    4.061e-04    6.314e+04   7.95e-04
+5x5        StrategyDistance Float64    1e-04  10/10       16    3.087e-04    2.501e+04   6.36e-04
+5x5        StrategyDistance Float32    1e-04  10/10       16    3.313e-04    1.825e+04   6.36e-04
+5x5        LogitDistance Float64    1e-04  10/10       20    2.768e-04    2.554e+04   5.58e-04
+5x5        LogitDistance Float32    1e-04  10/10       20    2.919e-04    1.857e+04   5.58e-04
+5x5        LogitNash               1e-04  10/10       74    4.978e-04    3.296e+03   0.00e+00
+5x5        BifurcationKit Float64    1e-06  10/10       22    5.284e-04    9.248e+04   1.82e-05
+5x5        StrategyDistance Float64    1e-06  10/10       26    4.728e-04    2.805e+04   1.19e-05
+5x5        LogitDistance Float64    1e-06  10/10       31    4.367e-04    2.922e+04   1.22e-05
+5x5        LogitNash               1e-06  10/10      107    7.557e-04    3.296e+03   0.00e+00
+10x10      BifurcationKit Float64    1e-04  10/10       17    8.377e-04    1.319e+05   1.84e-03
+10x10      BifurcationKit Float32    1e-04  10/10       17    9.019e-04    8.936e+04   1.84e-03
+10x10      StrategyDistance Float64    1e-04  10/10       18    7.149e-04    5.726e+04   1.19e-03
+10x10      StrategyDistance Float32    1e-04  10/10       18    8.159e-04    3.386e+04   1.19e-03
+10x10      LogitDistance Float64    1e-04  10/10       22    7.921e-04    5.874e+04   7.98e-04
+10x10      LogitDistance Float32    1e-04  10/10       22    9.257e-04    3.468e+04   7.98e-04
+10x10      LogitNash               1e-04  10/10       70    1.173e-03    9.128e+03   0.00e+00
+10x10      BifurcationKit Float64    1e-06  10/10       22    1.014e-03    1.445e+05   3.24e-05
+10x10      StrategyDistance Float64    1e-06  10/10       22    9.030e-04    5.966e+04   2.30e-05
+10x10      LogitDistance Float64    1e-06  10/10       28    1.013e-03    6.210e+04   1.79e-05
+10x10      LogitNash               1e-06  10/10       89    1.594e-03    9.128e+03   0.00e+00
+20x20      BifurcationKit Float64    1e-04  10/10       26    3.843e-03    3.271e+05   1.06e-03
+20x20      BifurcationKit Float32    1e-04   8/10       26    4.350e-03    2.082e+05   6.51e-04
+20x20      StrategyDistance Float64    1e-04  10/10       28    3.712e-03    1.771e+05   3.18e-03
+20x20      StrategyDistance Float32    1e-04  10/10       28    3.803e-03    9.514e+04   3.18e-03
+20x20      LogitDistance Float64    1e-04  10/10       45    4.532e-03    1.926e+05   5.87e-04
+20x20      LogitDistance Float32    1e-04   9/10       38    4.508e-03    1.011e+05   8.39e-04
+20x20      LogitNash               1e-04  10/10       84    4.643e-03    2.938e+04   0.00e+00
+20x20      BifurcationKit Float64    1e-06  10/10       40    5.721e-03    3.934e+05   1.59e-05
+20x20      StrategyDistance Float64    1e-06  10/10       37    5.207e-03    1.866e+05   9.11e-06
+20x20      LogitDistance Float64    1e-06  10/10       62    6.877e-03    2.066e+05   1.30e-05
+20x20      LogitNash               1e-06  10/10      116    6.840e-03    2.938e+04   0.00e+00
+2x2x2      BifurcationKit Float64    1e-04  10/10       14    2.472e-04    5.986e+04   2.15e-03
+2x2x2      BifurcationKit Float32    1e-04  10/10       14    2.734e-04    5.301e+04   7.40e-04
+2x2x2      StrategyDistance Float64    1e-04  10/10       12    1.550e-04    1.661e+04   2.15e-03
+2x2x2      StrategyDistance Float32    1e-04  10/10       12    1.582e-04    1.418e+04   2.15e-03
+2x2x2      LogitDistance Float64    1e-04  10/10       15    1.609e-04    1.656e+04   9.53e-04
+2x2x2      LogitDistance Float32    1e-04  10/10       15    1.616e-04    1.414e+04   9.53e-04
+2x2x2      LogitNash               1e-04  10/10       52    2.458e-04    2.448e+03   0.00e+00
+2x2x2      BifurcationKit Float64    1e-06  10/10       15    2.593e-04    6.134e+04   6.10e-06
+2x2x2      StrategyDistance Float64    1e-06  10/10       14    1.632e-04    1.683e+04   2.50e-05
+2x2x2      LogitDistance Float64    1e-06  10/10       18    1.807e-04    1.712e+04   1.69e-05
+2x2x2      LogitNash               1e-06  10/10       61    2.859e-04    2.448e+03   0.00e+00
+3x3x3      BifurcationKit Float64    1e-04  10/10       22    5.057e-04    8.599e+04   4.71e-03
+3x3x3      BifurcationKit Float32    1e-04  10/10       22    5.489e-04    7.135e+04   4.71e-03
+3x3x3      StrategyDistance Float64    1e-04  10/10       18    3.531e-04    2.333e+04   4.45e-03
+3x3x3      StrategyDistance Float32    1e-04  10/10       18    3.649e-04    1.777e+04   4.45e-03
+3x3x3      LogitDistance Float64    1e-04  10/10       19    3.211e-04    2.286e+04   9.82e-04
+3x3x3      LogitDistance Float32    1e-04  10/10       19    3.549e-04    1.731e+04   9.81e-04
+3x3x3      LogitNash               1e-04  10/10       62    4.234e-04    3.248e+03   0.00e+00
+3x3x3      BifurcationKit Float64    1e-06  10/10       54    1.235e-03    1.579e+05   2.53e-05
+3x3x3      StrategyDistance Float64    1e-06  10/10       24    4.413e-04    2.477e+04   2.35e-05
+3x3x3      LogitDistance Float64    1e-06  10/10       66    1.019e-03    3.757e+04   1.76e-05
+3x3x3      LogitNash               1e-06  10/10       80    5.812e-04    3.248e+03   0.00e+00
+5x5x5      BifurcationKit Float64    1e-04  10/10       31    1.235e-03    1.431e+05   3.02e-01
+5x5x5      BifurcationKit Float32    1e-04   8/10       31    1.363e-03    1.045e+05   7.34e-04
+5x5x5      StrategyDistance Float64    1e-04  10/10       29    9.305e-04    4.688e+04   3.02e-01
+5x5x5      StrategyDistance Float32    1e-04  10/10       29    9.974e-04    3.024e+04   3.03e-01
+5x5x5      LogitDistance Float64    1e-04  10/10       36    9.762e-04    5.013e+04   2.94e-03
+5x5x5      LogitDistance Float32    1e-04   9/10       36    1.035e-03    3.246e+04   4.50e-04
+5x5x5      LogitNash               1e-04  10/10       75    1.004e-03    5.920e+03   0.00e+00
+5x5x5      BifurcationKit Float64    1e-06  10/10      127    4.768e-03    3.935e+05   6.28e-06
+5x5x5      StrategyDistance Float64    1e-06  10/10       35    1.265e-03    5.035e+04   8.93e-06
+5x5x5      LogitDistance Float64    1e-06  10/10      164    4.498e-03    1.046e+05   7.19e-06
+5x5x5      LogitNash               1e-06  10/10      108    1.547e-03    5.920e+03   0.00e+00
+2x2x2x2    BifurcationKit Float64    1e-04  10/10       18    5.235e-04    7.654e+04   5.46e-03
+2x2x2x2    BifurcationKit Float32    1e-04  10/10       18    5.279e-04    6.443e+04   5.46e-03
+2x2x2x2    StrategyDistance Float64    1e-04  10/10       17    3.684e-04    2.109e+04   1.73e-02
+2x2x2x2    StrategyDistance Float32    1e-04  10/10       17    3.752e-04    1.717e+04   1.73e-02
+2x2x2x2    LogitDistance Float64    1e-04  10/10       22    4.064e-04    2.152e+04   1.09e-02
+2x2x2x2    LogitDistance Float32    1e-04  10/10       22    4.289e-04    1.732e+04   1.09e-02
+2x2x2x2    LogitNash               1e-04  10/10       58    4.037e-04    3.568e+03   0.00e+00
+2x2x2x2    BifurcationKit Float64    1e-06  10/10       39    1.128e-03    1.144e+05   2.37e-04
+2x2x2x2    StrategyDistance Float64    1e-06  10/10       24    5.515e-04    2.301e+04   1.90e-04
+2x2x2x2    LogitDistance Float64    1e-06  10/10       42    7.599e-04    2.794e+04   8.46e-05
+2x2x2x2    LogitNash               1e-06  10/10       77    5.634e-04    3.568e+03   0.00e+00
+3x3x3x3    BifurcationKit Float64    1e-04  10/10       32    1.254e-03    1.272e+05   8.79e-04
+3x3x3x3    BifurcationKit Float32    1e-04  10/10       34    1.479e-03    1.032e+05   8.79e-04
+3x3x3x3    StrategyDistance Float64    1e-04  10/10       20    7.400e-04    3.394e+04   2.57e-03
+3x3x3x3    StrategyDistance Float32    1e-04  10/10       20    7.511e-04    2.450e+04   2.56e-03
+3x3x3x3    LogitDistance Float64    1e-04  10/10       35    9.875e-04    3.902e+04   6.09e-04
+3x3x3x3    LogitDistance Float32    1e-04  10/10       35    1.144e-03    2.807e+04   6.09e-04
+3x3x3x3    LogitNash               1e-04  10/10       72    8.513e-04    4.784e+03   0.00e+00
+3x3x3x3    BifurcationKit Float64    1e-06  10/10      156    5.801e-03    4.030e+05   1.22e-05
+3x3x3x3    StrategyDistance Float64    1e-06  10/10       30    1.163e-03    3.714e+04   1.44e-05
+3x3x3x3    LogitDistance Float64    1e-06  10/10      186    4.885e-03    9.717e+04   1.17e-05
+3x3x3x3    LogitNash               1e-06  10/10      105    1.343e-03    4.784e+03   0.00e+00
+2x2x2x2x2  BifurcationKit Float64    1e-04  10/10       22    8.309e-04    9.010e+04   1.16e-02
+2x2x2x2x2  BifurcationKit Float32    1e-04  10/10       22    8.422e-04    7.320e+04   1.03e-02
+2x2x2x2x2  StrategyDistance Float64    1e-04  10/10       18    5.841e-04    2.501e+04   2.53e-02
+2x2x2x2x2  StrategyDistance Float32    1e-04  10/10       18    5.911e-04    1.938e+04   2.53e-02
+2x2x2x2x2  LogitDistance Float64    1e-04  10/10       28    7.520e-04    2.669e+04   1.33e-02
+2x2x2x2x2  LogitDistance Float32    1e-04  10/10       28    8.102e-04    2.058e+04   1.33e-02
+2x2x2x2x2  LogitNash               1e-04  10/10       62    6.380e-04    4.880e+03   0.00e+00
+2x2x2x2x2  BifurcationKit Float64    1e-06  10/10       56    2.087e-03    1.527e+05   1.40e-04
+2x2x2x2x2  StrategyDistance Float64    1e-06  10/10       26    8.008e-04    2.706e+04   1.17e-04
+2x2x2x2x2  LogitDistance Float64    1e-06  10/10       62    1.624e-03    3.773e+04   7.75e-05
+2x2x2x2x2  LogitNash               1e-06  10/10       84    9.347e-04    4.880e+03   0.00e+00

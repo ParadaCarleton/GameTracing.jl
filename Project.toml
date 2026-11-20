@@ -7,11 +7,13 @@ BifurcationKit = "0f109fa4-8a5d-4b75-95aa-f515264e7665"
 CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
 ErrorTypes = "7f495686-c6d2-4c77-9e8e-e4c865675f9d"
 ErrorfreeArithmetic = "90fa49ef-747e-5e6f-a989-263ba693cf1a"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearSolve = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources]
 Corset = {url = "https://github.com/ParadaCarleton/Corset.jl", rev = "e6ab42c93325fadefc401c1e9f79a39a85bdd901"}
@@ -23,6 +25,7 @@ PathFollowing = {url = "https://github.com/ParadaCarleton/GameTracing.jl", subdi
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 Corset = "09bf9df1-bea6-4267-acd1-e930da7492cc"
 ErrorTypes = "7f495686-c6d2-4c77-9e8e-e4c865675f9d"
+JLArrays = "27aeb0d3-9eb9-45fb-866b-73c2ecf80fcb"
 LogitNash = "56ed5f9e-c32e-46b8-b489-5928d745fddb"
 Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -32,7 +35,7 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["CondaPkg", "Corset", "ErrorTypes", "LogitNash", "Mooncake", "Printf", "PythonCall", "Random", "Statistics", "Test"]
+test = ["CondaPkg", "Corset", "ErrorTypes", "JLArrays", "LogitNash", "Mooncake", "Printf", "PythonCall", "Random", "Statistics", "Test"]
 
 [compat]
 BifurcationKit = "0.8.8"
@@ -41,6 +44,8 @@ CondaPkg = "0.2.38"
 Corset = "0.1"
 ErrorTypes = "0.5.2"
 ErrorfreeArithmetic = "0.5.2"
+JLArrays = "0.2, 0.3"
+KernelAbstractions = "0.9"
 LinearAlgebra = "1"
 LinearSolve = "3, 4, 5"
 LogExpFunctions = "0.3.29, 1.0.3"
@@ -51,6 +56,7 @@ PathFollowing = "0.3"
 Printf = "1"
 PythonCall = "0.9.37"
 Random = "1"
+StaticArrays = "1"
 Statistics = "1"
 Test = "1"
 julia = "1.13"

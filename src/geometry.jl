@@ -166,7 +166,7 @@ function smallest_precision_weight(geometry::TraceGeometry{E}, width::Integer, t
 end
 
 """
-The operator of `geometry`'s norm over `width` gaps of `pass!`'s game at target precision `target_precision`, divided by
+The operator of `geometry`'s norm over `width` gaps of `pass!!`'s game at target precision `target_precision`, divided by
 PALC's state weight `θ = palc_state_weight` past PALC's own `(1 - θ) Δλ²` (one for PathFollowing): a `FisherMetric`
 over the game's `logit_ranges`, or for a plain distance PathFollowing's `FixedWeights`, `gap / θ` per gap and
 `(precision - (1 - θ)) / θ` for the precision (`plain_weights`).
@@ -187,7 +187,7 @@ function trace_metric(
 end
 
 """
-`(; palc_state_weight, dot)`: PALC's `θ` and `dotθ` for `geometry` over a trace of `width` gaps of `pass!`'s game to
+`(; palc_state_weight, dot)`: PALC's `θ` and `dotθ` for `geometry` over a trace of `width` gaps of `pass!!`'s game to
 precision `target_precision`. PALC's norm of `[Δx; Δλ]`, `x = [w; λ]`, is `θ ⟨Δx, Δx⟩ + (1 - θ) Δλ²`, which `dotθ`
 (`trace_metric`) makes the trace's norm up to the target (`FisherMetric` past it). `θ` comes from the norm's smallest
 precision weight (`palc_state_weight_under`). Every `state_weight` in (0, 1) is valid, at every width; another throws

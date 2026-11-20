@@ -1,5 +1,6 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
+using StaticArrays: SVector
 
 """LogitNash's mixed strategies of `payoffs` past `precision`, and the precision it stopped at, which may pass it."""
 function logitnash_profile(payoffs::Tuple, precision::Real)::NamedTuple
@@ -131,12 +132,19 @@ end
     @test isnan(GameTracing.payoff_range(NormalFormGains((element[NaN32 0; 0 0], element[-large 0; 0 0]))))
 end
 
-@testset "group_weights! takes adjacent axes as one, the first axis fastest ($element)" for element in (Float32, widen(Float32))
+"""The joint weights `group_weights!!` writes into the front of `buffer` for `group`."""
+function grouped(buffer::AbstractVector, strategies::Tuple, group::AbstractUnitRange)::AbstractVector
+    weights, filled = GameTracing.group_weights!!(buffer, strategies, group)
+    return weights[1:filled]
+end
+
+@testset "group_weights!! takes adjacent axes as one, the first axis fastest ($element)" for element in (Float32, widen(Float32))
     strategies = (element.([1, 2]), element.([3, 5, 7]), element.([11, 13]))
-    buffer = zeros(element, 12)
-    @test GameTracing.group_weights!(buffer, strategies, 1:2) == element.([3, 6, 5, 10, 7, 14])
-    @test GameTracing.group_weights!(buffer, strategies, 2:3) == element.([33, 55, 77, 39, 65, 91])
-    @test GameTracing.group_weights!(buffer, strategies, 2:2) == element.([3, 5, 7])
+    for buffer in (zeros(element, 12), zeros(SVector{12, element}))
+        @test grouped(buffer, strategies, 1:2) == element.([3, 6, 5, 10, 7, 14])
+        @test grouped(buffer, strategies, 2:3) == element.([33, 55, 77, 39, 65, 91])
+        @test grouped(buffer, strategies, 2:2) == element.([3, 5, 7])
+    end
 end
 
 """Each axis of `source` in `group` weighted by its entry of `strategies`, multiplied out: an array of `source`'s rank."""
@@ -145,25 +153,25 @@ function joint_weights(source::AbstractArray, strategies::Tuple, group::Abstract
     return reduce((left, right) -> left .* right, shaped)
 end
 
-@testset "contract_axes! sums the slices along adjacent axes, each times its joint weight ($element)" for element in (Float32, widen(Float32))
+@testset "contract_axes!! sums the slices along adjacent axes, each times its joint weight ($element)" for element in (Float32, widen(Float32))
     # Runs of 1 to 54 entries against 2 to 54 slices take both loop orders. Every sum is an exact integer.
     for source in (element.(reshape(1:24, 2, 3, 4)), element.(reshape(1:216, 18, 3, 4))), group in (1:1, 1:2, 2:3, 3:3)
         strategies = ntuple(axis -> element.(collect(axes(source, axis))), ndims(source))
         reference = sum(source .* joint_weights(source, strategies, group); dims = Tuple(group))
-        weights = GameTracing.group_weights!(zeros(element, length(source)), strategies, group)
-        target = zeros(element, length(reference))
-        @test GameTracing.contract_axes!(target, source, size(source), group, weights) == size(reference)
+        weights, filled = GameTracing.group_weights!!(zeros(element, length(source)), strategies, group)
+        target, reduced = GameTracing.contract_axes!!(zeros(element, length(reference)), source, size(source), group, weights, filled)
+        @test reduced == size(reference)
         @test target == vec(reference)
     end
     source = element.(reshape(1:24, 2, 3, 4))
-    @test_throws DimensionMismatch GameTracing.contract_axes!(zeros(element, 6), source, size(source), 3:3, element.(1:3))
+    @test_throws DimensionMismatch GameTracing.contract_axes!!(zeros(element, 6), source, size(source), 3:3, element.(1:3), 3)
 end
 
-@testset "write_marginal! and write_pair_marginals! refuse a tensor with an axis besides their players'" begin
-    @test_throws DimensionMismatch GameTracing.write_marginal!(zeros(2, 2), zeros(8), (2, 2, 2), 1, 2)
+@testset "write_marginal!! and write_pair_marginals!! refuse a tensor with an axis besides their players'" begin
+    @test_throws DimensionMismatch GameTracing.write_marginal!!(zeros(2, 2), zeros(8), (2, 2, 2), 1, 2)
     gains = NormalFormGains(ntuple(_ -> zeros(2, 2, 2, 2), 4))
     work = pass_workspace(gains, zeros(logit_count(gains)))
-    @test_throws DimensionMismatch GameTracing.write_pair_marginals!(work, zeros(16), (2, 2, 2, 2), 1, 2, 3)
+    @test_throws DimensionMismatch GameTracing.write_pair_marginals!!(work, zeros(16), (2, 2, 2, 2), 1, 2, 3)
 end
 
 @testset "a NormalFormGains contraction refuses work arrays of another game" begin
@@ -172,7 +180,7 @@ end
     logits = randn(rng, logit_count(gains))
     for other in (NormalFormGains(ntuple(_ -> randn(rng, 2, 3), 2)), NormalFormGains(ntuple(_ -> randn(rng, 3, 2, 2), 3)))
         work = pass_workspace(other, logits)
-        @test_throws DimensionMismatch GameTracing.contract_payoff!(work, first(gains.payoffs), 1; slopes = true)
+        @test_throws DimensionMismatch GameTracing.contract_payoff!!(work, first(gains.payoffs), 1; slopes = true)
     end
 end
 
@@ -201,7 +209,7 @@ poison!(work::Union{Tuple, NamedTuple, AbstractArray})::Nothing = foreach(poison
     end
 end
 
-@testset "write_gain_slope! refuses a block that does not fit the two players' strategies" begin
+@testset "write_gain_slope!! refuses a block that does not fit the two players' strategies" begin
     rng = fresh_rng()
     gains = NormalFormGains(ntuple(_ -> randn(rng, 3, 2), 2))
     logits = randn(rng, logit_count(gains))
@@ -210,11 +218,17 @@ end
     # The pass leaves the strategies at `logits`; the contraction then refills player 1's sensitivities.
     gains(work, zeros(width), zeros(width, width), zeros(width), logits, 1)
     payoff = first(gains.payoffs)
-    GameTracing.contract_payoff!(work, payoff, 1; slopes = true)
-    @test_throws DimensionMismatch GameTracing.write_gain_slope!(zeros(2, 2), payoff, work, 1, 2)
-    fitting = zeros(2, 1)
-    GameTracing.write_gain_slope!(fitting, payoff, work, 1, 2)
+    work = GameTracing.contract_payoff!!(work, payoff, 1; slopes = true)
+    @test_throws DimensionMismatch GameTracing.write_gain_slope!!(zeros(2, 2), 1:2, 1:2, payoff, work, 1, 2)
+    fitting = GameTracing.write_gain_slope!!(zeros(2, 1), 1:2, 1:1, payoff, work, 1, 2)
     @test fitting ≈ evaluated(gains, logits, 1).logit_slope[1:2, 3:3]
+end
+
+@testset "write_player_gain!! refuses a range that does not fit the player's expected payoffs ($element)" for element in (Float32, widen(Float32))
+    expected = element[1, 4, -2]
+    @test_throws DimensionMismatch GameTracing.write_player_gain!!(zeros(element, 3), 1:3, expected, 3)
+    @test GameTracing.write_player_gain!!(zeros(element, 3), 2:3, expected, 3) == element[0, 3, -3]
+    @test GameTracing.write_player_gain!!(zeros(SVector{3, element}), 2:3, SVector{3}(expected), 3) == SVector{3, element}(0, 3, -3)
 end
 
 @testset "NormalFormGains: the gain slope is the derivative of the gains, at any strategy counts" begin
@@ -258,8 +272,8 @@ end
 @testset "rock-paper-scissors traces to the uniform mixture at every precision" begin
     beats = [0 -1 1; 1 0 -1; -1 1 0]
     game = LogitGame(NormalFormGains((Float32.(beats), Float32.(-beats))), 5.0f0)
-    traced = unwrap(trace_endpoint(game, logit_count(game.pass!), BifurcationKitSettings{Float32}()))
-    @test profile_gap(mixed_strategies(game.pass!, traced.logits), (fill(1.0f0 / 3, 3), fill(1.0f0 / 3, 3))) < 1.0f-4
+    traced = unwrap(trace_endpoint(game, logit_count(game.pass!!), BifurcationKitSettings{Float32}()))
+    @test profile_gap(mixed_strategies(game.pass!!, traced.logits), (fill(1.0f0 / 3, 3), fill(1.0f0 / 3, 3))) < 1.0f-4
 end
 
 @testset "games with more than two strategies: the trace follows the principal branch" begin

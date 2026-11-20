@@ -1,6 +1,7 @@
 # Corset on GameTracing with no baseline: every rule must find nothing.
 
 using Corset
+using KernelAbstractions: CPU
 using Corset:
     Repository,
     Site,
@@ -79,6 +80,10 @@ function package_signatures()::Vector{Type}
                 for gain in gains
         )...,
         (entry_signature(logit_solve_lambda, gain, 2.0f0) for gain in gains)...,
+        entry_signature(
+            logit_solve_lambda_batch, [static_game(map(single_precision, LOGITNASH_GAMES.matching_pennies))], 2.0f0;
+            settings = batch_settings(Float32), backend = CPU(), workgroupsize = 1,
+        ),
     ]
     return walked_signatures(seeds, GameTracing)
 end

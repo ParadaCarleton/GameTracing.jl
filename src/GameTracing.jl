@@ -20,6 +20,7 @@ export LogitGame,
     logit_solve,
     logit_solve_branch,
     logit_solve_lambda,
+    logit_solve_lambda_batch,
     EngineSettings,
     BifurcationKitSettings,
     PathFollowingSettings,
@@ -47,6 +48,7 @@ export LogitGame,
     branch_projection
 
 include("failure.jl")
+include("storage.jl")
 include("bordered.jl")
 include("geometry.jl")
 include("fisher.jl")

@@ -250,7 +250,7 @@ end
 function reached_at(game::LogitGame, gaps::AbstractVector{E}, accuracy::E)::GameTracing.TraceResult{E} where {E <: Real}
     target = E(game.target_precision)
     progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false)
-    return GameTracing.reached_state(progress, ran_outcome(accuracy), game, pass_workspace(game.pass!, progress.gaps), BifurcationKitSettings{E}(), (;))
+    return GameTracing.reached_state(progress, ran_outcome(accuracy), game, pass_workspace(game.pass!!, progress.gaps), BifurcationKitSettings{E}(), (;))
 end
 
 @testset "the endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
@@ -276,7 +276,7 @@ end
     @test lucky.cause == GameTracing.PrecisionExhausted
     @test lucky.context.lambda == target
     # One draw of at most `λ η`, plus the rounding of the logit `λ level`.
-    @test tolerance < lucky.context.correction <= target * noisy.pass!.noise + 2 * eps(target * noisy.pass!.level)
+    @test tolerance < lucky.context.correction <= target * noisy.pass!!.noise + 2 * eps(target * noisy.pass!!.level)
     # `G = logistic(z) + b` has Jacobian `1 - λ/4` at `w = 0`, singular at λ = 4. With `b = -1/2`, `w = 0` is an exact
     # root there and needs no correction; with `b = 0` it is no root, and Newton's method has no step.
     exact = unwrap(reached_at(LogitGame(LinearGainPass(ones(element, 1, 1), element[-1 // 2]), element(4)), zeros(element, 1), tolerance))
@@ -321,7 +321,7 @@ end
     finalise = GameTracing.TraceFinalise(
         GameTracing.AcceptAll(),
         GameTracing.NoRedraw(),
-        GameTracing.RedrawSlot(game, false, 0.1f0, pass_workspace(game.pass!, zeros(Float32, WIDTH))),
+        GameTracing.RedrawSlot(game, false, 0.1f0, pass_workspace(game.pass!!, zeros(Float32, WIDTH))),
         GameTracing.CorrectorSettings{Float32}(),
     )
     start, moved = branch_record(Float32[0, 0], 0.0f0, 0),
@@ -358,7 +358,7 @@ end
             progress,
             outcome,
             game,
-            pass_workspace(game.pass!, progress.gaps),
+            pass_workspace(game.pass!!, progress.gaps),
             settings,
             (;),
         )
@@ -371,7 +371,7 @@ end
     @test stuck.unmoved
     @test stuck.steps == 2
     # A stall that spends the step budget is still a stall; moving points that spend it are not.
-    stalled = unwrap_error(GameTracing.reached_state(stuck, outcome, game, pass_workspace(game.pass!, stuck.gaps), settings, (;)))
+    stalled = unwrap_error(GameTracing.reached_state(stuck, outcome, game, pass_workspace(game.pass!!, stuck.gaps), settings, (;)))
     @test stalled.cause == GameTracing.TraceStuck
     @test stalled.context.unmoved
     spent = GameTracing.branch_progress(
@@ -384,7 +384,7 @@ end
             spent,
             outcome,
             game,
-            pass_workspace(game.pass!, spent.gaps),
+            pass_workspace(game.pass!!, spent.gaps),
             settings,
             (;),
         )

@@ -36,9 +36,10 @@ reachable(precision::Real)::Bool = precision >= 0 && isfinite(precision)
 
 The work arrays `pass!` needs beyond its outputs, in the element type and length of `logits`, or `nothing` (the
 default) when it needs none. A pass with work arrays is called as `pass!(work, gain, gain_slope, gain_precision_slope, z, λ)`.
-A trace builds them once per game and shares them across every evaluation of that game, so a pass writes each work
-array before it reads it. Each trace builds its own, so a game shared by two traces stays safe. A redrawn game's work
-must have the type of the trace's (`swapped`).
+A trace builds them once per game and shares them across every evaluation of that game. So a pass may read what
+`pass_workspace` wrote, such as the game's constants, and writes every other work array before it reads it. The work
+belongs to its game: no other game's pass gets it. Each trace builds its own, so a game shared by two traces stays
+safe. A redrawn game's work must have the type of the trace's (`swapped`).
 """
 pass_workspace(::Any, ::AbstractVector)::Nothing = nothing
 

@@ -269,7 +269,7 @@ The largest Fisher–Rao distance any player's mixed strategy moves between two 
 `z = λ w` in its range of `ranges` (`logit_ranges`), against its first strategy (`fisher_rao_spread`). Tuple ranges
 make it isbits.
 """
-struct FisherRaoChange{R}
+struct FisherRaoChange{R} <: Function
     ranges::R
 end
 
@@ -313,7 +313,7 @@ or `FisherRaoChange` over its `logit_ranges` (`checked_ranges`).
 """
 corrector_measure(::LogitDistance, ::Any, ::Integer)::Function = logit_change
 
-function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::FisherRaoChange # lint: concrete-return  generic in the ranges' type, which logit_ranges(pass!!) picks and no argument binds
+function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::Function
     return FisherRaoChange(checked_ranges(logit_ranges(pass!!), width))
 end
 
@@ -616,19 +616,23 @@ function engine_endpoint(
     )::TraceResult{E} where {E <: Real}
     problem = path_problem(game.pass!!, zero(start[begin:(end - 1)]), start, pass_work)
     started = path_init(problem, settings, PositivePrecision(callbacks.accept_corrected))
-    is_error(started) && return Err(TraceFailure(unwrap_error(started), start, 0, context))
-    return landed_endpoint(unwrap(started), E(game.target_precision), settings, callbacks.keep_going, context)
+    return landed_endpoint(started, start, E(game.target_precision), settings, callbacks.keep_going, context)
 end
 
-"""`trace_endpoint` on a started `tracer`, behind a function barrier: its landing at `target` (`stepped_landing!!`), checked."""
+"""
+`trace_endpoint` behind a function barrier on `started` (`path_init`): its `StepFailure` at `start`, or its landing at
+`target` (`stepped_landing!!`), checked. The settings pick the tracer's type at run time, so `started` is not inferred.
+"""
 function landed_endpoint(
-        tracer::PathFollowing.Tracer{E},
+        started::Result{<:PathFollowing.Tracer{E}, PathFollowing.StepFailure{E}},
+        start::AbstractVector{E},
         target::E,
         settings::PathFollowingSettings{E},
         keep_going::Any,
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
-    tracer, landed = stepped_landing!!(tracer, target, settings.max_steps, keep_going, context)
+    is_error(started) && return Err(TraceFailure(unwrap_error(started), start, 0, context))
+    tracer, landed = stepped_landing!!(unwrap(started), target, settings.max_steps, keep_going, context)
     is_error(landed) && return Err(unwrap_error(landed))
     return verified_landing(tracer, settings.endpoint_check, context)
 end

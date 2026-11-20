@@ -77,7 +77,7 @@ end
     for engine in (BifurcationKitSettings, PathFollowingSettings)
         settings = engine{element}(; max_step = element(1 // 20))
         # A non-finite start, with the caller's context beside the flat start.
-        broken = LinearGainPass(element[NaN 1; 1 0], element[1 // 2, -1 // 4])
+        broken = LinearGainPass(element[NaN32 1; 1 0], element[1 // 2, -1 // 4])
         start = unwrap_error(trace_endpoint(LogitGame(broken, target), 2, settings; context = (; label = :broken)))
         @test (start.cause, start.context.label, start.context.logits, start.context.precision) == (GameTracing.NotFinite, :broken, zeros(element, 2), 0)
         # A zero target takes no step.

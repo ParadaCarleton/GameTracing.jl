@@ -35,21 +35,18 @@ struct FixedWeights{V <: AbstractVector{<:Real}} <: Metric
     weights::V
 end
 
-function frozen_metric(metric::FixedWeights, point::AbstractVector{E})::FixedWeights{Vector{E}} where {E <: Real}
+"""`metric`'s weights copied into an array like `point`: its element type, on its device."""
+function frozen_metric(metric::FixedWeights, point::AbstractVector{E})::FixedWeights{<:AbstractVector{E}} where {E <: Real}
     if length(metric.weights) != length(point)
         throw(DimensionMismatch("$(length(metric.weights)) weights for points of $(length(point)) coordinates"))
     end
-    return FixedWeights(Vector{E}(metric.weights))
+    return FixedWeights(copyto!(similar(point), metric.weights))
 end
 
 freeze_metric!(frozen::FixedWeights, ::AbstractVector)::FixedWeights = frozen
 
 function metric_inner(frozen::FixedWeights, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
-    total = zero(E)
-    for index in eachindex(frozen.weights, left, right)
-        total += frozen.weights[index] * left[index] * right[index]
-    end
-    return total
+    return sum(elementwise(*, frozen.weights, left, right))
 end
 
 function metric_apply!(out::AbstractVector{E}, frozen::FixedWeights, vector::AbstractVector{E})::AbstractVector{E} where {E <: Real}
@@ -70,11 +67,7 @@ end
 
 """`row ⋅ (to - from)`, without a difference vector."""
 function row_offset(row::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    total = zero(E)
-    for index in eachindex(row, from, to)
-        total += row[index] * (to[index] - from[index])
-    end
-    return total
+    return sum(elementwise((weight, start, finish) -> weight * (finish - start), row, from, to))
 end
 
 """

@@ -494,9 +494,9 @@ end
     # Records on later sheets lie closer to a record on an earlier sheet than to the record before them.
     near = [
         index for index in 3:length(branch) if any(
-            earlier -> GameTracing.squared_distance(branch[index], branch[earlier], 1) < GameTracing.squared_distance(branch[index], branch[index - 1], 1),
-            1:(index - 2),
-        )
+                earlier -> GameTracing.squared_distance(branch[index], branch[earlier], 1) < GameTracing.squared_distance(branch[index], branch[index - 1], 1),
+                1:(index - 2),
+            )
     ]
     @test length(near) > 20
     @test isnothing(first_loop(branch, 1))

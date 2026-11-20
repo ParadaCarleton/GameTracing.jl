@@ -1,6 +1,8 @@
 # First-order rounding bounds: a float computation run on `Rounded` numbers carries each result's slope to every
 # rounding behind it, so its rounding error is bounded where it ran.
 
+using LinearAlgebra: I
+
 """
 One rounding `fl(a ∘ b) = (a ∘ b)(1 + δ)` of a float operation, with `|δ| ≤ bound` (Higham, *Accuracy and Stability of
 Numerical Algorithms*, 2nd ed., (2.4)). Each rounding is its own object, so a `Dict` tells two apart by identity.
@@ -139,4 +141,89 @@ end
 """The first-order bound `Σ |slope| bound` on the rounding error of `number`'s value, over the roundings behind it."""
 function rounding_bound(number::Rounded{E, W})::W where {E, W}
     return sum(abs(slope) * rounding.bound for (rounding, slope) in number.slopes; init = zero(W))
+end
+
+"""
+`F(x, pin)`, the branch residual `[w - G(λ w); λ - pin]` of `game` at `x = [w; λ]`, evaluated by the engine's own
+`GameResidual` on `Rounded` numbers: each entry carries its first-order rounding (`rounding_bound`).
+"""
+function rounded_residual(game::LogitGame, point::AbstractVector{E}, pin::E)::Vector where {E <: AbstractFloat}
+    number = Rounded{E, widen(E)}
+    return branch_residual(game, number.(point), number(pin))
+end
+
+"""`frozen` with each value it holds as an exact `number` (`Rounded`), so its products bound their own rounding."""
+function rounded_frozen(frozen::GameTracing.FrozenFisher{M, E}, number::Type{Rounded{E, W}})::GameTracing.FrozenFisher where {M, E, W}
+    point = number.(frozen.point)
+    return GameTracing.FrozenFisher{M, number, typeof(point), typeof(frozen.pivots)}(
+        frozen.metric, point, number.(frozen.probabilities), number.(frozen.references), frozen.pivots,
+        number(frozen.state_weight), number(frozen.palc_state_weight), number.(frozen.root),
+    )
+end
+
+"""
+    rounding_explanation(pass, failure, settings, target_precision)
+
+`(; bound, residual, residual_bound, noise, amplification)` at the stalled corrector of `failure`, a
+`PrecisionExhausted` trace of the game `pass` to `target_precision` under `settings`. PALC's Newton step at the stalled iterate
+`x = [w; λ]`, its pin `p` and arclength `ds` solves the bordered system `B = [J ∂F/∂pin; θ A τu' (1 - θ) τp]`
+(`bordered_matrix!`): `J` the Jacobian of the residual `F` (`rounded_residual`), `θ` PALC's state weight, and `A` the
+dot weights and `τ` the tangent at the last accepted point `z0`. Its right side holds `F(x, p)` and the arclength row
+`N = θ ⟨x - z0, τ⟩_A + (1 - θ) (p - p0) τp - ds` of BifurcationKit's `arc_length_eq`. The trace records `z0` and `τ`
+by their gaps and pin parts; the pin row keeps their precision parts equal to these at accepted points. `noise` bounds
+each row's rounding as the engine and `arc_length_eq` evaluate it. `amplification`, `[λ I  w] B⁻¹` in the wider type,
+maps the rows to the logit change `Δz = λ Δw + w Δλ`. At noise the step's start is one noisy step from the root, so each
+logit's correction is within `bound`: twice its amplified noise, plus `2u |z|` from the corrector's own products
+`z = λ w`. That step leaves each row of `[F; N]` at `(x, p)` within its noise plus the update's own rounding
+`|B| u |[x; p]|`; the `residual` computed there adds the noise again, within `residual_bound`. The solve's rounding of
+a step this small is second order.
+"""
+function rounding_explanation(pass::Union{NormalFormGains, NormalFormPass}, failure::TraceFailure, settings::BifurcationKitSettings, target_precision::Real)::NamedTuple
+    (; stalled_iterate, stalled_pin, stalled_arclength, gaps, precision, gap_tangent, tangent_precision) = failure.context
+    element, width = eltype(stalled_iterate), length(gaps)
+    # Only PALC's corrector runs strictly inside (0, target); a plain Newton solve at a bound has no border row.
+    if !(0 < last(stalled_iterate) < target_precision)
+        throw(ArgumentError("a stall at precision $(last(stalled_iterate)) is no PALC corrector inside (0, $target_precision)"))
+    end
+    game = LogitGame(pass, element(target_precision))
+    jacobian = GameTracing.GameJacobian(game, GameTracing.BranchWorkspace(game, stalled_iterate))(stalled_iterate, stalled_pin)
+    palc = GameTracing.palc_geometry(settings.step_metric, game.pass!, width, target_precision)
+    state_weight, start, tangent = element(palc.palc_state_weight), [gaps; precision], [gap_tangent; tangent_precision]
+    # The step's weights are those of the point it starts from, the last accepted one.
+    GameTracing.BifurcationKit.reweight!(palc.dot, GameTracing.BifurcationKit.BorderedArray(start, precision))
+    bordered = GameTracing.bordered_matrix!(
+        similar(jacobian, width + 2, width + 2), jacobian, GameTracing.PinSlope(stalled_iterate).slope, tangent,
+        tangent_precision, state_weight, one(element) - state_weight, palc.dot.apply!,
+    )
+    logit_map = hcat(widen(last(stalled_iterate)) * I(width), widen.(stalled_iterate[1:width]))
+    amplification = logit_map * inv(widen.(bordered))[1:(width + 1), :]
+    arclength_row = GameTracing.BifurcationKit.arc_length_eq(
+        palc.dot, stalled_iterate, start, stalled_pin - precision, tangent, tangent_precision, state_weight, stalled_arclength,
+    )
+    number = Rounded{element, widen(element)}
+    rounded_dot = GameTracing.BifurcationKit.DotTheta(GameTracing.MetricDot(rounded_frozen(palc.dot.dot.frozen, number)))
+    rounded_arclength_row = GameTracing.BifurcationKit.arc_length_eq(
+        rounded_dot, number.(stalled_iterate), number.(start), number(stalled_pin) - number(precision),
+        number.(tangent), number(tangent_precision), number(state_weight), number(stalled_arclength),
+    )
+    noise = [rounding_bound.(rounded_residual(game, stalled_iterate, stalled_pin)); rounding_bound(rounded_arclength_row)]
+    bound = 2 .* (abs.(amplification) * noise) .+ eps(element) .* abs.(GameTracing.logits_at(stalled_iterate))
+    residual = [branch_residual(game, stalled_iterate, stalled_pin); arclength_row]
+    roundoff = eps(element) / 2
+    residual_bound = 2 .* noise .+ abs.(widen.(bordered)) * (roundoff .* abs.(widen.([stalled_iterate; stalled_pin])))
+    return (; bound, residual, residual_bound, noise, amplification)
+end
+
+"""
+Whether `failure` is a `PrecisionExhausted` stall at rounding noise, on a trace of the game `pass` to `target_precision` under
+`settings`: the residual of `F` and of its step's arclength row at the stalled iterate is within `residual_bound` of
+`rounding_explanation`, so the iterate is at the step's root up to noise, and its last correction in logits is within
+`bound`.
+"""
+function exhausted_by_rounding(pass::Union{NormalFormGains, NormalFormPass}, failure::TraceFailure, settings::BifurcationKitSettings, target_precision::Real)::Bool
+    if failure.cause != GameTracing.PrecisionExhausted
+        return false
+    end
+    (; bound, residual, residual_bound) = rounding_explanation(pass, failure, settings, target_precision)
+    return all(abs.(residual) .<= residual_bound) && failure.context.correction <= maximum(bound)
 end

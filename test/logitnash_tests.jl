@@ -256,23 +256,22 @@ function on_principal_branch(payoffs::Tuple, logits::AbstractVector{E}, precisio
 end
 
 """
-Whether a `PrecisionExhausted` failure's `context` on `payoffs` is the stall near the pitchfork: an `unresolved` step
-whose failed iterate's `lambda` and last accepted `precision` lie in (0.8, 0.81), its last `correction` under 1e-3,
-and its last accepted `logits` on the principal branch. The seven replayed stalls corrected by 3.1e-5 to 2.6e-4.
+Whether a `PrecisionExhausted` failure's `context` on `payoffs` is the stall near the pitchfork: its failed iterate's
+`lambda` and its last accepted `precision` both in (0.8, 0.81), and its last accepted `logits` on the principal branch.
 """
 function pitchfork_stall(payoffs::Tuple, context::NamedTuple)::Bool
     near = 0.8f0 < context.lambda < 0.81f0 && 0.8f0 < context.precision < 0.81f0
-    # A NaN correction fails the comparison.
-    rounding = context.unresolved && context.correction < 1.0f-3
-    return near && rounding && on_principal_branch(payoffs, context.logits, context.precision)
+    return near && on_principal_branch(payoffs, context.logits, context.precision)
 end
 
 """
-Whether BifurcationKit's Float32 `failure` on `payoffs`, drawn at noise `scale`, is the known stall near the pitchfork
-(`pitchfork_stall`, issue #132): `PrecisionExhausted` at noise 1e-4. Over 3000 draws, 7 stalled there at 1e-4, none at 1e-3.
+Whether BifurcationKit's `failure` on `payoffs`, drawn at noise `scale` and traced to `target` under `settings`, is the
+known Float32 stall (issue #132): at noise 1e-4, near the pitchfork (`pitchfork_stall`), and at rounding noise
+(`exhausted_by_rounding`). Over 3000 draws, 7 stalled at 1e-4 and none at 1e-3; each corrected by at most 12% of its bound.
 """
-function known_float32_stall(failure::TraceFailure, payoffs::Tuple, scale::Real)::Bool
-    return scale <= inv(float(10^4)) && failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(payoffs, failure.context)
+function known_float32_stall(failure::TraceFailure, payoffs::Tuple, scale::Real, settings::BifurcationKitSettings{E}, target::E)::Bool where {E <: Real}
+    near = scale <= inv(float(10^4)) && failure.cause == GameTracing.PrecisionExhausted && pitchfork_stall(payoffs, failure.context)
+    return near && exhausted_by_rounding(NormalFormPass(map(table -> E.(table), payoffs)), failure, settings, target)
 end
 
 """
@@ -281,8 +280,9 @@ trace ends in the known stall (`known_float32_stall`), else `settings`. Float64 
 """
 function pitchfork_settings(payoffs::Tuple, scale::Real, precision::Real, settings::EngineSettings)::EngineSettings
     settings isa BifurcationKitSettings{Float32} || return settings
-    result = traced_result(payoffs, logitnash_equilibrium(payoffs, precision).precision, settings)
-    stalled = is_error(result) && known_float32_stall(unwrap_error(result), payoffs, scale)
+    target = logitnash_equilibrium(payoffs, precision).precision
+    result = traced_result(payoffs, target, settings)
+    stalled = is_error(result) && known_float32_stall(unwrap_error(result), payoffs, scale, settings, target)
     return stalled ? BifurcationKitSettings{widen(Float32)}() : settings
 end
 
@@ -313,6 +313,32 @@ const FLOAT32_STALLED_PITCHFORKS = (
         stalled = is_error(traced_result(payoffs, logitnash_equilibrium(payoffs, 4).precision, float32))
         @test (pitchfork_settings(payoffs, inv(float(10^4)), 4, float32) isa BifurcationKitSettings{widen(Float32)}) == stalled
         @test pitchfork_settings(payoffs, inv(float(10^3)), 4, float32) isa BifurcationKitSettings{Float32}
+    end
+end
+
+# The Float32 stall of the first `FLOAT32_STALLED_PITCHFORKS` draw on winwsl, traced to 4.9532833: the fields the checks
+# read. Its correction is 7.6% of its rounding bound, 2.4e-3; its residual 3.5% of its bound.
+const RECORDED_FLOAT32_STALL = (;
+    lambda = 0.80760336f0, precision = 0.8076254f0, logits = Float32[0.2016669, -0.2008812], correction = 0.00018011034f0,
+    stalled_iterate = Float32[0.24992676, -0.24851432, 0.80760336], stalled_pin = 0.80760336f0, stalled_arclength = 9.369129f-8,
+    gaps = Float32[0.24970351, -0.24873066], gap_tangent = Float32[1.3947775, 1.9262395], tangent_precision = 1.7230258f0,
+)
+
+@testset "the fallback takes a recorded stall at rounding noise, at 1e-4 only; a moved iterate or a large correction fails" begin
+    payoffs, float32 = first(FLOAT32_STALLED_PITCHFORKS), BifurcationKitSettings{Float32}()
+    target = logitnash_equilibrium(payoffs, 4).precision
+    stall = TraceFailure(GameTracing.PrecisionExhausted, RECORDED_FLOAT32_STALL)
+    @test known_float32_stall(stall, payoffs, inv(float(10^4)), float32, target)
+    @test !known_float32_stall(stall, payoffs, inv(float(10^3)), float32, target)
+    @test !known_float32_stall(TraceFailure(GameTracing.TraceStuck, RECORDED_FLOAT32_STALL), payoffs, inv(float(10^4)), float32, target)
+    # An iterate 0.01 off the step's root, a correction of 0.1 (40 times the bound) or NaN, or logits off the branch.
+    changes = (
+        (; stalled_iterate = RECORDED_FLOAT32_STALL.stalled_iterate .+ Float32[0.01f0, 0, 0]),
+        (; correction = 0.1f0), (; correction = NaN32), (; logits = RECORDED_FLOAT32_STALL.logits .+ 0.01f0),
+    )
+    for change in changes
+        failure = TraceFailure(GameTracing.PrecisionExhausted, merge(RECORDED_FLOAT32_STALL, change))
+        @test !known_float32_stall(failure, payoffs, inv(float(10^4)), float32, target)
     end
 end
 
@@ -467,23 +493,14 @@ end
 @testset "a pitchfork unfolded by 1e-4: Float64 traces settle on the (1, 1) arm; Float32 ones may stall, never leave it" begin
     precision = logitnash_equilibrium(UNFOLDED_PITCHFORK_GAME, 4).precision
     oracle = gambit_branch(UNFOLDED_PITCHFORK_GAME, precision)
-    # A stall passes only as an unresolved step near the pitchfork on the principal branch, its last correction a
-    # rounding: not 0.01 off the branch, last accepted at λ 0.5, resolved, or corrected by NaN or 1e-2.
+    # A stall passes only near the pitchfork on the principal branch: not 0.01 off it, nor last accepted at λ 0.5.
     pass = NormalFormPass(map(float, UNFOLDED_PITCHFORK_GAME))
     at_stall = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.8079f0))
     early = Float32.(level_root(pass, [0.2f0, -0.2f0], 0.5f0))
-    measured = (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall, correction = 2.8f-4, unresolved = true)
+    measured = (; lambda = 0.8079f0, precision = 0.8079f0, logits = at_stall)
     @test pitchfork_stall(UNFOLDED_PITCHFORK_GAME, measured)
     @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; logits = at_stall .+ 0.01f0)))
     @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; precision = 0.5f0, logits = early)))
-    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; unresolved = false)))
-    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; correction = NaN32)))
-    @test !pitchfork_stall(UNFOLDED_PITCHFORK_GAME, merge(measured, (; correction = 1.0f-2)))
-    # The Float32 fallback takes that stall only as `PrecisionExhausted` at noise 1e-4.
-    stall = TraceFailure(GameTracing.PrecisionExhausted, measured)
-    @test known_float32_stall(stall, UNFOLDED_PITCHFORK_GAME, inv(float(10^4)))
-    @test !known_float32_stall(stall, UNFOLDED_PITCHFORK_GAME, inv(float(10^3)))
-    @test !known_float32_stall(TraceFailure(GameTracing.TraceStuck, stall.context), UNFOLDED_PITCHFORK_GAME, inv(float(10^4)))
     for element in (Float32, widen(Float32))
         outcomes = [
             (name, element, weight) => pitchfork_outcome(element(precision), arm_settings(arm, element(weight)), oracle)

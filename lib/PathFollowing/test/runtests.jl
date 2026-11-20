@@ -95,7 +95,7 @@ end
 struct LargestMove end
 
 function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return maximum(abs.(to .- from))
+    return mapreduce((later, earlier) -> abs(later - earlier), max, to, from)
 end
 PathFollowing.correction_bound(::LargestMove)::Real = Inf32
 
@@ -134,6 +134,16 @@ struct BandedLine end
 function (::BandedLine)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     return one_row!!(residual, jacobian, one(E) / 4 < point[2] < 3 * one(E) / 4 ? E(NaN32) : point[1], (one(E), zero(E)))
 end
+
+"""`LargestMove` that throws a `DomainError` on a point in `BandedLine`'s band, where that line has no residual."""
+struct BandAvoidingMove end
+
+function (::BandAvoidingMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    in_band = point -> one(E) / 4 < point[2] < 3 * one(E) / 4
+    (in_band(from) || in_band(to)) && throw(DomainError((from, to), "a point in BandedLine's band"))
+    return LargestMove()(from, to)
+end
+PathFollowing.correction_bound(::BandAvoidingMove)::Real = Inf32
 
 """A `converged` that ignores its contract and settles where `scale` is infinite."""
 settles_at_infinite_scale(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool = isinf(scale)
@@ -546,6 +556,24 @@ end
         @test last(accepted(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, max_refusals = 0))).step_length == 1
     end
 
+    @testset "a failed half step refuses before the distance sees its rejected point, and the buffers come back" begin
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = BandAvoidingMove())
+        banded(max_refusals) = untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, corrector, split_check = check, max_refusals)
+        failure = failed_step(banded(0))
+        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, SplitMismatch)
+        tracer = banded(0)
+        tracer.work.iterate .= E[0, 1]
+        tracer.work.candidate .= E[0, 1]
+        tracer.work.previous .= E[0, 7 // 8]
+        # The half predictor at y = 1/2 lies in the band, so the first half step fails.
+        tracer, refuses = PathFollowing.split_refused!!(tracer, check, zero(E), nothing, false, one(E))
+        @test (refuses, tracer.work.iterate, tracer.work.candidate, tracer.work.previous) == (true, E[0, 1], E[0, 1], E[0, 7 // 8])
+        # The retries: SplitMismatch at 1, NotFiniteResidual at 1/2 (in the band), and 1/4 lies on its edge.
+        tracer, step = accepted(banded(60))
+        @test (step.refusals, step.step_length, tracer.point) == (2, one(E) / 4, E[0, 1 // 4])
+    end
+
     @testset "half steps of a landing end on the bound, and the step lands" begin
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; split_check = check); first_step = E(1) / 10))
@@ -827,21 +855,21 @@ end
         # A split check; a landing; orientation flips at a bifurcation point; zero pivots past an edge; a point metric.
         # Each case's last entry checks that its trace took that path: its refusals and its failure, if any.
         cases = (
-            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), nothing, 12, (refusals, failure) -> isnothing(failure)),
-            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), Bound(2, E(3) / 4), 20, (refusals, failure) -> isnothing(failure)),
-            (Pitchfork(zero(E)), E[0, -1], E[0, 1], (;), nothing, 12, (refusals, failure) -> refusals > 0),
-            (Edge(one(E), true), E[0, 0], E[1, 1], (;), nothing, 200, (refusals, failure) -> failure.last_refusal == SingularSystem),
-            (Fold(), E[-1, 1], E[1, -1], point_metric, nothing, 12, (refusals, failure) -> isnothing(failure)),
+            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), nothing, 12, (_, failure) -> isnothing(failure)),
+            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), Bound(2, E(3) / 4), 20, (_, failure) -> isnothing(failure)),
+            (Pitchfork(zero(E)), E[0, -1], E[0, 1], (;), nothing, 12, (refusals, _) -> refusals > 0),
+            (Edge(one(E), true), E[0, 0], E[1, 1], (;), nothing, 200, (_, failure) -> failure.last_refusal == SingularSystem),
+            (Fold(), E[-1, 1], E[1, -1], point_metric, nothing, 12, (_, failure) -> isnothing(failure)),
         )
         for (system, start, direction, overrides, bound, limit, took_its_path) in cases
-            mutable = unwrap(init(CurveProblem(system, start, direction), algorithm(E; overrides...); first_step = E(1) / 4))
+            in_place = unwrap(init(CurveProblem(system, start, direction), algorithm(E; overrides...); first_step = E(1) / 4))
             static_problem = CurveProblem(system, SVector{2, E}(start), SVector{2, E}(direction))
             static = unwrap(init(static_problem, algorithm(E; linear_solver = StaticLU(), overrides...); first_step = E(1) / 4))
             @test static.point isa SVector{2, E} && static.work.bordered isa SMatrix{2, 2, E}
-            @test static.linear isa PathFollowing.StaticSolve && static.orientation == mutable.orientation
+            @test static.linear isa PathFollowing.StaticSolve && static.orientation == in_place.orientation
             refusals, failure = 0, nothing
             for _ in 1:limit
-                mutable, expected = step!!(mutable, bound)
+                in_place, expected = step!!(in_place, bound)
                 static, outcome = step!!(static, bound)
                 @test is_error(outcome) == is_error(expected)
                 if is_error(expected)
@@ -851,12 +879,12 @@ end
                 end
                 refusals += unwrap(outcome).refusals
                 @test unwrap(outcome).refusals == unwrap(expected).refusals
-                @test static.point ≈ mutable.point atol = 10 * tolerance
-                @test static.orientation == mutable.orientation
+                @test static.point ≈ in_place.point atol = 10 * tolerance
+                @test static.orientation == in_place.orientation
                 isnothing(bound) || static.point[bound.coordinate] != bound.value || break
             end
             @test took_its_path(refusals, failure)
-            @test isnothing(bound) || static.point[bound.coordinate] == mutable.point[bound.coordinate] == bound.value
+            @test isnothing(bound) || static.point[bound.coordinate] == in_place.point[bound.coordinate] == bound.value
         end
     end
 
@@ -867,7 +895,7 @@ end
         wide = (SVector{15, E}(ntuple(index -> E(index == 1), 15)), SVector{15, E}(ntuple(index -> E(index == 2), 15)))
         @test_throws ArgumentError init(CurveProblem(Circle(one(E)), wide...), algorithm(E; linear_solver = StaticLU(), metric = FixedWeights(ones(E, 15))); first_step = E(1) / 10)
         # A system that answers a static tracer with heap arrays would change the tracer's type.
-        heap_answer = (residual, jacobian, point) -> (collect(residual), collect(jacobian))
+        heap_answer = (residual, jacobian, _) -> (collect(residual), collect(jacobian))
         @test_throws ArgumentError init(CurveProblem(heap_answer, static_start...), algorithm(E; linear_solver = StaticLU()); first_step = E(1) / 10)
     end
 

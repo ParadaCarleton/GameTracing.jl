@@ -309,9 +309,8 @@ function split_refused!!(
     @reset tracer.work.split_tangent = Into(tracer.work.split_tangent) .= tracer.work.candidate
     @reset tracer.work.split_previous = Into(tracer.work.split_previous) .= tracer.work.previous
     tracer, halves = half_steps!!(tracer, lands ? bound : nothing, taken)
-    distance = correction_length(tracer.algorithm.corrector.distance, tracer, tracer.work.iterate, tracer.work.split_point)
-    # Negated so a NaN distance refuses.
-    refuses = !(halves && distance <= check.tolerance)
+    # Negated so a NaN distance refuses; a failed half step never reaches the distance.
+    refuses = !(halves && correction_length(tracer.algorithm.corrector.distance, tracer, tracer.work.iterate, tracer.work.split_point) <= check.tolerance)
     @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.split_point
     @reset tracer.work.candidate = Into(tracer.work.candidate) .= tracer.work.split_tangent
     @reset tracer.work.previous = Into(tracer.work.previous) .= tracer.work.split_previous

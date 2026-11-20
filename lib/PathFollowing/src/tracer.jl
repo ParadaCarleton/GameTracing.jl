@@ -91,7 +91,7 @@ function CommonSolve.init(
         first_step::Real,
     )::Result{<:Tracer{E}, StepFailure{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
     # Checked in `E`, where a tiny or huge `first_step` rounds to 0 or Inf.
-    0 < E(first_step) < Inf || throw(ArgumentError(lazy"first_step must be positive and finite in $E; got $first_step"))
+    valid_first_step(E(first_step)) || throw(ArgumentError(lazy"first_step must be positive and finite in $E; got $first_step"))
     # The step control computes in its own type: a shrink below 1 there can round back to the same step in `E`.
     algorithm.step_control isa StepControl{E} ||
         throw(ArgumentError(lazy"the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
@@ -107,6 +107,9 @@ function CommonSolve.init(
     )
     return started(tracer)
 end
+
+"""Whether `step` can open a trace: positive and finite."""
+valid_first_step(step::Real)::Bool = 0 < step < Inf
 
 """`tracer` with its unit tangent at its start, where `init` froze its metrics, or the `StepFailure` there."""
 function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tracer{E}}

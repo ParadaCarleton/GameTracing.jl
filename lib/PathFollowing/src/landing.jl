@@ -48,6 +48,9 @@ on that device, once the device has finished.
 
 Each start must be static (an `SVector`), with `linear_solver = StaticLU()`, and `algorithm` and the problems isbits.
 `workgroupsize` is the work items per group: the CPU backend runs each group on one thread, so use a small group there.
+
+The host checks the inputs before the launch (`check_batch`), as an exception in a work item aborts the whole launch.
+Only a `converged` that settles at a scale it may not (`Newton`) still throws on the device.
 """
 function land_batch(
         problems::AbstractVector{<:CurveProblem{<:Any, V}},
@@ -57,16 +60,39 @@ function land_batch(
         max_steps::Integer;
         workgroupsize::Integer,
     )::AbstractVector{Landing{V, E}} where {E <: Real, V <: SVector{<:Any, E}}
-    count = length(problems)
-    length(first_steps) == count || throw(DimensionMismatch(lazy"first_steps holds $(length(first_steps)) steps for $count problems"))
-    algorithm.linear_solver isa StaticLU || throw(ArgumentError(lazy"land_batch needs linear_solver = StaticLU(); got $(algorithm.linear_solver)"))
-    isbits(algorithm) || throw(ArgumentError(lazy"land_batch needs an isbits algorithm; got a $(typeof(algorithm))"))
-    workgroupsize > 0 || throw(ArgumentError(lazy"workgroupsize must be positive; got $workgroupsize"))
+    check_batch(problems, algorithm, first_steps, bound, workgroupsize)
     landings = similar(problems, Landing{V, E})
+    isempty(problems) && return landings
     backend = KernelAbstractions.get_backend(problems)
-    land_kernel!(backend, Int(workgroupsize))(landings, problems, algorithm, first_steps, bound, Int(max_steps); ndrange = count)
+    land_kernel!(backend, Int(workgroupsize))(landings, problems, algorithm, first_steps, bound, Int(max_steps); ndrange = length(problems))
     KernelAbstractions.synchronize(backend)
     return landings
+end
+
+"""
+Throw on the host for any input of `land_batch` that would throw in a work item. `init` runs on the first problem,
+which checks the settings' types and the metrics' and the solver's sizes for every problem, as all share one type.
+"""
+function check_batch(
+        problems::AbstractVector{<:CurveProblem{<:Any, V}},
+        algorithm::PseudoArclength,
+        first_steps::AbstractVector{E},
+        bound::Bound{E},
+        workgroupsize::Integer,
+    )::Nothing where {E <: Real, V <: SVector{<:Any, E}}
+    count = length(problems)
+    length(first_steps) == count || throw(DimensionMismatch(lazy"first_steps holds $(length(first_steps)) steps for $count problems"))
+    isbits(algorithm) || throw(ArgumentError(lazy"land_batch needs an isbits algorithm; got a $(typeof(algorithm))"))
+    workgroupsize > 0 || throw(ArgumentError(lazy"workgroupsize must be positive; got $workgroupsize"))
+    1 <= bound.coordinate <= length(V) || throw(ArgumentError(lazy"the bound's coordinate must lie in 1:$(length(V)); got $(bound.coordinate)"))
+    backend = KernelAbstractions.get_backend(problems)
+    KernelAbstractions.get_backend(first_steps) == backend ||
+        throw(ArgumentError(lazy"first_steps must lie on the problems' device, $backend; got $(KernelAbstractions.get_backend(first_steps))"))
+    count == 0 && return nothing
+    # One reduction on the device.
+    mapreduce(valid_first_step, &, first_steps; init = true) || throw(ArgumentError("every first step must be positive and finite"))
+    CommonSolve.init(element(problems, 1), algorithm; first_step = element(first_steps, 1))
+    return nothing
 end
 
 @kernel function land_kernel!(landings, @Const(problems), algorithm, @Const(first_steps), bound, max_steps)

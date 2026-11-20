@@ -166,6 +166,7 @@ function accepted(tracer::T, bound::Union{Nothing, Bound} = nothing)::Tuple{T, A
 end
 
 # JLArrays 0.3 runs a kernel on the CPU backend, which returns once it has finished, but defines no `synchronize`.
+# JLArrays 0.5 defines it, but its GPUArrays 12 caps LinearSolve below this suite's 5.18.
 KernelAbstractions.synchronize(::JLBackend)::Nothing = nothing
 
 """The bytes a warm `land!!` of `tracer` to `bound` allocates, after one landing to warm it."""
@@ -972,16 +973,33 @@ end
         end
     end
 
-    @testset "land_batch refuses mismatched lengths, a mutable-storage algorithm and an empty work group" begin
-        problems = [CurveProblem(Circle(one(E)), SVector{2, E}(1, 0), SVector{2, E}(0, 1))]
+    @testset "land_batch checks on the host every input that init or a work item would throw on" begin
+        circle = CurveProblem(Circle(one(E)), SVector{2, E}(1, 0), SVector{2, E}(0, 1))
         bound = Bound(2, E(3) / 4)
-        batch(settings, first_steps; workgroupsize = 1) = land_batch(problems, settings, first_steps, bound, 20; workgroupsize)
-        @test_throws DimensionMismatch batch(static_algorithm(E), E[1 // 10, 1 // 10])
-        @test_throws ArgumentError batch(static_algorithm(E; linear_solver = LUFactorization()), E[1 // 10])
-        # A `Vector` of metric weights keeps the algorithm off the device.
-        @test_throws ArgumentError batch(algorithm(E; linear_solver = StaticLU()), E[1 // 10])
-        @test_throws ArgumentError batch(static_algorithm(E), E[1 // 10]; workgroupsize = 0)
-        @test only(batch(static_algorithm(E), E[1 // 10])).point[2] == bound.value
+        for storage in (identity, JLArray)
+            checked(settings, first_steps; bound = bound, workgroupsize = 1, problems = storage([circle, circle])) =
+                PathFollowing.check_batch(problems, settings, storage(first_steps), bound, workgroupsize)
+            @test_throws DimensionMismatch checked(static_algorithm(E), E[1 // 10])
+            @test_throws ArgumentError checked(static_algorithm(E; linear_solver = LUFactorization()), E[1 // 10, 1 // 10])
+            # A `Vector` of metric weights keeps the algorithm off the device.
+            @test_throws ArgumentError checked(algorithm(E; linear_solver = StaticLU()), E[1 // 10, 1 // 10])
+            @test_throws ArgumentError checked(static_algorithm(E), E[1 // 10, 1 // 10]; workgroupsize = 0)
+            @test_throws ArgumentError checked(static_algorithm(E), E[1 // 10, 1 // 10]; bound = Bound(3, E(3) / 4))
+            @test_throws ArgumentError checked(static_algorithm(E), E[1 // 10, 0])
+            @test_throws ArgumentError checked(static_algorithm(E), E[NaN, 1 // 10])
+            other = E === Float32 ? Float64 : Float32
+            @test_throws ArgumentError checked(static_algorithm(other; metric = FixedWeights(SVector{2, E}(1, 1))), E[1 // 10, 1 // 10])
+            wide = CurveProblem(Circle(one(E)), SVector{3, E}(1, 0, 0), SVector{3, E}(0, 1, 0))
+            @test_throws DimensionMismatch checked(static_algorithm(E), E[1 // 10, 1 // 10]; problems = storage([wide, wide]))
+            fifteen = CurveProblem(Circle(one(E)), SVector{15, E}(ntuple(index -> E(index == 1), 15)), SVector{15, E}(ntuple(index -> E(index == 2), 15)))
+            fifteen_weights = FixedWeights(SVector{15, E}(ntuple(_ -> one(E), 15)))
+            @test_throws ArgumentError checked(static_algorithm(E; metric = fifteen_weights), E[1 // 10, 1 // 10]; problems = storage([fifteen, fifteen]))
+            @test isnothing(checked(static_algorithm(E), E[1 // 10, 1 // 5]))
+            @test isempty(land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, 20; workgroupsize = 1))
+        end
+        @test_throws ArgumentError PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), E[1 // 10], bound, 1)
+        # A work item would read coordinate 3 of a 2-coordinate point and throw a BoundsError.
+        @test_throws ArgumentError land_batch([circle], static_algorithm(E), E[1 // 10], Bound(3, E(3) / 4), 20; workgroupsize = 1)
     end
 
     @testset "Into writes a mutable array in place and rebuilds a static one" begin

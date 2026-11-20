@@ -864,6 +864,25 @@ function reached_state(
     )
 end
 
+"""`pinned_correction`'s result: the corrected point and the residual it corrected, or the cause that stopped it."""
+const PinnedCorrection{E} = Result{@NamedTuple{corrected::Vector{E}, residual::Vector{E}}, TraceCause}
+
+"""
+    pinned_correction(game, point, pass_work)
+
+The endpoint check's Newton correction of `point = [w; λ]` on `game`, with `λ` pinned (`branch_system!` on the pass
+work `pass_work`): `Ok((; corrected, residual))`, the point itself at an exact root, which needs none. A non-finite
+residual or Jacobian fails `NotFinite`, as LAPACK rejects it, and a singular Jacobian fails `Singular`.
+"""
+function pinned_correction(game::LogitGame, point::AbstractVector{E}, pass_work::Any)::PinnedCorrection{E} where {E <: Real}
+    system = branch_system!(BranchWorkspace(point, pass_work), game, point, last(point))
+    all(iszero, system.residual) && return Ok((; corrected = collect(point), system.residual))
+    (all(isfinite, system.residual) && all(isfinite, system.jacobian)) || return Err(NotFinite)
+    factorization = lu!(system.jacobian; check = false)
+    issuccess(factorization) || return Err(Singular)
+    return Ok((; corrected = point .- factorization \ system.residual, system.residual))
+end
+
 """
     verified_endpoint(progress, outcome, game, pass_work, corrector, context)
 
@@ -873,11 +892,10 @@ landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's met
 `pass_work`, as `DefaultLS`. That
 corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
 
-An exact root needs no correction, as BifurcationKit's own test passes it. A singular Jacobian fails `Singular`. An
-unsettled correction (as `settled`: past `corrector.logit_tolerance` beyond `settle_ulps` ulps of each logit; NaN
-included) fails `PrecisionExhausted`. Its `correction` runs from the endpoint (`gaps`, `precision`) to `stalled_iterate`, a plain
-Newton iterate at pin `lambda`, arclength zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the
-correction.
+The correction is `pinned_correction`'s, which fails `NotFinite` or `Singular`. An unsettled correction (as `settled`:
+past `corrector.logit_tolerance` beyond `settle_ulps` ulps of each logit) fails `PrecisionExhausted`. Its `correction`
+runs from the endpoint (`gaps`, `precision`) to `stalled_iterate`, a plain Newton iterate at pin `lambda`, arclength
+zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the correction.
 """
 function verified_endpoint(
         progress::TraceProgress{E},
@@ -889,15 +907,9 @@ function verified_endpoint(
     )::TraceResult{E} where {E <: Real}
     (; gaps, precision) = progress
     point = [gaps; precision]
-    system = branch_system!(BranchWorkspace(point, pass_work), game, point, precision)
-    if all(iszero, system.residual)
-        return Ok(Traced(logits_at(point), progress.steps, E(outcome.logit_accuracy)))
-    end
-    factorization = lu!(system.jacobian; check = false)
-    if !issuccess(factorization)
-        return Err(TraceFailure(Singular, stopped_context(progress, outcome, context)))
-    end
-    corrected = point .- factorization \ system.residual
+    pinned = pinned_correction(game, point, pass_work)
+    is_error(pinned) && return Err(TraceFailure(unwrap_error(pinned), stopped_context(progress, outcome, context)))
+    (; corrected) = unwrap(pinned)
     (; logit_tolerance, settle_ulps) = corrector
     correction, excess = logit_corrections(point, corrected, settle_ulps * eps(E), one(E))
     if !(excess <= logit_tolerance)

@@ -201,9 +201,10 @@ function (pass::PoisonedPass)(
     return gain, gain_slope, gain_precision_slope
 end
 
-"""A pass that gives a NaN slope, so the Jacobian is non-finite where the residual is not."""
-struct NaNSlopePass{P}
+"""A pass that gives a NaN slope at precision `from` and above, so the Jacobian is non-finite where the residual is not."""
+struct NaNSlopePass{P, F <: Real}
     pass::P
+    from::F
 end
 
 GameTracing.logit_ranges(pass::NaNSlopePass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
@@ -217,7 +218,7 @@ function (pass::NaNSlopePass)(
         precision::Real,
     )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     gain, gain_slope, gain_precision_slope = pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
-    fill!(gain_slope, NaN32)
+    precision >= pass.from && fill!(gain_slope, NaN32)
     return gain, gain_slope, gain_precision_slope
 end
 

@@ -1,7 +1,6 @@
 using CommonSolve: CommonSolve
 using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
 using KernelAbstractions: KernelAbstractions
-using LinearAlgebra: issuccess, lu!
 using LinearSolve: LinearSolve
 using Logging: @debug
 using PathFollowing: PathFollowing
@@ -636,32 +635,30 @@ end
 
 """
 The `TraceResult` at `tracer`'s point on its target precision, after one more Newton correction there with `λ` pinned
-(`branch_system!`), the check of BifurcationKit's `verified_endpoint`. An exact root needs none. A singular Jacobian
-fails `Singular` (reason `:singular_endpoint`). The correction must settle under the trace's own corrector
+(`pinned_correction`), the check of BifurcationKit's `verified_endpoint`. That correction fails `NotFinite` (reason
+`:not_finite_endpoint`) or `Singular` (`:singular_endpoint`). It must settle under the trace's own corrector
 (`settle_test`) and in logits (`endpoint_check`, a `LogitSettled`), else it fails `PrecisionExhausted` (reason
-`:unsettled_endpoint`, NaN included). Its context carries the correction's largest logit move `correction` and its
+`:unsettled_endpoint`). Its context carries the correction's largest logit move `correction` and its
 iterate `stalled_iterate` at pin `lambda`, as BifurcationKit's does. Else the point is `Ok(Traced)`, its
 `logit_accuracy` that logit move. The logit test bounds the endpoint's logits where the default `StrategyDistance`
 does not: a strategy off the support counts by its probability.
 """
 function verified_landing(tracer::PathFollowing.Tracer{E}, endpoint_check::LogitSettled{E}, context::NamedTuple)::TraceResult{E} where {E <: Real}
-    (; point, steps) = tracer
+    (; point, steps, step_length) = tracer
     (; game, pass_work) = tracer.problem.system!!
+    pinned = pinned_correction(game, point, pass_work)
+    if is_error(pinned)
+        cause = unwrap_error(pinned)
+        reason = ifelse(cause == NotFinite, :not_finite_endpoint, :singular_endpoint)
+        return Err(TraceFailure(cause, stopped_context(reason, point, steps, step_length, context, (;))))
+    end
+    (; corrected, residual) = unwrap(pinned)
     precision = last(point)
-    system = branch_system!(BranchWorkspace(point, pass_work), game, point, precision)
-    if all(iszero, system.residual)
-        return Ok(Traced(collect(logits_at(point)), steps, zero(E)))
-    end
-    factorization = lu!(system.jacobian; check = false)
-    if !issuccess(factorization)
-        return Err(TraceFailure(Singular, stopped_context(:singular_endpoint, point, steps, tracer.step_length, context, (;))))
-    end
-    corrected = point .- factorization \ system.residual
     correction = logit_change(point, corrected)
-    settled = tracer.algorithm.corrector.converged(point, corrected, system.residual, one(E))
-    if !(settled && endpoint_check(point, corrected, system.residual, one(E)))
+    settled = tracer.algorithm.corrector.converged(point, corrected, residual, one(E))
+    if !(settled && endpoint_check(point, corrected, residual, one(E)))
         stall = (; lambda = precision, correction, stalled_iterate = corrected, stalled_pin = precision, stalled_arclength = zero(E))
-        return Err(TraceFailure(PrecisionExhausted, stopped_context(:unsettled_endpoint, point, steps, tracer.step_length, context, stall)))
+        return Err(TraceFailure(PrecisionExhausted, stopped_context(:unsettled_endpoint, point, steps, step_length, context, stall)))
     end
     return Ok(Traced(collect(logits_at(point)), steps, correction))
 end

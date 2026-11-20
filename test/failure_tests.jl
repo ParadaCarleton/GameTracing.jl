@@ -17,7 +17,7 @@ end
 
 @testset "a non-finite Jacobian is a failure value" begin
     result = trace_endpoint(
-        LogitGame(NaNSlopePass(GAME), TARGET_PRECISION),
+        LogitGame(NaNSlopePass(GAME, 0), TARGET_PRECISION),
         WIDTH,
         FAILURE_SETTINGS,
     )

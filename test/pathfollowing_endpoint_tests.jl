@@ -126,7 +126,7 @@ end
     @test refused.context.last_refusal == PathFollowing.AcceptRefused
     @test refused.context.reason in (:refusals, :unresolved_step)
     # A non-finite Jacobian at a finite start fails there as `NotFinite`; BifurcationKit's fails `Singular` or `TraceStuck`.
-    nan_slope = unwrap_error(trace_endpoint(LogitGame(NaNSlopePass(linear), target), 2, settings; context = (; label = :slope)))
+    nan_slope = unwrap_error(trace_endpoint(LogitGame(NaNSlopePass(linear, 0), target), 2, settings; context = (; label = :slope)))
     @test (nan_slope.cause, nan_slope.context.reason, nan_slope.context.label) == (GameTracing.NotFinite, :not_finite_start, :slope)
     @test (nan_slope.context.precision, nan_slope.context.logits, nan_slope.context.steps) == (0, zeros(element, 2), 0)
 end
@@ -203,4 +203,24 @@ end
     @test (exact.logits, exact.steps, exact.logit_accuracy) == (zeros(element, 1), 0, 0)
     singular = unwrap_error(landed_at(LogitGame(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), element(4)), zeros(element, 1), settings))
     @test (singular.cause, singular.context.reason) == (GameTracing.Singular, :singular_endpoint)
+    # A Jacobian non-finite only at the target fails `NotFinite`; LAPACK would throw on it.
+    late_nan = LogitGame(NaNSlopePass(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), 1), element(2))
+    not_finite = unwrap_error(landed_at(late_nan, element[1 // 2], settings))
+    @test (not_finite.cause, not_finite.context.reason, not_finite.context.label) == (GameTracing.NotFinite, :not_finite_endpoint, :landed)
+end
+
+@testset "BifurcationKit's endpoint check fails NotFinite on a non-finite Jacobian ($element)" for element in (Float32, widen(Float32))
+    # `G = 1/2` puts the root at `w = 1/2`; the check at `w = 1/4` needs a correction, and so the Jacobian.
+    constant = LinearGainPass(zeros(element, 1, 1), element[1 // 2])
+    progress(gap::Real) = GameTracing.TraceProgress(element[gap], element(2), 3, zero(element), element(2), zeros(element, 1), one(element), false)
+    outcome = (; unresolved = false, step_length = one(element), accepted_step = one(element), logit_accuracy = zero(element), exception = nothing)
+    work = GameTracing.pass_workspace(constant, zeros(element, 1))
+    corrector = BifurcationKitSettings{element}().corrector
+    late_nan = LogitGame(NaNSlopePass(constant, 1), element(2))
+    failure = unwrap_error(GameTracing.verified_endpoint(progress(1 // 4), outcome, late_nan, work, corrector, (; label = :bk)))
+    @test (failure.cause, failure.context.steps, failure.context.label) == (GameTracing.NotFinite, 3, :bk)
+    # Under `from` the slope stays finite, and a point near the root passes.
+    finite = LogitGame(NaNSlopePass(constant, 3), element(2))
+    near = unwrap(GameTracing.verified_endpoint(progress(1 // 2 + 1 // 2^20), outcome, finite, work, corrector, (;)))
+    @test near.steps == 3 && isapprox(near.logit_accuracy, 2 / 2^20; rtol = sqrt(eps(element)))
 end

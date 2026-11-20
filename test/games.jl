@@ -1,6 +1,7 @@
 using LinearAlgebra: Diagonal, I, det, dot, norm, opnorm, pinv
 using PathFollowing: PathFollowing
 using Random: AbstractRNG, RandomDevice, Xoshiro
+using StaticArrays: SArray
 
 """A generator on a fresh seed, logged so a failing draw can be replayed with `Xoshiro(seed)`."""
 function fresh_rng()::Xoshiro
@@ -753,3 +754,12 @@ function (pass::WindowNoisePass)(
     return gain, gain_slope, gain_precision_slope
 end
 
+"""`payoffs` as a game with static payoffs (`SArray`), as `logit_solve_lambda_batch` takes it."""
+function static_game(payoffs::Tuple)::NormalFormGains
+    return NormalFormGains(map(payoff -> SArray{Tuple{size(payoff)...}}(payoff), payoffs))
+end
+
+"""PathFollowing settings in `element` with the static solver a batch needs, and `options`."""
+function batch_settings(element::Type{<:Real}; options...)::PathFollowingSettings
+    return PathFollowingSettings{element}(; linear_solver = PathFollowing.StaticLU(), options...)
+end

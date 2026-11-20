@@ -1,9 +1,10 @@
 using CommonSolve: CommonSolve
 using ErrorTypes: Err, Ok, Result, is_error, unwrap, unwrap_error
+using KernelAbstractions: KernelAbstractions
 using LinearSolve: LinearSolve
 using Logging: @debug
 using PathFollowing: PathFollowing
-using StaticArrays: SVector, StaticVector
+using StaticArrays: SArray, SVector, Size, StaticVector
 
 """
 How the corrector measures a move between two points `[w; λ]` (`corrector_measure`), with its settle tolerance and
@@ -556,3 +557,84 @@ function stepped_landing!!(
     return tracer, Ok(copy(tracer.point))
 end
 
+"""
+    logit_solve_lambda_batch(games, lam; settings, backend, workgroupsize)
+
+`logit_solve_lambda` on PathFollowing for each of `games` at the one precision `lam`: a `ProfileResult` per game, in
+order, on the host. Each game traces in its own work item on the KernelAbstractions `backend` (PathFollowing's
+`land_batch`), from its flat start with its own first step (`opening_step`). A failed trace gives the `TraceFailure`
+that `logit_solve_lambda` gives.
+
+- `games`: `NormalFormGains` of one concrete type with static payoffs (`SArray`), each player with one strategy count.
+- `settings`: `PathFollowingSettings` in the payoffs' float type, with `linear_solver = PathFollowing.StaticLU()`.
+- `backend`: the device that runs the traces. The problems copy to it, and the landings copy back.
+- `workgroupsize`: the work items per group. The CPU backend runs each group on one thread, so use a small group there.
+
+`lam` must be non-negative and finite in the trace's element type (`ArgumentError` otherwise). The traces run on
+static arrays and `StaticLU`, whose arithmetic differs from the mutable trace's: the profiles agree with
+`logit_solve_lambda`'s to the corrector's tolerance, not to the bit.
+"""
+function logit_solve_lambda_batch(
+        games::AbstractVector{G},
+        lam::Real;
+        settings::PathFollowingSettings{E},
+        backend::KernelAbstractions.Backend,
+        workgroupsize::Integer,
+    )::Vector{ProfileResult{E, N}} where {N, G <: NormalFormGains{N, <:SArray}, E <: Real}
+    isconcretetype(G) || throw(ArgumentError(lazy"the games must share one concrete type; got $G"))
+    if !(settings.linear_solver isa PathFollowing.StaticLU)
+        throw(ArgumentError(lazy"a batch needs linear_solver = PathFollowing.StaticLU(); got $(settings.linear_solver)"))
+    end
+    precision = E(lam)
+    # Checked before and after conversion to `E`, as in `logit_solve_lambda`.
+    if !(reachable(lam) && reachable(precision))
+        throw(ArgumentError(lazy"lam must be non-negative and finite in $E; got $lam"))
+    end
+    isempty(games) && return ProfileResult{E, N}[]
+    require_payoff_type(first(games), settings)
+    (; problems, algorithm, first_steps, bound) = batch_inputs(games, precision, settings)
+    landed = PathFollowing.land_batch(
+        on_device(backend, problems), algorithm, on_device(backend, first_steps), bound, settings.max_steps; workgroupsize,
+    )
+    return landed_profile.(games, Array(landed), precision)
+end
+
+"""
+The inputs of `land_batch` for `games` at precision `precision`, on the host: a static `CurveProblem` per game
+(`path_problem`), the isbits algorithm (`path_algorithm`), each game's first step (`path_first_step`) and the bound.
+"""
+function batch_inputs(games::AbstractVector{<:NormalFormGains}, precision::E, settings::PathFollowingSettings{E})::NamedTuple where {E <: Real}
+    flat = flat_logits(first(games), E)
+    problems = path_problem.(games, (flat,))
+    first_steps = path_first_step.(problems, (settings,))
+    algorithm = path_algorithm(settings, first(games), first(problems).start)
+    return (; problems, algorithm, first_steps, bound = PathFollowing.Bound(length(flat) + 1, precision))
+end
+
+"""The flat logits of a static game: one static zero in `E` per logit."""
+function flat_logits(::NormalFormGains{N, A}, ::Type{E})::StaticVector{<:Any, E} where {N, A <: SArray, E <: Real}
+    return zeros(SVector{sum(Tuple(Size(A))) - N, E})
+end
+
+"""`array` copied into a new array on `backend` (`KernelAbstractions.allocate`)."""
+function on_device(backend::KernelAbstractions.Backend, array::AbstractVector{T})::AbstractVector{T} where {T}
+    return copyto!(KernelAbstractions.allocate(backend, T, length(array)), array)
+end
+
+"""
+The `ProfileResult` of a batch trace of `gains` to precision `precision` that ended in `landing`: the profile there, or
+the failure `logit_solve_lambda` gives (`start_cause` before the first step, `stopped_failure` after).
+"""
+function landed_profile(
+        gains::NormalFormGains{N},
+        landing::PathFollowing.Landing{<:StaticVector{<:Any, E}, E},
+        precision::E,
+    )::ProfileResult{E, N} where {N, E <: Real}
+    landed = PathFollowing.landing_result(landing)
+    is_error(landed) || return Ok(LogitQREProfile(gains, precision, collect(logits_at(unwrap(landed)))))
+    failure = unwrap_error(landed)
+    if failure.cause == PathFollowing.NotFiniteStart || failure.cause == PathFollowing.SingularStart
+        return Err(TraceFailure(start_cause(failure), start_context(failure, logit_count(gains), (;))))
+    end
+    return Err(stopped_failure(failure, landing.point, landing.steps, (; lam = precision)))
+end

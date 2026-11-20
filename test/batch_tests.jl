@@ -26,6 +26,20 @@ function largest_strategy_gap(left::Tuple, right::Tuple)::Real
     return maximum(maximum.(abs, left .- right))
 end
 
+"""Whether two failure contexts hold one set of keys and equal values, each float within `tolerance` relative."""
+function same_context(left::NamedTuple, right::NamedTuple, tolerance::Real)::Bool
+    return keys(left) == keys(right) && all(close_or_equal(left[key], right[key], tolerance) for key in keys(left))
+end
+
+"""Whether two context values agree: floats within `tolerance` relative, anything else equal."""
+function close_or_equal(left::Any, right::Any, ::Real)::Bool
+    return isequal(left, right)
+end
+
+function close_or_equal(left::T, right::T, tolerance::Real)::Bool where {T <: Union{AbstractFloat, AbstractVector{<:AbstractFloat}}}
+    return isapprox(left, right; rtol = tolerance)
+end
+
 """The bytes a warm static `init` and `land!!` of `problem` toward `bound` allocate."""
 function landing_bytes(
         problem::PathFollowing.CurveProblem,
@@ -65,7 +79,9 @@ end
     lam = element(4)
     for counts in BATCH_SHAPES
         payoffs = drawn_payoffs(rng, element, counts, 12)
-        for (payoff, result) in zip(payoffs, cpu_batch(static_game.(payoffs), lam, batch_settings(element)))
+        results = cpu_batch(static_game.(payoffs), lam, batch_settings(element))
+        @test length(results) == length(payoffs)
+        for (payoff, result) in zip(payoffs, results)
             sequential = only(unwrap(logit_solve_lambda(NormalFormGains(payoff), lam; settings = PathFollowingSettings{element}())))
             @test largest_strategy_gap(unwrap(result).profile, sequential.profile) <= 256 * eps(element)
         end
@@ -106,17 +122,22 @@ end
     drawn = drawn_payoffs(rng, element, (2, 2), 3)
     poisoned = [(element[NaN32 0; 0 0], element[0 0; 0 0])]
     unsettled = (; newton_iterations = 1, distance = StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), max_refusals = 2)
+    # As in logit_solve_tests.jl: 2^10 / eps ulps resolve only the move off precision zero.
+    unresolved = (; min_step_ulps = round(Int, 2^10 / eps(element)))
+    # A normal-form start has `∂F/∂w = I`, so PathFollowing's SingularStart cannot occur.
     for (options, payoffs, cause, reason) in (
             ((; max_steps = 1), drawn, GameTracing.NoConvergence, :max_steps),
             ((;), poisoned, GameTracing.NotFinite, :NotFiniteStart),
             (unsettled, drawn, GameTracing.TraceStuck, :refusals),
+            (unresolved, drawn, GameTracing.TraceStuck, :unresolved_step),
         )
-        for (payoff, result) in zip(payoffs, cpu_batch(static_game.(payoffs), lam, batch_settings(element; options...)))
+        results = cpu_batch(static_game.(payoffs), lam, batch_settings(element; options...))
+        @test length(results) == length(payoffs)
+        for (payoff, result) in zip(payoffs, results)
             failure = unwrap_error(result)
             expected = unwrap_error(logit_solve_lambda(NormalFormGains(payoff), lam; settings = PathFollowingSettings{element}(; options...)))
             @test (failure.cause, failure.context.reason) == (expected.cause, expected.context.reason) == (cause, reason)
-            @test keys(failure.context) == keys(expected.context)
-            @test failure.context.steps == expected.context.steps
+            @test same_context(failure.context, expected.context, 256 * eps(element))
         end
     end
 end

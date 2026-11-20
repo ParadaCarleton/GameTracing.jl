@@ -123,6 +123,28 @@ end
     @test unwrap_error(result).context.label == :broken
 end
 
+"""A pass on the contract before `pass!!`: it writes its outputs in place and returns `nothing`."""
+struct InPlacePass{P}
+    pass::P
+end
+
+GameTracing.logit_ranges(pass::InPlacePass)::Any = GameTracing.logit_ranges(pass.pass)
+GameTracing.gap_bound(pass::InPlacePass)::Real = GameTracing.gap_bound(pass.pass)
+GameTracing.pass_workspace(pass::InPlacePass, logits::AbstractVector)::Any = pass_workspace(pass.pass, logits)
+
+function (pass::InPlacePass)(arguments::Any...)::Nothing
+    pass.pass(arguments...)
+    return nothing
+end
+
+@testset "a pass that returns nothing, as before pass!!, throws an ArgumentError that names what to return" begin
+    settings = BifurcationKitSettings{Float32}()
+    @test_throws "pass!! must return (gain, gain_slope, gain_precision_slope)" trace_endpoint(LogitGame(InPlacePass(GAME), TARGET_PRECISION), WIDTH, settings)
+    gains = NormalFormGains(map(single_precision, LOGITNASH_GAMES.matching_pennies))
+    game = LogitGame(InPlacePass(gains), TARGET_PRECISION)
+    @test_throws "pass!! must return (work, gain, gain_slope, gain_precision_slope)" trace_endpoint(game, logit_count(gains), settings)
+end
+
 @testset "every state weight in (0, 1) traces, a one-logit game at the default settings included" begin
     for state_weight in (0.1f0, 0.5f0, 0.9f0), distance in instances(StepDistance)
         geometry = TraceGeometry{Float32}(; distance, state_weight, precision_term = TargetPrecisionTerm)

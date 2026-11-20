@@ -97,7 +97,8 @@ end
 
 """
 Call `pass!!` on its outputs, with its work arrays `work` unless it has none (`nothing`). Return the work and the
-three outputs, each changed in place or new (`Into`).
+three outputs, each changed in place or new (`Into`). A pass that returns anything else, such as `nothing`, throws an
+`ArgumentError`. The check folds away for a pass whose return type infers.
 """
 function run_pass!!(
         pass!!::Any,
@@ -109,9 +110,13 @@ function run_pass!!(
         precision::Real,
     )::Tuple{W, G, S, P} where {W, G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     if isnothing(work)
-        return (work, pass!!(gain, gain_slope, gain_precision_slope, logits, precision)...)
+        outputs = pass!!(gain, gain_slope, gain_precision_slope, logits, precision)
+        outputs isa Tuple{G, S, P} || throw(ArgumentError(lazy"pass!! must return (gain, gain_slope, gain_precision_slope) as a $(Tuple{G, S, P}); got a $(typeof(outputs))"))
+        return (work, outputs...)
     end
-    return pass!!(work, gain, gain_slope, gain_precision_slope, logits, precision)
+    returned = pass!!(work, gain, gain_slope, gain_precision_slope, logits, precision)
+    returned isa Tuple{W, G, S, P} || throw(ArgumentError(lazy"pass!! must return (work, gain, gain_slope, gain_precision_slope) as a $(Tuple{W, G, S, P}); got a $(typeof(returned))"))
+    return returned
 end
 
 """

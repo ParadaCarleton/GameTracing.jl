@@ -228,8 +228,6 @@ end
         zeros(Float32, 2),
         0.0f0,
         false,
-        false,
-        shipped_loop(TARGET_PRECISION),
     )
     result = GameTracing.reached_state(
         progress,
@@ -250,7 +248,7 @@ end
 """`reached_state` of a trace of `game` to `gaps` on its target, its accepted points settled within `accuracy`."""
 function reached_at(game::LogitGame, gaps::AbstractVector{E}, accuracy::E)::GameTracing.TraceResult{E} where {E <: Real}
     target = E(game.target_precision)
-    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false, false, shipped_loop(target))
+    progress = GameTracing.TraceProgress(collect(gaps), target, 1, zero(E), target, zero(gaps), one(E), false)
     return GameTracing.reached_state(progress, ran_outcome(accuracy), game, BifurcationKitSettings{E}(), (;))
 end
 
@@ -324,7 +322,6 @@ end
         GameTracing.NoRedraw(),
         GameTracing.RedrawSlot(game, false, 0.1f0),
         GameTracing.CorrectorSettings{Float32}(),
-        shipped_loop(TARGET_PRECISION),
     )
     start, moved = branch_record(Float32[0, 0], 0.0f0, 0),
         branch_record(Float32[0.1f0, 0.2f0], 0.5f0, 1)
@@ -347,8 +344,6 @@ end
         zeros(Float32, 2),
         0.0f0,
         false,
-        false,
-        shipped_loop(TARGET_PRECISION),
     )
     @test GameTracing.branch_progress([start], opening) === opening
     progress = GameTracing.branch_progress([start, moved], opening)
@@ -394,106 +389,6 @@ end
         GameTracing.NoConvergence
 end
 
-"""A branch record at `angle` on the unit circle in the (gap, param) plane, tangent along the circle if `turning`."""
-function circle_record(angle::E, step::Integer, turning::Bool)::NamedTuple where {E <: Real}
-    tangent_scale = turning ? one(E) : zero(E)
-    return (;
-        gaps = [cos(angle)], gap_tangent = [-sin(angle) * tangent_scale], tangent_precision = cos(angle) * tangent_scale,
-        param = sin(angle), step,
-    )
-end
-
-"""The records of `laps` laps of `per_lap` steps round the unit circle, from its first point."""
-function circle_branch(
-        ::Type{E},
-        laps::Integer,
-        per_lap::Integer,
-        turning::Bool,
-    )::AbstractVector where {E <: Real}
-    return [circle_record(E(2 * pi * (index - 1) / per_lap), index, turning) for index in 1:(laps * per_lap)]
-end
-
-"""
-The 1-based index of the first record of `branch` that `looped` flags against the records before it under `loop`, or
-`nothing`.
-"""
-function first_loop(branch::AbstractVector, loop::GameTracing.LoopTest)::Union{Nothing, Int}
-    return findfirst([GameTracing.looped(view(branch, firstindex(branch):(index - 1)), branch[index], loop) for index in eachindex(branch)])
-end
-
-"""
-`first_loop` under the shipped loop test at `target_precision`: one for the records of a unit circle, whose plane
-`(w, λ)` then measures as `(P w, λ / P)` does.
-"""
-function first_loop(branch::AbstractVector, target_precision::Real)::Union{Nothing, Int}
-    return first_loop(branch, shipped_loop(oftype(first(branch).param, target_precision)))
-end
-
-"""`laps` laps of eight steps round the unit circle from `start` radians, with zero precision tangents at its folds."""
-function octagon_branch(::Type{E}, start::Real, laps::Integer)::AbstractVector where {E <: Real}
-    return [
-        (; record..., tangent_precision = abs(record.tangent_precision) < sqrt(eps(E)) ? zero(E) : record.tangent_precision)
-            for record in (circle_record(E(start + pi * (index - 1) / 4), index, true) for index in 1:(8 * laps))
-    ]
-end
-
-@testset "a branch that goes round a closed loop is flagged $element" for element in (Float32, widen(Float32))
-    circle = circle_branch(element, 3, 20, true)
-    flagged = first_loop(circle, 1)
-    # Lap 1 crosses its top fold at record 6 or 7; lap 2 crosses it again 20 records on, as rounding at the fold decides.
-    @test flagged in (26, 27)
-    # A lap whose records fall between the first lap's records passes the same fold.
-    @test first_loop([circle_record(element(4 * pi * (index - 1) / 39), index, true) for index in 1:80], 1) == 26
-    # Steps that turn 68° put each fold estimate off the fold, yet within the reach of the lap's fold estimate.
-    @test first_loop([circle_record(element(2 * pi * (index - 1) * 10 / 53), index, true) for index in 1:19], 1) == 8
-    # Records on the folds, with zero precision tangents, hide no fold, whichever way it turns.
-    for start in (0, pi)
-        octagon = octagon_branch(element, start, 2)
-        @test count(record -> iszero(record.tangent_precision), octagon) == 4
-        @test first_loop(octagon, 1) == 12
-    end
-    # Records without a tangent cross no fold; open paths never loop.
-    @test isnothing(first_loop(circle_branch(element, 3, 20, false), 1))
-    line = [branch_record([element(index) / 10], element(index) / 20, index) for index in 1:60]
-    @test isnothing(first_loop(line, 1))
-    # A path whose precision never turns back crosses no fold, though it laps the circle.
-    rising = [(; record..., tangent_precision = abs(record.tangent_precision) + one(element)) for record in circle]
-    @test isnothing(first_loop(rising, 1))
-    # Its two top folds lie π apart along the gaps.
-    s_curve = [
-        (; branch_record([element(index) / 10], sin(element(index) / 5), index)..., gap_tangent = [one(element)], tangent_precision = cos(element(index) / 5))
-            for index in 1:60
-    ]
-    @test isnothing(first_loop(s_curve, 1))
-
-    game = LogitGame(GAME, one(element))
-    finalise = GameTracing.TraceFinalise(
-        GameTracing.AcceptAll(),
-        GameTracing.NoRedraw(),
-        GameTracing.RedrawSlot(game, false, element(1) / 10),
-        GameTracing.CorrectorSettings{typeof(element(1))}(),
-        shipped_loop(one(element)),
-    )
-    @test finalised(finalise, circle[10], circle[1:9])
-    @test !finalised(finalise, circle[flagged], circle[1:(flagged - 1)])
-
-    opening = GameTracing.TraceProgress(zeros(element, 1), zero(element), 0, zero(element), zero(element), zeros(element, 1), zero(element), false, false, shipped_loop(one(element)))
-    @test !GameTracing.branch_progress(circle[1:10], opening).looped
-    progress = GameTracing.branch_progress(circle[1:flagged], opening)
-    @test progress.looped && !progress.unmoved
-    failure = unwrap_error(
-        GameTracing.reached_state(
-            progress,
-            (; step_length = zero(element), accepted_step = zero(element), exhausted = nothing, logit_accuracy = zero(element), unresolved = false, exception = nothing),
-            game,
-            BifurcationKitSettings{element}(; max_steps = 1000),
-            (;),
-        )
-    )
-    @test failure.cause == GameTracing.TraceStuck
-    @test failure.context.looped
-end
-
 """
 The records of a switchback in the (gap, param) plane: up a sheet with a wiggle, a left U-turn, down a sheet, a right
 U-turn and up a third sheet. Sheets take steps of 0.3 and U-turns of 0.05, so adjacent sheets lie closer than a step.
@@ -511,75 +406,17 @@ function switchback_branch(::Type{E})::AbstractVector where {E <: Real}
     ]
 end
 
-@testset "a switchback whose sheets lie closer than a step closes no loop ($element)" for element in (Float32, widen(Float32))
+@testset "a switchback whose sheets lie closer than a step keeps the trace going ($element)" for element in (Float32, widen(Float32))
     branch = switchback_branch(element)
+    distance(left::NamedTuple, right::NamedTuple)::element = hypot(only(left.gaps) - only(right.gaps), left.param - right.param)
     # Records on later sheets lie closer to a record on an earlier sheet than to the record before them.
-    near = [
-        index for index in 3:length(branch) if any(
-                earlier -> GameTracing.squared_distance(branch[index], branch[earlier], 1) < GameTracing.squared_distance(branch[index], branch[index - 1], 1),
-                1:(index - 2),
-            )
-    ]
+    near = [index for index in 3:length(branch) if any(earlier -> distance(branch[index], branch[earlier]) < distance(branch[index], branch[index - 1]), 1:(index - 2))]
     @test length(near) > 20
-    @test isnothing(first_loop(branch, 1))
-    # `TraceFinalise` hands the loop test the accepted point's tangent, so it keeps the trace going there.
     finalise = GameTracing.TraceFinalise(
         GameTracing.AcceptAll(),
         GameTracing.NoRedraw(),
         GameTracing.RedrawSlot(LogitGame(GAME, one(element)), false, element(1) / 10),
         GameTracing.CorrectorSettings{typeof(element(1))}(),
-        shipped_loop(one(element)),
     )
-    @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), near)
-end
-
-"""
-Records of the open snake `λ = cos(2π w)` at `gaps`, with unit tangents along it. Its top folds lie at whole `w`, its
-bottom folds halfway between.
-"""
-function snake_branch(::Type{E}, gaps::AbstractVector)::AbstractVector where {E <: Real}
-    return [
-        (; branch_record([E(gap)], cospi(2 * E(gap)), index)..., gap_tangent = [inv(hypot(one(E), slope))], tangent_precision = slope / hypot(one(E), slope))
-            for (index, gap) in enumerate(gaps) for slope in (-2 * E(pi) * sinpi(2 * E(gap)),)
-    ]
-end
-
-@testset "a snake whose top folds lie a step apart closes no loop at the shipped reach ($element)" for element in (Float32, widen(Float32))
-    # Steps of 0.6 cross the top fold at 0, the bottom fold at 1/2 and the top fold at 1, a whole unit apart.
-    snake = snake_branch(element, [-3 // 10, 3 // 10, 7 // 10, 13 // 10])
-    @test isnothing(first_loop(snake, 1))
-    # A reach of one takes the two top folds for one: the steps' lengths sum to 1.2.
-    @test first_loop(snake, GameTracing.LoopTest(one(element), one(element))) == 4
-end
-
-"""
-Branch records that cross a fold at each `(gap, param, sign)` of `crossings`, in one step of 0.1 along the gap from a
-precision tangent of `sign` to one of `-sign`. A fold of `sign = 1` tops the branch.
-"""
-function fold_crossings(::Type{E}, crossings::AbstractVector)::AbstractVector where {E <: Real}
-    return [
-        (; branch_record([E(gap) + E(side) / 20], E(param), 1)..., tangent_precision = E(-side * sign))
-            for (gap, param, sign) in crossings for side in (-1, 1)
-    ]
-end
-
-@testset "two folds are one when they turn the same way and lie within the reach of their two steps ($element)" for element in (Float32, widen(Float32))
-    # Each crossing step is 0.1 long, so a top fold within `reach` times 0.2 of the first top fold closes a loop.
-    bound = 2 * BifurcationKitSettings{element}().loop_reach / 10
-    @test first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (bound * 9 / 10, 1, 1)]), 1) == 6
-    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (0, -1, -1), (bound * 11 / 10, 1, 1)]), 1))
-    # A top fold next to a bottom fold, as near a cusp, closes no loop.
-    @test isnothing(first_loop(fold_crossings(element, [(0, 1, 1), (bound / 2, 1, -1)]), 1))
-end
-
-@testset "the loop test measures in the units P w and λ / P, so a rescaled branch flags the same record ($element)" for element in (Float32, widen(Float32))
-    circle = circle_branch(element, 3, 20, true)
-    for target in element.((1 // 4, 3, 1000))
-        # The circle's plane is `(P w, λ / P)`: its points in `(w, λ)` divide the gaps by P and multiply the precision.
-        rescaled = [
-            (; record..., gaps = record.gaps ./ target, gap_tangent = record.gap_tangent ./ target, tangent_precision = record.tangent_precision * target, param = record.param * target)
-                for record in circle
-        ]
-        @test first_loop(rescaled, target) == first_loop(circle, 1)
-    end
+    @test all(index -> finalised(finalise, branch[index], branch[1:(index - 1)]), 2:length(branch))
 end

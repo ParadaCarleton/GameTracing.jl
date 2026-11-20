@@ -224,6 +224,13 @@ end
     @test fitting ≈ evaluated(gains, logits, 1).logit_slope[1:2, 3:3]
 end
 
+@testset "write_player_gain!! refuses a range that does not fit the player's expected payoffs ($element)" for element in (Float32, widen(Float32))
+    expected = element[1, 4, -2]
+    @test_throws DimensionMismatch GameTracing.write_player_gain!!(zeros(element, 3), 1:3, expected, 3)
+    @test GameTracing.write_player_gain!!(zeros(element, 3), 2:3, expected, 3) == element[0, 3, -3]
+    @test GameTracing.write_player_gain!!(zeros(SVector{3, element}), 2:3, SVector{3}(expected), 3) == SVector{3, element}(0, 3, -3)
+end
+
 @testset "NormalFormGains: the gain slope is the derivative of the gains, at any strategy counts" begin
     rng = fresh_rng()
     # Four rivals and more take the contraction two halvings deep.

@@ -421,10 +421,12 @@ function stopped_context(
 end
 
 """
-The `TraceFailure` of PathFollowing's `failure` that stopped a trace at `point = [w; λ]` after `steps` steps, `context`
-on it: `NoConvergence` for `TooManySteps`, else `TraceStuck` for `Unresolved` or `TooManyRefusals`, with the refusals.
+    TraceFailure(failure::PathFollowing.StepFailure, point, steps, context)
+
+The failure of PathFollowing's `failure` that stopped a trace at `point = [w; λ]` after `steps` steps, `context` on
+it: `NoConvergence` for `TooManySteps`, else `TraceStuck` for `Unresolved` or `TooManyRefusals`, with the refusals.
 """
-function stopped_failure(
+function TraceFailure(
         failure::PathFollowing.StepFailure{E},
         point::AbstractVector{E},
         steps::Integer,
@@ -452,11 +454,11 @@ function path_step!!(
     )::Tuple{T, Result{PathFollowing.AcceptedStep{E}, TraceFailure}} where {E <: Real, T <: PathFollowing.Tracer{E}}
     if tracer.steps >= max_steps
         spent = PathFollowing.StepFailure(PathFollowing.TooManySteps, PathFollowing.NoRefusal, tracer.step_length, 0)
-        return tracer, Err(stopped_failure(spent, tracer.point, tracer.steps, context))
+        return tracer, Err(TraceFailure(spent, tracer.point, tracer.steps, context))
     end
     tracer, stepped = PathFollowing.step!!(tracer, PathFollowing.Bound(length(tracer.point), precision))
     if is_error(stepped)
-        return tracer, Err(stopped_failure(unwrap_error(stepped), tracer.point, tracer.steps, context))
+        return tracer, Err(TraceFailure(unwrap_error(stepped), tracer.point, tracer.steps, context))
     end
     @debug "trace point" _group = :trace step = tracer.steps precision = last(tracer.point) step_length = unwrap(stepped).step_length
     return tracer, Ok(unwrap(stepped))
@@ -580,7 +582,7 @@ function logit_solve_lambda_batch(
         settings::PathFollowingSettings{E},
         backend::KernelAbstractions.Backend,
         workgroupsize::Integer,
-    )::Vector{ProfileResult{E, N}} where {N, G <: NormalFormGains{N, <:SArray}, E <: Real}
+    )::AbstractVector{ProfileResult{E, N}} where {N, G <: NormalFormGains{N, <:SArray}, E <: Real}
     isconcretetype(G) || throw(ArgumentError(lazy"the games must share one concrete type; got $G"))
     if !(settings.linear_solver isa PathFollowing.StaticLU)
         throw(ArgumentError(lazy"a batch needs linear_solver = PathFollowing.StaticLU(); got $(settings.linear_solver)"))
@@ -592,11 +594,7 @@ function logit_solve_lambda_batch(
     end
     isempty(games) && return ProfileResult{E, N}[]
     require_payoff_type(first(games), settings)
-    (; problems, algorithm, first_steps, bound) = batch_inputs(games, precision, settings)
-    landed = PathFollowing.land_batch(
-        on_device(backend, problems), algorithm, on_device(backend, first_steps), bound, settings.max_steps; workgroupsize,
-    )
-    return landed_profile.(games, Array(landed), precision)
+    return batch_profiles(games, batch_inputs(games, precision, settings), settings.max_steps; backend, workgroupsize)
 end
 
 """
@@ -606,9 +604,29 @@ The inputs of `land_batch` for `games` at precision `precision`, on the host: a 
 function batch_inputs(games::AbstractVector{<:NormalFormGains}, precision::E, settings::PathFollowingSettings{E})::NamedTuple where {E <: Real}
     flat = flat_logits(first(games), E)
     problems = path_problem.(games, (flat,))
-    first_steps = path_first_step.(problems, (settings,))
-    algorithm = path_algorithm(settings, first(games), first(problems).start)
-    return (; problems, algorithm, first_steps, bound = PathFollowing.Bound(length(flat) + 1, precision))
+    # The algorithm's type follows the settings' values, so no local holds it; `batch_profiles` takes it concretely.
+    return (;
+        problems,
+        algorithm = path_algorithm(settings, first(games), first(problems).start),
+        first_steps = path_first_step.(problems, (settings,)),
+        bound = PathFollowing.Bound(length(flat) + 1, precision),
+    )
+end
+
+"""
+Each of `games`' `ProfileResult` on the host, from `land_batch` of its `inputs` (`batch_inputs`) on `backend` in groups
+of `workgroupsize`, at most `max_steps` steps each.
+"""
+function batch_profiles(
+        games::AbstractVector{<:NormalFormGains},
+        inputs::NamedTuple,
+        max_steps::Integer;
+        backend::KernelAbstractions.Backend,
+        workgroupsize::Integer,
+    )::AbstractVector{<:ProfileResult}
+    (; problems, algorithm, first_steps, bound) = inputs
+    landed = PathFollowing.land_batch(on_device(backend, problems), algorithm, on_device(backend, first_steps), bound, max_steps; workgroupsize)
+    return landed_profile.(games, Array(landed), bound.value)
 end
 
 """The flat logits of a static game: one static zero in `E` per logit."""
@@ -623,7 +641,7 @@ end
 
 """
 The `ProfileResult` of a batch trace of `gains` to precision `precision` that ended in `landing`: the profile there, or
-the failure `logit_solve_lambda` gives (`start_cause` before the first step, `stopped_failure` after).
+the failure `logit_solve_lambda` gives (`start_cause` before the first step, a `StepFailure` after).
 """
 function landed_profile(
         gains::NormalFormGains{N},
@@ -636,5 +654,5 @@ function landed_profile(
     if failure.cause == PathFollowing.NotFiniteStart || failure.cause == PathFollowing.SingularStart
         return Err(TraceFailure(start_cause(failure), start_context(failure, logit_count(gains), (;))))
     end
-    return Err(stopped_failure(failure, landing.point, landing.steps, (; lam = precision)))
+    return Err(TraceFailure(failure, landing.point, landing.steps, (; lam = precision)))
 end

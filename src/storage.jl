@@ -1,8 +1,8 @@
-using StaticArrays: SArray
+using StaticArrays: SArray, setindex
 
 """
-`array` with `entry` at `indices`: written in place into a mutable array, or a new static array (`Base.setindex`). Use
-the returned array. GameTracing's static path never writes one element of a GPU array; PathFollowing's
+`array` with `entry` at `indices`: written in place into a mutable array, or a new static array (StaticArrays'
+`setindex`). Use the returned array. GameTracing's static path never writes one element of a GPU array; PathFollowing's
 `set_element!!` does.
 """
 @inline function set_entry!!(array::A, entry::Number, indices::Integer...)::A where {A <: AbstractArray}
@@ -11,7 +11,7 @@ the returned array. GameTracing's static path never writes one element of a GPU 
 end
 
 @inline function set_entry!!(array::A, entry::Number, indices::Integer...)::A where {A <: SArray}
-    return Base.setindex(array, entry, indices...)
+    return setindex(array, entry, indices...)
 end
 
 """`array` set to zeros: in place for a mutable array, or a new static array. Use the returned array."""
@@ -31,5 +31,5 @@ end
 end
 
 @inline function with_item!!(collection::C, index::Integer, item::Any)::C where {C <: Tuple}
-    return Base.setindex(collection, item, index)
+    return setindex(collection, item, index)
 end

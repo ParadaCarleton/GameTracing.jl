@@ -299,11 +299,12 @@ end
     @test count(check -> last(check) !== settings, checks) <= 1
 end
 
-# Two of the 7 draws at 1e-4 whose BifurcationKit Float32 trace stalled near the pitchfork on a Meteor Lake.
-const FLOAT32_STALLED_PITCHFORKS = (
-    ([2.999874150131597 1.2154126252561834e-5; -0.00010482790213372753 2.000060406365217], [2.000058691819911 8.572047555522358e-6; 8.006489022599519e-5 3.0000599148478537]),
-    ([3.0000694513302446 -0.0001601958687524617; -8.173649810089089e-5 2.000132529290259], [2.0000364515345765 6.871377377528037e-5; 0.00015500412506080802 2.999909808379389]),
-)
+# Draws 508 and 552 of seed 20261122 at noise 1e-4: two of the 7 whose BifurcationKit Float32 trace stalled near the
+# pitchfork on a Meteor Lake and on winwsl.
+const FLOAT32_STALLED_PITCHFORKS = let rng = Xoshiro(20261122)
+    draws = [unfolded_pitchfork(rng, inv(float(10^4))) for _ in 1:552]
+    (draws[508], draws[552])
+end
 
 @testset "unfolded pitchforks where BifurcationKit's Float32 trace stalled: Float64 cross-checks them, the fallback only at 1e-4" begin
     float32 = BifurcationKitSettings{Float32}()
@@ -319,9 +320,9 @@ end
 # The Float32 stall of the first `FLOAT32_STALLED_PITCHFORKS` draw on winwsl, traced to 4.9532833: the fields the checks
 # read. Its correction is 7.6% of its rounding bound, 2.4e-3; its residual 3.5% of its bound.
 const RECORDED_FLOAT32_STALL = (;
-    lambda = 0.80760336f0, precision = 0.8076254f0, logits = Float32[0.2016669, -0.2008812], correction = 0.00018011034f0,
-    stalled_iterate = Float32[0.24992676, -0.24851432, 0.80760336], stalled_pin = 0.80760336f0, stalled_arclength = 9.369129f-8,
-    gaps = Float32[0.24970351, -0.24873066], gap_tangent = Float32[1.3947775, 1.9262395], tangent_precision = 1.7230258f0,
+    lambda = 0.80760336f0, precision = 0.8076254f0, logits = [0.2016669f0, -0.2008812f0], correction = 0.00018011034f0,
+    stalled_iterate = [0.24992676f0, -0.24851432f0, 0.80760336f0], stalled_pin = 0.80760336f0, stalled_arclength = 9.369129f-8,
+    gaps = [0.24970351f0, -0.24873066f0], gap_tangent = [1.3947775f0, 1.9262395f0], tangent_precision = 1.7230258f0,
 )
 
 @testset "the fallback takes a recorded stall at rounding noise, at 1e-4 only; a moved iterate or a large correction fails" begin

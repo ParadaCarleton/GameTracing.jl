@@ -804,6 +804,11 @@ end
             @test isnothing(bound) || Array(device.point)[2] == host.point[2] == bound.value
             @test all(iszero, Array(device.oriented)) == (linear_solver isa LUFactorization)
         end
+        # Host weights of any vector type reach the device in one copy, never element by element.
+        for weights in (E[1, 2], E(1):E(1):E(2), view(E[1, 2, 3], 1:2))
+            frozen = frozen_metric(FixedWeights(weights), JLArray(E[1, 0]))
+            @test frozen.weights isa JLArray && Array(frozen.weights) == collect(weights)
+        end
     end
 
     @testset "property: random ellipses keep every point on the curve" begin

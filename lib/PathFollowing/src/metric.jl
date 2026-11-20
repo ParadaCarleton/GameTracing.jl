@@ -40,7 +40,8 @@ function frozen_metric(metric::FixedWeights, point::AbstractVector{E})::FixedWei
     if length(metric.weights) != length(point)
         throw(DimensionMismatch("$(length(metric.weights)) weights for points of $(length(point)) coordinates"))
     end
-    return FixedWeights(copyto!(similar(point), metric.weights))
+    # Through a host `Vector`: a range or a view would copy into a GPU array one element at a time.
+    return FixedWeights(copyto!(similar(point), Vector{E}(metric.weights)))
 end
 
 freeze_metric!(frozen::FixedWeights, ::AbstractVector)::FixedWeights = frozen

@@ -772,3 +772,11 @@ function started_tracer(gains::NormalFormGains, settings::PathFollowingSettings{
     problem = GameTracing.path_problem(gains, zeros(E, logit_count(gains)))
     return unwrap(GameTracing.path_init(problem, settings, GameTracing.PositivePrecision(GameTracing.AcceptAll())))
 end
+
+"""
+PathFollowing's step-control targets before the Gambit-strict defaults: a first correction of 1/4 and a turn of 1 rad.
+The jump hunts of the branch tests ran at them; the defaults keep those branches without the checks the tests isolate.
+"""
+function previous_targets(element::Type)::NamedTuple
+    return (; target_turn = 1, distance = StrategyDistance{element}(; target_correction = 1 // 4))
+end

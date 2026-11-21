@@ -361,12 +361,13 @@ end
 
 """
 The step control where the jump tests' games below left their branch: growth 2 and the summed metric at state weight 1,
-with the split check at trigger 1. The default growth of 1.1 keeps those games' branch without any check.
+at the previous targets (`previous_targets`), with the split check at trigger 1. The default growth of 1.1 keeps those
+games' branch without any check.
 """
 function growth_two(element::Type)::NamedTuple
     tolerance = PathFollowingSettings{element}().split_check.tolerance
     return (;
-        max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1),
+        previous_targets(element)..., max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1),
         split_check = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 1, tolerance),
     )
 end
@@ -589,20 +590,23 @@ const JUMPED_TWO_ACTION_GAMES = [
     end
 end
 
-# Games where PathFollowing jumped branches at its default step control without the split check: draws of a hunt over
-# 1000 fresh seeds of 20 random two-action games, and of the same-noise pitchforks at 300 seeds per scale.
-const DEFAULT_JUMPS = [
+# Games where PathFollowing jumped branches at its previous targets without the split check: draws of a hunt over 1000
+# fresh seeds of 20 random two-action games, and of the same-noise pitchforks at 300 seeds per scale.
+const PREVIOUS_TARGET_JUMPS = [
     [(two_action_games(Xoshiro(seed))[draw], nothing) for (seed, draw) in ((0x0db119e74ded1c3e, 2), (0x0fd92e270e7a0a26, 11), (0x2981f81ebefd5d7e, 3), (0x585f8d66c83d6b7a, 15))];
     [(same_noise_pitchfork(seed, scale), 4) for (seed, scale) in ((277, inv(float(100))), (218, inv(float(10))), (223, inv(float(10))))]
 ]
 
-@testset "PathFollowing keeps the principal branch where its default step control jumped; without its split check it jumps ($element)" for element in (Float32, widen(Float32))
-    for (payoffs, fixed) in DEFAULT_JUMPS
+@testset "PathFollowing keeps the principal branch where its previous targets jumped; there without its split check it jumps ($element)" for element in (Float32, widen(Float32))
+    for (payoffs, fixed) in PREVIOUS_TARGET_JUMPS
         precision = fixed === nothing ? logitnash_equilibrium(payoffs, 3).precision : fixed
         reference = branch_reference(NormalFormPass(map(float, payoffs)), length(payoffs), precision)
         @test reference.reached
         gains = NormalFormGains(map(table -> element.(table), payoffs))
-        for (settings, kept) in ((PathFollowingSettings{element}(), true), (PathFollowingSettings{element}(; split_check = nothing), false))
+        # The default targets keep each branch without the split check too.
+        arms = ((;), (; split_check = nothing), previous_targets(element), (; previous_targets(element)..., split_check = nothing))
+        for (overrides, kept) in zip(arms, (true, true, true, false))
+            settings = PathFollowingSettings{element}(; overrides...)
             landed = only(unwrap(logit_solve_lambda(gains, element(precision); settings)))
             @test agreeing(first_choices(-landed.logits), reference.first_choices) == kept
         end

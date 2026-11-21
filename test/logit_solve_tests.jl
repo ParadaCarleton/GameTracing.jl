@@ -344,10 +344,12 @@ end
     oracle = gambit_strategies(REVERSAL_GAME, checked.lam)
     @test largest_gap(checked.profile, oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
     gap_to_checked(overrides) = largest_gap(unwrap(logit_solve(gains; maxregret = 1.0f-4, settings = PathFollowingSettings{element}(; overrides...))).profile, checked.profile)
-    # The orientation check alone keeps the branch. The split check alone misses the long step, as its half steps run
-    # back too, and the trace ends elsewhere, as it does without either check.
+    # The orientation check alone keeps the branch. At the previous targets the split check alone misses the long step,
+    # as its half steps run back too, and the trace ends elsewhere, as it does without either check.
     @test gap_to_checked((; split_check = nothing)) < 1 // 1000
-    @test gap_to_checked((; orientation_check = nothing)) > 1 // 2
+    @test gap_to_checked((; previous_targets(element)..., orientation_check = nothing)) > 1 // 2
+    # The default targets take no such long step.
+    @test gap_to_checked((; orientation_check = nothing)) < 1 // 1000
     @test gap_to_checked((; orientation_check = nothing, split_check = nothing)) > 1 // 2
     # At growth 2 with the summed metric and trigger 1, the split check alone refuses the long step too; without either
     # check the trace ends elsewhere there as well.
@@ -366,7 +368,7 @@ end
     @test isnan(one_player(element[NaN32, 1], element[0, 1]))
     # Between opposite pure strategies the distance nears π, its largest (`correction_bound`); a logit move has none.
     @test one_player(element[-100, 1], element[100, 1]) ≈ element(π)
-    @test GameTracing.PathFollowing.correction_bound(one_player) == π
+    @test GameTracing.PathFollowing.correction_bound(one_player) ≈ π
     # Two players each move from even odds to 1:3: the profile moves √2 π / 6, and its distance is at most √2 π.
     two_binary = GameTracing.FisherRaoChange((1:1, 2:2))
     @test two_binary(element[0, 0, 1], element[log(element(3)), log(element(3)), 1]) ≈ sqrt(element(2)) * element(π) / 6
@@ -425,7 +427,8 @@ end
     # outside the support has a logit that grows like λ. Measured in logits, its corrections hold the steps short.
     rng = Xoshiro(1)
     gains = NormalFormGains(ntuple(_ -> element.(randn(rng, (2, 2, 2, 2, 2))), 5))
-    branches = map((StrategyDistance{element}(), LogitDistance{element}())) do distance
+    # At the previous targets: at the defaults LogitDistance takes 68 steps in Float32 and 73 in Float64 to 78.
+    branches = map((StrategyDistance{element}(; target_correction = 1 // 4), LogitDistance{element}(; target_correction = 1 // 2))) do distance
         unwrap(logit_solve_branch(gains; maxregret = 1.0f-5, settings = PathFollowingSettings{element}(; distance)))
     end
     @test 2 * length(first(branches)) < length(last(branches))

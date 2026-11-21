@@ -202,6 +202,7 @@ function step!!(
             return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
         end
     end
+    return
 end
 
 """

@@ -434,6 +434,7 @@ function recorded_points(
         point = tracer.point
         (recorder(logits_at(point), last(point)) && last(point) < target) || return Ok(nothing)
     end
+    return
 end
 
 """

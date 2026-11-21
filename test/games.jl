@@ -451,9 +451,6 @@ function settle_bound(distance::CorrectorDistance{E}, pass::Any, logits::Abstrac
     allowance = gambit_allowance(point, GameTracing.logit_ranges(pass), distance.settle_ulps * eps(E))
     return E(sqrt(2 * one(allowance)) * 2 * (distance.tolerance + allowance))
 end
-    end
-    return E(largest)
-end
 
 """Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_step` within `settle_bound` (`gambit_move`)."""
 function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool

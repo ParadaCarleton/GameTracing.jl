@@ -356,7 +356,7 @@ end
 
 @testset "PathFollowing's measure is Gambit's norm past each strategy's rounding ($element)" for element in (Float32, widen(Float32))
     distance = CorrectorDistance{element}()
-    measure = GameTracing.corrector_measure(distance, NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), 2)
+    measure = GameTracing.corrector_measure(distance, (1:1, 2:2))
     @test measure == GameTracing.LogProbabilityChange((1:1, 2:2), distance.settle_ulps * eps(element))
     @test GameTracing.PathFollowing.correction_bound(measure, element) === element(Inf32)
     # A strategy outside the support moves 500 logits and no probability; Gambit's norm counts its log probability.

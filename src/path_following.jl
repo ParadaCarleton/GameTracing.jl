@@ -213,11 +213,11 @@ function (system::QRESystem)(residual::R, jacobian::J, point::AbstractVector{E})
 end
 
 """
-The callable that measures a corrector's moves under `distance` over `width` logits of `pass!!`'s game: Gambit's norm
-past each strategy's `settle_ulps` (`LogProbabilityChange`) over its `logit_ranges` (`checked_ranges`).
+The callable that measures a corrector's moves under `distance` over the players' logit ranges `ranges`: Gambit's norm
+past each strategy's `settle_ulps` (`LogProbabilityChange`).
 """
-function corrector_measure(distance::CorrectorDistance{E}, pass!!::Any, width::Integer)::LogProbabilityChange where {E <: Real}
-    return LogProbabilityChange(checked_ranges(logit_ranges(pass!!), width), distance.settle_ulps * eps(E))
+function corrector_measure(distance::CorrectorDistance{E}, ranges::R)::LogProbabilityChange{R, E} where {R, E <: Real}
+    return LogProbabilityChange(ranges, distance.settle_ulps * eps(E))
 end
 
 # Gambit's norm has no bound: a strategy's log probability falls without limit.
@@ -257,7 +257,7 @@ function path_algorithm(
     )::PathFollowing.PseudoArclength where {E <: Real}
     (; start) = problem
     pass!!, width = problem.system!!.game.pass!!, length(start) - 1
-    measure = corrector_measure(settings.distance, pass!!, width)
+    measure = corrector_measure(settings.distance, checked_ranges(logit_ranges(pass!!), width))
     return PathFollowing.PseudoArclength(;
         corrector = PathFollowing.Newton(;
             max_iterations = settings.newton_iterations,

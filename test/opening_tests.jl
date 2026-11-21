@@ -48,7 +48,7 @@ Whether a trace of `gains` to `FAR_TARGET` under `settings` that stopped with `f
 exhausted its precision short of it by rounding (`exhausted_by_rounding`).
 """
 function reached_or_rounded(gains::NormalFormGains, failure::TraceFailure, settings::BifurcationKitSettings)::Bool
-    return failure.context.precision >= 50 || exhausted_by_rounding(gains, failure, settings, FAR_TARGET)
+    return failure.stop.precision >= 50 || exhausted_by_rounding(gains, failure, settings, FAR_TARGET)
 end
 
 @testset "a trace to a far target opens one first step from the flat start in its own distance" begin
@@ -64,7 +64,7 @@ end
         )
         # A first step of length `h` in `log(1 + λ)` reaches at most `expm1(h)`.
         opening = GameTracing.opening_step(LogitGame(gains, FAR_TARGET), LOG_PRECISION_SETTINGS.step_metric, LOG_PRECISION_SETTINGS.max_step)
-        @test 0 < failure.context.precision <= 2 * expm1(opening)
+        @test 0 < failure.stop.precision <= 2 * expm1(opening)
     end
 end
 
@@ -79,11 +79,11 @@ end
             keep_going = StopAtPrecision(50.0f0),
         )
     )
-    @test failure.cause == GameTracing.PrecisionExhausted
-    @test failure.context.precision < 50
+    @test failed_as(failure, TraceCause.PrecisionExhausted)
+    @test failure.stop.precision < 50
     @test exhausted_by_rounding(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
     # The rounded residual is the engine's Float32 residual, and its bound covers the error measured in BigFloat.
-    (; stalled_iterate, stalled_pin, correction) = failure.context
+    stalled_iterate, stalled_pin, correction = failure.cause.stall.iterate, failure.cause.stall.pin, failure.cause.stall.correction
     game_32 = LogitGame(gains_32, FAR_TARGET)
     bounded = rounded_residual(game_32, stalled_iterate, stalled_pin)
     computed = branch_residual(game_32, stalled_iterate, stalled_pin)
@@ -94,11 +94,11 @@ end
     # A correction within the bound is rounding noise. One past it is not, nor is an iterate 64 ulps or a gap off the root.
     explained = rounding_explanation(gains_32, failure, LOG_PRECISION_SETTINGS, FAR_TARGET)
     for (scale, noise) in ((2 // 3, true), (3 // 2, false))
-        scaled = TraceFailure(failure.cause, (; failure.context..., correction = Float32(scale * maximum(explained.bound))))
+        scaled = restalled(failure, (; correction = Float32(scale * maximum(explained.bound))))
         @test exhausted_by_rounding(gains_32, scaled, LOG_PRECISION_SETTINGS, FAR_TARGET) == noise
     end
     for moved_gap in (nextfloat(first(stalled_iterate), 64), first(stalled_iterate) + 1)
-        moved = TraceFailure(failure.cause, (; failure.context..., stalled_iterate = [moved_gap; stalled_iterate[2:end]]))
+        moved = restalled(failure, (; iterate = [moved_gap; stalled_iterate[2:end]]))
         @test !exhausted_by_rounding(gains_32, moved, LOG_PRECISION_SETTINGS, FAR_TARGET)
     end
     # An earlier root of the branch solves `F` but lies off the stalled step's arclength constraint.
@@ -106,11 +106,8 @@ end
         trace_endpoint(
             LogitGame(gains_32, FAR_TARGET), GameTracing.logit_count(gains_32), LOG_PRECISION_SETTINGS; keep_going = StopAtPrecision(5.0f0),
         )
-    ).context
-    elsewhere = TraceFailure(
-        failure.cause,
-        (; failure.context..., stalled_iterate = [earlier.gaps; earlier.precision], stalled_pin = earlier.precision, correction = 0.0f0),
-    )
+    ).stop
+    elsewhere = restalled(failure, (; iterate = [earlier.gaps; earlier.precision], pin = earlier.precision, correction = 0.0f0))
     off_step = rounding_explanation(gains_32, elsewhere, LOG_PRECISION_SETTINGS, FAR_TARGET)
     @test all(abs.(off_step.residual[1:(end - 1)]) .<= off_step.residual_bound[1:(end - 1)])
     @test abs(last(off_step.residual)) > last(off_step.residual_bound)
@@ -129,30 +126,27 @@ end
             keep_going = StopAtPrecision(wide(50)),
         )
     )
-    @test reached.context.precision >= 50
+    @test reached.stop.precision >= 50
     # At an accepted Float64 root a zero step's record is at noise; moved by a relative √eps it is not.
-    root = [reached.context.gaps; reached.context.precision]
-    resting = TraceFailure(
-        GameTracing.PrecisionExhausted,
-        (; reached.context..., stalled_iterate = root, stalled_pin = last(root), stalled_arclength = zero(wide), correction = zero(wide)),
-    )
+    root = [reached.stop.gaps; reached.stop.precision]
+    resting = stalled_at(reached, StalledCorrection(last(root), zero(wide), root, last(root), zero(wide)))
     @test exhausted_by_rounding(gains_wide, resting, settings_wide, FAR_TARGET)
-    shifted = TraceFailure(resting.cause, (; resting.context..., stalled_iterate = [first(root) * (1 + sqrt(eps(wide))); root[2:end]]))
+    shifted = restalled(resting, (; iterate = [first(root) * (1 + sqrt(eps(wide))); root[2:end]]))
     @test !exhausted_by_rounding(gains_wide, shifted, settings_wide, FAR_TARGET)
     # A Float64 record short of 50 meets the far-target check in its own settings. An accepted root is only within the
     # corrector's tolerance, so three Newton steps at its pinned precision polish it to rounding.
-    early = unwrap_error(
+    stopped = unwrap_error(
         trace_endpoint(LogitGame(gains_wide, wide(FAR_TARGET)), GameTracing.logit_count(gains_wide), settings_wide; keep_going = StopAtPrecision(wide(5))),
-    ).context
+    )
+    early = stopped.stop
     game_wide = LogitGame(gains_wide, wide(FAR_TARGET))
     residual = GameTracing.GameResidual(game_wide, GameTracing.BranchWorkspace(game_wide, [early.gaps; early.precision]))
     jacobian = GameTracing.GameJacobian(game_wide, GameTracing.BranchWorkspace(game_wide, [early.gaps; early.precision]))
     newton = (point, _) -> point .- jacobian(point, early.precision) \ residual(point, early.precision)
     polished = foldl(newton, 1:3; init = [early.gaps; early.precision])
-    stopped_early = TraceFailure(
-        GameTracing.PrecisionExhausted,
-        (; early..., gaps = polished[1:(end - 1)], stalled_iterate = polished, stalled_pin = early.precision, stalled_arclength = zero(wide), correction = zero(wide)),
-    )
+    polished_stop = TraceStop(early.logits, polished[1:(end - 1)], early.precision, early.steps, early.step_length)
+    stall = StalledCorrection(early.precision, zero(wide), polished, early.precision, zero(wide))
+    stopped_early = stalled_at(TraceFailure(stopped.cause, polished_stop, stopped.engine, stopped.context), stall)
     @test early.precision < 50
     @test reached_or_rounded(gains_wide, stopped_early, settings_wide)
 end
@@ -178,10 +172,10 @@ if get(ENV, "GAMETRACING_MUTATION", "false") != "true"
                     keep_going = StopAtPrecision(element(50)),
                 )
             )
-            (; precision, logits) = failure.context
+            (; precision, logits) = failure.stop
             @test reached_or_rounded(gains, failure, settings)
             if precision < 50
-                @info "a far-target trace stopped short" failure.cause failure.context
+                @info "a far-target trace stopped short" failure.cause failure.stop
             end
             oracle = gambit_strategies(payoffs, precision)
             gap = maximum(maximum.(abs, GameTracing.mixed_strategies(gains, logits) .- oracle.strategies))
@@ -292,8 +286,7 @@ end
     @test noisy.state[].noise.suspect.precision == 1
     @test noisy.state[].noise.suspect.correction ≈ 1.0f-2
     # The record holds the iterate whose correction confirmed the stall; a corrector without one has no record.
-    @test GameTracing.exhausted_record(noisy) ==
-        (; precision = 1.0f0, correction = noisy.state[].correction, stalled_iterate = Float32[3.0f-2, 0, 1], stalled_pin = 1.0f0, stalled_arclength = 0.25f0)
+    @test GameTracing.exhausted_record(noisy) == StalledCorrection(1.0f0, noisy.state[].correction, Float32[3.0f-2, 0, 1], 1.0f0, 0.25f0)
     @test_throws ArgumentError GameTracing.exhausted_record(poor)
     # Every later solve refuses at its start.
     @test solve_verdicts(noisy, Float32[0]) == [false]
@@ -352,8 +345,8 @@ end
     settings = BifurcationKitSettings{Float32}(; LOG_PRECISION_SETTINGS.step_metric, max_steps = 20_000)
     tolerance = settings.corrector.logit_tolerance
     failure = unwrap_error(trace_endpoint(LogitGame(pass, target), 1, settings))
-    @test failure.cause == GameTracing.PrecisionExhausted
-    (; lambda, correction) = failure.context
+    @test failed_as(failure, TraceCause.PrecisionExhausted)
+    lambda, correction = failure.cause.stall.precision, failure.cause.stall.correction
     # Corrections are at most 2 λ η, so every one settles below λ = tolerance / 2η.
     @test lambda > tolerance / (2 * pass.noise)
     @test lambda <= target

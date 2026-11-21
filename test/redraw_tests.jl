@@ -24,7 +24,7 @@ function swap_point(swap::MapSwap)::NamedTuple
         REDRAW_SETTINGS;
         keep_going = StopAt(swap.swap_precision),
     )
-    (; logits, precision) = unwrap_error(stopped).context
+    (; logits, precision) = unwrap_error(stopped).stop
     return (; logits, precision)
 end
 
@@ -70,8 +70,8 @@ function stuck_at_swap(swap::MapSwap)::Bool
         return false
     end
     failure = unwrap_error(result)
-    return failure.cause == GameTracing.TraceStuck && failure.context.precision == point.precision &&
-        residual_norm(swap.before, failure.context.logits, failure.context.precision) < 1.0f-3
+    return failed_as(failure, TraceCause.TraceStuck) && failure.stop.precision == point.precision &&
+        residual_norm(swap.before, failure.stop.logits, failure.stop.precision) < 1.0f-3
 end
 
 @testset "a redraw that moves the root 3.5 logits fails stuck at the swap, on the old map" begin
@@ -157,23 +157,22 @@ function logged_swap(swap::MapSwap)::LoggedTrace
     return LoggedTrace(LogitGame(swap.before, swap.precision), swap.width, redraw)
 end
 
-"""The `reason` of each "trace stopped" record that `trace` logs, and its result."""
-function stop_reasons(trace::LoggedTrace)::NamedTuple
+"""The `cause` of each "trace stopped" record that `trace` logs, and its result."""
+function stop_causes(trace::LoggedTrace)::NamedTuple
     logs, result = collect_test_logs(trace; min_level = Debug)
-    return (; reasons = [record.kwargs[:reason] for record in logs if record.message == "trace stopped"], result)
+    return (; causes = [record.kwargs[:cause] for record in logs if record.message == "trace stopped"], result)
 end
 
 @testset "a trace that stops short logs why, once: a redraw past the reach, a non-finite game; a reached trace logs no stop" begin
-    far = stop_reasons(logged_swap(FAR_SWAP))
-    @test unwrap_error(far.result).cause == GameTracing.TraceStuck
-    @test length(far.reasons) == 1
-    poisoned = stop_reasons(LoggedTrace(LogitGame(PoisonedPass(GAME, 1.0f0), TARGET_PRECISION), WIDTH, GameTracing.NoRedraw()))
-    @test unwrap_error(poisoned.result).cause == GameTracing.TraceStuck
-    @test length(poisoned.reasons) == 1
-    @test GameTracing.STOP_CAUSES[only(poisoned.reasons)] == GameTracing.TraceStuck
-    near = stop_reasons(logged_swap(NEAR_SWAP))
+    far = stop_causes(logged_swap(FAR_SWAP))
+    @test failed_as(unwrap_error(far.result), TraceCause.TraceStuck)
+    @test only(far.causes) == unwrap_error(far.result).cause
+    poisoned = stop_causes(LoggedTrace(LogitGame(PoisonedPass(GAME, 1.0f0), TARGET_PRECISION), WIDTH, GameTracing.NoRedraw()))
+    @test failed_as(unwrap_error(poisoned.result), TraceCause.TraceStuck)
+    @test only(poisoned.causes) == unwrap_error(poisoned.result).cause
+    near = stop_causes(logged_swap(NEAR_SWAP))
     @test !is_error(near.result)
-    @test isempty(near.reasons)
+    @test isempty(near.causes)
 end
 
 @testset "a redraw requested at the target is not installed: the endpoint solves the map it was traced on" begin
@@ -194,15 +193,15 @@ end
         @test !is_error(result)
         # The swap lands on the first accepted point at or past `level`; on the endpoint it is not installed.
         stopped = trace_endpoint(LogitGame(swap.before, swap.precision), swap.width, REDRAW_SETTINGS; keep_going = StopAt(level))
-        installed = is_error(stopped) && unwrap_error(stopped).context.precision < swap.precision
+        installed = is_error(stopped) && unwrap_error(stopped).stop.precision < swap.precision
         in_effect = ifelse(installed, swap.after, swap.before)
         @test on_map(result, in_effect, swap.precision)
     end
 end
 
-"""The context of the failure `reached_state` returns for `progress` and `outcome` on `game`, with the caller's `context`."""
-function failure_fields(progress::GameTracing.TraceProgress, outcome::NamedTuple, game::LogitGame, context::NamedTuple)::NamedTuple
-    return unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!!, progress.gaps), REDRAW_SETTINGS, context)).context
+"""The failure `reached_state` returns for `progress` and `outcome` on `game`, with the caller's `context`."""
+function reached_failure(progress::GameTracing.TraceProgress, outcome::NamedTuple, game::LogitGame, context::NamedTuple)::TraceFailure
+    return unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!!, progress.gaps), REDRAW_SETTINGS, context))
 end
 
 @testset "a corrector at rounding noise fails PrecisionExhausted at its precision, before the target" begin
@@ -210,24 +209,19 @@ end
     traced = unwrap(trace_endpoint(game, WIDTH, REDRAW_SETTINGS))
     half = TARGET_PRECISION / 2
     progress = GameTracing.TraceProgress(traced.logits ./ half, half, 3, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false)
-    exhausted = (; precision = half, correction = 2.0f-3, stalled_iterate = [traced.logits ./ half; half], stalled_pin = half, stalled_arclength = 0.1f0)
+    exhausted = StalledCorrection(half, 2.0f-3, [traced.logits ./ half; half], half, 0.1f0)
     outcome = (; step_length = 0.1f0, accepted_step = 0.2f0, exhausted, logit_accuracy = 3.0f-5, unresolved = false, exception = nothing)
     failure = unwrap_error(GameTracing.reached_state(progress, outcome, game, pass_workspace(game.pass!!, progress.gaps), REDRAW_SETTINGS, (;)))
-    @test failure.cause == GameTracing.PrecisionExhausted
-    @test failure.context.lambda == exhausted.precision
-    @test failure.context.correction == exhausted.correction
-    @test failure.context.stalled_iterate == exhausted.stalled_iterate
-    @test (failure.context.stalled_pin, failure.context.stalled_arclength) == (half, 0.1f0)
-    @test failure.context.gaps == progress.gaps
-    # A caller's context field named as a trace field throws, whether the stall or the progress writes it.
-    @test failure_fields(progress, outcome, game, (; label = :stall)).label == :stall
-    for clashing in ((; lambda = 0.0f0), (; stalled_iterate = Float32[0]), (; gaps = Float32[0]))
-        @test_throws ArgumentError failure_fields(progress, outcome, game, clashing)
-    end
-    @test failure.context.logit_accuracy == outcome.logit_accuracy
-    @test failure.context.accepted_step == outcome.accepted_step
+    @test failure.cause == TraceCause.PrecisionExhausted(GameTracing.MidTrace, exhausted)
+    @test failure.stop.gaps == progress.gaps
+    # The caller's context stays apart from the trace's fields, so a field named as one of them changes none.
+    @test reached_failure(progress, outcome, game, (; label = :stall)).context == (; label = :stall)
+    clashing = reached_failure(progress, outcome, game, (; gaps = Float32[0]))
+    @test (clashing.context.gaps, clashing.stop.gaps) == (Float32[0], progress.gaps)
+    @test failure.engine.logit_accuracy == outcome.logit_accuracy
+    @test failure.engine.accepted_step == outcome.accepted_step
     unaccepted = GameTracing.TraceProgress(traced.logits ./ half, half, 0, 0.0f0, half, zeros(Float32, WIDTH), 0.0f0, false)
-    @test iszero(unwrap_error(GameTracing.reached_state(unaccepted, outcome, game, pass_workspace(game.pass!!, unaccepted.gaps), REDRAW_SETTINGS, (;))).context.accepted_step)
+    @test iszero(unwrap_error(GameTracing.reached_state(unaccepted, outcome, game, pass_workspace(game.pass!!, unaccepted.gaps), REDRAW_SETTINGS, (;))).engine.accepted_step)
     reached = GameTracing.TraceProgress(traced.logits ./ TARGET_PRECISION, TARGET_PRECISION, 3, 0.0f0, TARGET_PRECISION, zeros(Float32, WIDTH), 0.0f0, false)
     endpoint = unwrap(GameTracing.reached_state(reached, (; outcome..., exhausted = nothing), game, pass_workspace(game.pass!!, reached.gaps), REDRAW_SETTINGS, (;)))
     @test endpoint.steps == 3
@@ -261,7 +255,7 @@ end
     # A Newton correction moves this swap's logits 0.439 from the old root.
     level = 0.734f0 * swap.precision
     stopped = trace_endpoint(LogitGame(swap.before, swap.precision), swap.width, REDRAW_SETTINGS; keep_going = StopAt(level))
-    (; logits, precision) = unwrap_error(stopped).context
+    (; logits, precision) = unwrap_error(stopped).stop
     @test precision >= level
     result = trace_endpoint(LogitGame(swap.before, swap.precision), swap.width, REDRAW_SETTINGS; redraw = SwapAt(LogitGame(swap.after, swap.precision), level))
     @test !is_error(result)
@@ -297,8 +291,8 @@ end
     )
     @test is_error(result)
     failure = unwrap_error(result)
-    @test failure.cause in (GameTracing.TraceStuck, GameTracing.Singular)
-    @test failure.context.precision == swap_point(NEAR_SWAP).precision
+    @test failed_as(failure, TraceCause.TraceStuck, TraceCause.Singular)
+    @test failure.stop.precision == swap_point(NEAR_SWAP).precision
 end
 
 @testset "a redraw whose new map's branch meets a pitchfork at the swap fails stuck there, on the old map" begin
@@ -331,8 +325,8 @@ end
     @test needed >= 2
     result = trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}(; max_steps = needed - 1); redraw = EveryPointCopy(game))
     @test is_error(result)
-    @test unwrap_error(result).cause == GameTracing.NoConvergence
-    @test unwrap_error(result).context.precision < TARGET_PRECISION
+    @test failed_as(unwrap_error(result), TraceCause.NoConvergence)
+    @test unwrap_error(result).stop.precision < TARGET_PRECISION
 end
 
 """An `accept_corrected` that refuses the refuse 6 steps|first `budget` converged correctors beyond precision `after`, halving the step each time, and accepts all others."""

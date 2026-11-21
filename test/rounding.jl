@@ -179,7 +179,9 @@ logit's correction is within `bound`: twice its amplified noise, plus `2u |z|` f
 a step this small is second order.
 """
 function rounding_explanation(pass::Union{NormalFormGains, NormalFormPass}, failure::TraceFailure, settings::BifurcationKitSettings, target_precision::Real)::NamedTuple
-    (; stalled_iterate, stalled_pin, stalled_arclength, gaps, precision, gap_tangent, tangent_precision) = failure.context
+    stalled_iterate, stalled_pin, stalled_arclength = failure.cause.stall.iterate, failure.cause.stall.pin, failure.cause.stall.arclength
+    (; gaps, precision) = failure.stop
+    (; gap_tangent, tangent_precision) = failure.engine
     element, width = eltype(stalled_iterate), length(gaps)
     # Only PALC's corrector runs strictly inside (0, target); a plain Newton solve at a bound has no border row.
     if !(0 < last(stalled_iterate) < target_precision)
@@ -221,9 +223,21 @@ Whether `failure` is a `PrecisionExhausted` stall at rounding noise, on a trace 
 `bound`.
 """
 function exhausted_by_rounding(pass::Union{NormalFormGains, NormalFormPass}, failure::TraceFailure, settings::BifurcationKitSettings, target_precision::Real)::Bool
-    if failure.cause != GameTracing.PrecisionExhausted
+    if !failed_as(failure, TraceCause.PrecisionExhausted)
         return false
     end
     (; bound, residual, residual_bound) = rounding_explanation(pass, failure, settings, target_precision)
-    return all(abs.(residual) .<= residual_bound) && failure.context.correction <= maximum(bound)
+    return all(abs.(residual) .<= residual_bound) && failure.cause.stall.correction <= maximum(bound)
+end
+
+"""`failure`'s stop and engine record, as a stall mid-trace at `stall`."""
+function stalled_at(failure::TraceFailure{E}, stall::StalledCorrection{E})::TraceFailure where {E <: Real}
+    return TraceFailure(TraceCause.PrecisionExhausted(GameTracing.MidTrace, stall), failure.stop, failure.engine, failure.context)
+end
+
+"""`failure`, a `PrecisionExhausted` stall, with the fields of its stall that `changes` names replaced."""
+function restalled(failure::TraceFailure, changes::NamedTuple)::TraceFailure
+    (; precision, correction, iterate, pin, arclength) = failure.cause.stall
+    # `merge` keeps the field order, so an unknown name adds a sixth argument and the constructor throws.
+    return stalled_at(failure, StalledCorrection(merge((; precision, correction, iterate, pin, arclength), changes)...))
 end

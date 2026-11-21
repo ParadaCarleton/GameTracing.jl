@@ -38,9 +38,11 @@ end
         BifurcationKitSettings{Float32}(max_steps = 1, max_step = 0.01f0),
     )
     @test is_error(result)
-    @test unwrap_error(result).cause in (GameTracing.NoConvergence, GameTracing.TraceStuck)
+    failure = unwrap_error(result)
+    @test failed_as(failure, TraceCause.NoConvergence, TraceCause.TraceStuck)
     # The step of the last accepted point lies within the step bounds, or is zero when none was accepted.
-    (; steps, accepted_step) = unwrap_error(result).context
+    (; steps) = failure.stop
+    (; accepted_step) = failure.engine
     @test ifelse(steps > 0, 0 < accepted_step <= 0.01f0, iszero(accepted_step))
 end
 
@@ -52,12 +54,12 @@ end
         BifurcationKitSettings{Float32}();
         keep_going = refuse_all,
     )
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
-    @test unwrap_error(result).context.precision < TARGET_PRECISION
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
+    @test unwrap_error(result).stop.precision < TARGET_PRECISION
     @test residual_norm(
         GAME,
-        unwrap_error(result).context.logits,
-        unwrap_error(result).context.precision,
+        unwrap_error(result).stop.logits,
+        unwrap_error(result).stop.precision,
     ) <
         1.0f-4
 end
@@ -87,10 +89,10 @@ end
         BifurcationKitSettings{Float32}();
         keep_going = StopPast(0.75f0 * TARGET_PRECISION),
     )
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
-    (; logits, logit_tangent, tangent_precision, precision) = unwrap_error(
-        result,
-    ).context
+    failure = unwrap_error(result)
+    @test failed_as(failure, TraceCause.TraceStuck)
+    (; logits, precision) = failure.stop
+    (; logit_tangent, tangent_precision) = failure.engine
     # A step `h` along the branch's tangent leaves a residual of order h², far under h ‖dz‖.
     step = 1.0f-2
     moved = residual_norm(
@@ -119,7 +121,7 @@ end
         BifurcationKitSettings{Float32}();
         context = (; label = :broken),
     )
-    @test unwrap_error(result).cause == GameTracing.NotFinite
+    @test failed_as(unwrap_error(result), TraceCause.NotFinite)
     @test unwrap_error(result).context.label == :broken
 end
 

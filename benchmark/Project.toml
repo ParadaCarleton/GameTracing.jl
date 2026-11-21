@@ -7,6 +7,7 @@ GameTracing = "5d2f1c0e-7a4b-4e3c-9b6a-1f0c8d2e4a77"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 LogitNash = "56ed5f9e-c32e-46b8-b489-5928d745fddb"
+Moshi = "2e0e35c7-a2e4-4343-998d-7ef72827ed2d"
 PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -21,4 +22,5 @@ BifurcationKit = {url = "https://github.com/ParadaCarleton/BifurcationKit.jl", r
 
 [compat]
 LogitNash = "=0.3.0"
+Moshi = "0.3.13"
 StaticArrays = "1"

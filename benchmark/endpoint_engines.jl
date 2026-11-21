@@ -12,6 +12,7 @@ using Random: AbstractRNG, Xoshiro
 using Statistics: median
 
 include(joinpath(@__DIR__, "..", "test", "games.jl"))
+include(joinpath(@__DIR__, "..", "test", "causes.jl"))
 
 const PLAYERS = 2:9
 const ELEMENT = Float32
@@ -29,10 +30,10 @@ function endpoint_seconds(game::LogitGame, width::Integer, settings::GameTracing
     return median(@be(trace_endpoint($game, $width, $settings), seconds = seconds)).time
 end
 
-"""Each engine's outcome on `game`: its endpoint's logits and steps, or its failure's cause."""
+"""Each engine's outcome on `game`: its endpoint's logits and steps, or its failure's cause (`cause_label`)."""
 function outcome(game::LogitGame, width::Integer, settings::GameTracing.EngineSettings)::NamedTuple
     result = trace_endpoint(game, width, settings)
-    is_error(result) && return (; logits = fill(ELEMENT(NaN32), width), steps = -1, cause = string(unwrap_error(result).cause))
+    is_error(result) && return (; logits = fill(ELEMENT(NaN32), width), steps = -1, cause = cause_label(unwrap_error(result).cause))
     return (; unwrap(result).logits, unwrap(result).steps, cause = "ok")
 end
 

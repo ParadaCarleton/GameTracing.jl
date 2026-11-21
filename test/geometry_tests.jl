@@ -166,8 +166,8 @@ end
     for (label, settings) in arm_variants(ARM_WEIGHTS)
         result = trace_endpoint(LogitGame(PoisonedPass(GAME, 1.0f0), TARGET_PRECISION), WIDTH, settings)
         @test is_error(result)
-        @test unwrap_error(result).cause == GameTracing.TraceStuck
-        if !is_error(result) || unwrap_error(result).cause != GameTracing.TraceStuck
+        @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
+        if !is_error(result) || !failed_as(unwrap_error(result), TraceCause.TraceStuck)
             @info "arm did not stop as stuck" label
         end
     end

@@ -1,17 +1,19 @@
 """
-    tracer, landed = land!!(tracer, bound, max_steps)
+    tracer, landed = land!!(tracer, bound[, max_steps])
 
 Step `tracer` toward `bound` (`step!!`) until its point lies on it. Return the advanced tracer and a copy of the landed
 point, or the `StepFailure` that ends the trace: a failed step's, or `TooManySteps` once the tracer has taken
-`max_steps` accepted steps since `init`. A point on the bound lands at once. Use only the returned tracer.
+`max_steps` accepted steps since `init`. `max_steps` defaults to `nothing`, no budget: each step either moves the point
+past its rounding or fails. A closed curve that never meets the bound steps around it forever, so pass a budget for
+one. A point on the bound lands at once. Use only the returned tracer.
 """
 function land!!(
         tracer::T,
         bound::Bound{E},
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer} = nothing,
     )::Tuple{T, Result{V, StepFailure.Type{E}}} where {E <: Real, V <: AbstractVector{E}, T <: Tracer{E, V}}
     while !on_bound(bound, tracer.point)
-        tracer.steps < max_steps || return tracer, Err(StepFailure.TooManySteps{E}())
+        limit_reached(max_steps, tracer.steps) && return tracer, Err(StepFailure.TooManySteps{E}())
         tracer, stepped = step!!(tracer, bound)
         is_error(stepped) && return tracer, Err(unwrap_error(stepped))
     end
@@ -41,10 +43,10 @@ function landing_result(landing::Landing{V, E})::Result{V, StepFailure.Type{E}} 
 end
 
 """
-    land_batch(problems, algorithm, first_steps, bound, max_steps; workgroupsize)
+    land_batch(problems, algorithm, first_steps, bound[, max_steps]; workgroupsize)
 
 Trace each of `problems` from its start to `bound`, one KernelAbstractions work item each, on the device that holds
-`problems`: `init` with its first step from `first_steps`, then `land!!`. Return a `Landing` for each, in an array
+`problems`: `init` with its first step from `first_steps`, then `land!!` with its `max_steps`. Return a `Landing` for each, in an array
 on that device, once the device has finished.
 
 Each start must be static (an `SVector`), with `linear_solver = StaticLU()`, and `algorithm` and the problems isbits.
@@ -60,14 +62,14 @@ function land_batch(
         algorithm::PseudoArclength,
         first_steps::AbstractVector{E},
         bound::Bound{E},
-        max_steps::Integer;
+        max_steps::Union{Nothing, Integer} = nothing;
         workgroupsize::Integer,
     )::AbstractVector{Landing{V, E}} where {E <: Real, V <: SVector{<:Any, E}}
     check_batch(problems, algorithm, first_steps, bound, workgroupsize)
     landings = similar(problems, Landing{V, E})
     isempty(problems) && return landings
     backend = KernelAbstractions.get_backend(problems)
-    land_kernel!(backend, Int(workgroupsize))(landings, problems, algorithm, first_steps, bound, Int(max_steps); ndrange = length(problems))
+    land_kernel!(backend, Int(workgroupsize))(landings, problems, algorithm, first_steps, bound, checked_limit(:max_steps, max_steps); ndrange = length(problems))
     KernelAbstractions.synchronize(backend)
     return landings
 end
@@ -115,7 +117,7 @@ function landed(
         algorithm::PseudoArclength,
         first_step::E,
         bound::Bound{E},
-        max_steps::Int,
+        max_steps::Union{Nothing, Int},
     )::Landing{V, E} where {E <: Real, V <: SVector{<:Any, E}}
     started = CommonSolve.init(problem, algorithm; first_step)
     # A trace that fails at its start holds no step.

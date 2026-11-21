@@ -35,7 +35,6 @@ algorithm = PseudoArclength(;
     orientation_check = DeterminantSign(),
     split_check = HalfStepCheck{Float64}(; trigger = 1, tolerance = 1e-8),
     linear_solver = LUFactorization(),
-    max_refusals = 60,
 )
 tracer = unwrap(init(CurveProblem(circle!!, [1.0, 0.0], [0.0, 1.0]), algorithm; first_step = 0.1))
 while tracer.point[2] >= 0 || tracer.point[1] > 0   # stop past half a turn
@@ -50,8 +49,8 @@ end
 value is cut there, and Newton's method corrects at that value. A corrected point past it refuses the step as
 `PastBound`, and a shorter step tries again. So the trace stops at the value's first crossing that a predictor or a
 corrected point shows. A curve that passes the value and comes back within one step goes unseen; keep the turn target
-small to keep steps short where the curve bends. `land!!(tracer, bound, max_steps)` steps until the point lies on the
-bound and returns it.
+small to keep steps short where the curve bends. `land!!(tracer, bound)` steps until the point lies on the
+bound and returns it; `land!!(tracer, bound, max_steps)` also stops after `max_steps` steps.
 
 ## Storage and devices
 
@@ -59,7 +58,7 @@ The tracer's arrays take the start's type. A `Vector` start traces on the CPU, a
 on its GPU. A static start (`SVector`) gives static arrays throughout, with `linear_solver = StaticLU()`. A static
 trace allocates nothing, and one GPU thread can run it.
 
-`land_batch(problems, algorithm, first_steps, bound, max_steps; workgroupsize)` traces many static problems at once,
+`land_batch(problems, algorithm, first_steps, bound[, max_steps]; workgroupsize)` traces many static problems at once,
 one KernelAbstractions work item each, on the device that holds `problems`. It returns a `Landing` per problem;
 `landing_result` gives its landed point or its `StepFailure`.
 
@@ -87,12 +86,11 @@ static_algorithm = PseudoArclength(;
     orientation_check = DeterminantSign(),
     split_check = nothing,
     linear_solver = StaticLU(),
-    max_refusals = 60,
 )
 radii = range(1.0f0, 3.0f0; length = 1000)
 problems = [CurveProblem(Circle(radius), SVector(radius, 0.0f0), SVector(0.0f0, 1.0f0)) for radius in radii]
 # `CuArray(problems)` and `CuArray(first_steps)` trace on an NVIDIA GPU.
-landings = land_batch(problems, static_algorithm, fill(0.1f0, 1000), Bound(2, 0.5f0), 200; workgroupsize = 16)
+landings = land_batch(problems, static_algorithm, fill(0.1f0, 1000), Bound(2, 0.5f0); workgroupsize = 16)
 points = unwrap.(landing_result.(landings))
 ```
 
@@ -122,5 +120,6 @@ points = unwrap.(landing_result.(landings))
 ## Failures
 
 `init` fails `NotFiniteStart` or `SingularStart`. `step!!` fails `Unresolved` when the predictor falls below the
-float type's resolution or a retry rounds back to the refused step, and `TooManyRefusals` past `max_refusals`.
-`land!!` also fails `TooManySteps` past its step budget. Each failure names the last `Refusal`.
+float type's resolution or a retry rounds back to the refused step. Each refusal shrinks the step, so a step that
+never converges ends there. `TooManyRefusals` fails a step past a set `max_refusals`, and `TooManySteps` a `land!!`
+past a set step budget; both default to `nothing`, no limit. Each failure names the last `Refusal`.

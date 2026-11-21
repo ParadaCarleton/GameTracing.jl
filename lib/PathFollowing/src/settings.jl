@@ -21,14 +21,14 @@ A correction's length in the trace's step metric (`PseudoArclength`'s `metric`).
 struct MetricDistance end
 
 """
-    correction_bound(distance)
+    correction_bound(distance, E)
 
-The largest length the corrector's `distance` measures, `Inf` for an unbounded one. Each distance that step control
-targets defines it: `PseudoArclength` checks that its first-correction refusal can fire.
+The largest length the corrector's `distance` measures, in step control's float type `E`; `Inf` for an unbounded one.
+Each distance that step control targets defines it: `PseudoArclength` checks that its first-correction refusal can fire.
 """
 function correction_bound end
 
-correction_bound(::MetricDistance)::Real = Inf32
+correction_bound(::MetricDistance, ::Type{E}) where {E <: Real} = E(Inf32)
 
 """
     LastCorrection()
@@ -289,12 +289,12 @@ end
 
 """
 Throw unless `control`'s first-correction term can refuse a step: `target_correction refusal_factor²`, the first
-correction past which it refuses, must lie under `correction_bound(distance)`.
+correction past which it refuses, must lie under `correction_bound(distance, E)`.
 """
-function refusable_correction(control::StepControl, distance::Any)::Nothing
+function refusable_correction(control::StepControl{E}, distance::Any)::Nothing where {E <: Real}
     (; target_correction, refusal_factor) = control
     isnothing(target_correction) && return nothing
-    limit, bound = target_correction * refusal_factor^2, correction_bound(distance)
+    limit, bound = target_correction * refusal_factor^2, correction_bound(distance, E)
     limit < bound || throw(
         ArgumentError(lazy"step control refuses first corrections past $limit, but the corrector's distance measures at most $bound")
     )

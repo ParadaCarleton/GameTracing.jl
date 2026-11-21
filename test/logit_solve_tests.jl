@@ -368,12 +368,12 @@ end
     @test isnan(one_player(element[NaN32, 1], element[0, 1]))
     # Between opposite pure strategies the distance nears π, its largest (`correction_bound`); a logit move has none.
     @test one_player(element[-100, 1], element[100, 1]) ≈ element(π)
-    @test GameTracing.PathFollowing.correction_bound(one_player) ≈ π
+    @test GameTracing.PathFollowing.correction_bound(one_player, element) === element(π)
     # Two players each move from even odds to 1:3: the profile moves √2 π / 6, and its distance is at most √2 π.
     two_binary = GameTracing.FisherRaoChange((1:1, 2:2))
     @test two_binary(element[0, 0, 1], element[log(element(3)), log(element(3)), 1]) ≈ sqrt(element(2)) * element(π) / 6
-    @test GameTracing.PathFollowing.correction_bound(two_binary) ≈ sqrt(2) * π
-    @test GameTracing.PathFollowing.correction_bound(GameTracing.logit_change) == Inf32
+    @test GameTracing.PathFollowing.correction_bound(two_binary, element) ≈ sqrt(element(2)) * element(π)
+    @test GameTracing.PathFollowing.correction_bound(GameTracing.logit_change, element) === element(Inf32)
     two_players = GameTracing.FisherRaoChange((1:2, 3:3))
     @test two_players(element[0, 0, 0, 1], element[0, 0, log(element(3)), 1]) ≈ element(π) / 6
     # A strategy outside the support moves 500 logits, but no probability.

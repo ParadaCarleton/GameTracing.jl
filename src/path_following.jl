@@ -327,8 +327,8 @@ function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::Fun
 end
 
 # A Fisher–Rao distance on one simplex is at most π, so on the product of `N` it is at most π√N; a logit move has no bound.
-PathFollowing.correction_bound(change::FisherRaoChange)::Real = π * sqrt(length(change.ranges))
-PathFollowing.correction_bound(::typeof(logit_change))::Real = Inf32
+PathFollowing.correction_bound(change::FisherRaoChange, ::Type{E}) where {E <: Real} = E(π) * sqrt(E(length(change.ranges)))
+PathFollowing.correction_bound(::typeof(logit_change), ::Type{E}) where {E <: Real} = E(Inf32)
 
 """The corrector's settle test under `distance`, whose moves `measure` measures: `LogitSettled` or `FisherRaoSettled`."""
 function settle_test(distance::LogitDistance{E}, ::Any)::LogitSettled{E} where {E <: Real}

@@ -98,7 +98,7 @@ struct LargestMove end
 function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return mapreduce((later, earlier) -> abs(later - earlier), max, to, from)
 end
-PathFollowing.correction_bound(::LargestMove)::Real = Inf32
+PathFollowing.correction_bound(::LargestMove, ::Type{E}) where {E <: Real} = E(Inf32)
 
 """`LargestMove` capped at one, as a distance between probabilities is."""
 struct CappedMove end
@@ -106,7 +106,7 @@ struct CappedMove end
 function (::CappedMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return min(LargestMove()(from, to), one(E))
 end
-PathFollowing.correction_bound(::CappedMove)::Real = 1
+PathFollowing.correction_bound(::CappedMove, ::Type{E}) where {E <: Real} = one(E)
 
 """
 The unit circle with its Jacobian reported at a tenth of its size: Newton overshoots, and each correction outgrows the
@@ -144,7 +144,7 @@ function (::BandAvoidingMove)(from::AbstractVector{E}, to::AbstractVector{E})::E
     (in_band(from) || in_band(to)) && throw(DomainError((from, to), "a point in BandedLine's band"))
     return LargestMove()(from, to)
 end
-PathFollowing.correction_bound(::BandAvoidingMove)::Real = Inf32
+PathFollowing.correction_bound(::BandAvoidingMove, ::Type{E}) where {E <: Real} = E(Inf32)
 
 """
 A `converged` that ignores its contract and settles where `scale` is infinite. It also passes the last-correction test
@@ -645,7 +645,7 @@ end
         @test_throws ArgumentError capped(one(E) / 4)
         @test capped(one(E) / 5).step_control.target_correction == one(E) / 5
         @test capped(nothing).step_control.target_correction === nothing
-        @test correction_bound(MetricDistance()) == Inf32
+        @test correction_bound(MetricDistance(), E) === E(Inf32)
     end
 
     @testset "a predictor that reaches the bound is cut there and lands with the value exact" begin

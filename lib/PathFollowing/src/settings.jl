@@ -28,7 +28,9 @@ Each distance that step control targets defines it: `PseudoArclength` checks tha
 """
 function correction_bound end
 
-correction_bound(::MetricDistance, ::Type{E}) where {E <: Real} = E(Inf32)
+function correction_bound(::MetricDistance, ::Type{E})::E where {E <: Real}
+    return E(Inf32)
+end
 
 """
     LastCorrection()

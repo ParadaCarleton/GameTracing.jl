@@ -390,23 +390,26 @@ end
 
 """
 Whether branch point `logits` solve `gains` at `precision` as PathFollowing's `StrategyDistance` corrector settles them:
-`branch_step` moves no player's mixed strategy more than twice the tolerance (Fisher–Rao). Saturated logits can sit far
-off the map in logit space while every strategy has settled.
+`branch_step` moves the profile (Fisher–Rao) no more than twice the settle test's bound (`FisherRaoSettled`): the
+tolerance plus `settle_ulps` ulps of the logits' spread. Large Float32 logits round past the tolerance alone. Saturated
+logits can sit far off the map in logit space while every strategy has settled.
 """
-function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance)::Bool
+function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance{E})::Bool where {E <: Real}
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
     corrected = root .- branch_step(gains, logits, precision)
     measure = GameTracing.corrector_measure(distance, gains, logit_count(gains))
     # The measure reads only the logits `z = λ w`, so `[z; 1]` serves at every precision, zero included.
-    return measure([root; one(level)], [corrected; one(level)]) <= 2 * distance.tolerance
+    point = [root; one(level)]
+    spread = sqrt(sum(range -> last(GameTracing.fisher_rao_spread(point, point, range))^2, GameTracing.logit_ranges(gains)))
+    return measure(point, [corrected; one(level)]) <= 2 * (distance.tolerance + distance.settle_ulps * eps(E) * spread)
 end
 
 """
 The largest last correction a settled corrector leaves at `logits`: `logit_tolerance` plus twice its `settle_ulps` ulps
-of the largest logit, as a step may land on a logit larger than the one it left.
+of the logits' Euclidean length, as a step may land on logits larger than the ones it left (`logit_corrections`).
 """
 function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::E where {E <: Real}
-    return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * E(maximum(abs, logits))
+    return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * E(norm(logits))
 end
 
 """

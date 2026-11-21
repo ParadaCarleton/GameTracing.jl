@@ -98,7 +98,9 @@ struct LargestMove end
 function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return mapreduce((later, earlier) -> abs(later - earlier), max, to, from)
 end
-PathFollowing.correction_bound(::LargestMove, ::Type{E}) where {E <: Real} = E(Inf32)
+function PathFollowing.correction_bound(::LargestMove, ::Type{E})::E where {E <: Real}
+    return E(Inf32)
+end
 
 """`LargestMove` capped at one, as a distance between probabilities is."""
 struct CappedMove end
@@ -106,7 +108,9 @@ struct CappedMove end
 function (::CappedMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return min(LargestMove()(from, to), one(E))
 end
-PathFollowing.correction_bound(::CappedMove, ::Type{E}) where {E <: Real} = one(E)
+function PathFollowing.correction_bound(::CappedMove, ::Type{E})::E where {E <: Real}
+    return one(E)
+end
 
 """
 The unit circle with its Jacobian reported at a tenth of its size: Newton overshoots, and each correction outgrows the
@@ -144,7 +148,9 @@ function (::BandAvoidingMove)(from::AbstractVector{E}, to::AbstractVector{E})::E
     (in_band(from) || in_band(to)) && throw(DomainError((from, to), "a point in BandedLine's band"))
     return LargestMove()(from, to)
 end
-PathFollowing.correction_bound(::BandAvoidingMove, ::Type{E}) where {E <: Real} = E(Inf32)
+function PathFollowing.correction_bound(::BandAvoidingMove, ::Type{E})::E where {E <: Real}
+    return E(Inf32)
+end
 
 """
 A `converged` that ignores its contract and settles where `scale` is infinite. It also passes the last-correction test

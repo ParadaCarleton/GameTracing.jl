@@ -127,7 +127,7 @@ end
     @test !shift_passes(FOLD_SWAP)
     @test !shift_passes(PITCHFORK_SWAP)
     off = BifurcationKitSettings{Float32}(; corrector = GameTracing.CorrectorSettings{Float32}(; reach = nothing))
-    @test GameTracing.RootShift(Float32[1, 1], Float32[0.1f0, 0.1f0], Float32[0, 1], off.corrector)(LogitGame(FAR_SWAP.after, 1.0f0)).within
+    @test GameTracing.RootShift(Float32[1, 1], Float32[0.1f0, 0.1f0], Float32[0, 1], off.corrector, (1:1,))(LogitGame(FAR_SWAP.after, 1.0f0)).within
 end
 
 @testset "a root shift is a Newton step onto the new map: it cuts the new map's correction by a factor of ten" begin

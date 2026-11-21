@@ -1,4 +1,3 @@
-using ErrorTypes: is_error
 using GameTracing: FisherMetric, checked_ranges, largest_kl, player_kl
 using LinearAlgebra: dot
 using Mooncake: Mooncake

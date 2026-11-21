@@ -155,12 +155,11 @@ end
 GameTracing.gap_bound(wrapper::MisrangedGains)::Real = GameTracing.gap_bound(wrapper.pass)
 GameTracing.logit_ranges(::MisrangedGains)::Tuple{UnitRange{Int}} = (1:1,)
 
-@testset "a pass without logit_ranges traces on PathFollowing under a logit distance and a plain metric ($element)" for element in (Float32, widen(Float32))
+@testset "a pass without logit_ranges cannot trace on PathFollowing, as every corrector measure reads them ($element)" for element in (Float32, widen(Float32))
     linear = LinearGainPass(element[0 1; 1 0], element[1 // 2, -1 // 4])
-    plain = PathFollowingSettings{element}(; distance = LogitDistance{element}(), step_metric = TraceGeometry{element}(; distance = SummedDistance))
-    reference = unwrap(trace_endpoint(LogitGame(linear, element(2)), 2, plain)).logits
-    @test unwrap(trace_endpoint(LogitGame(RangelessGains(linear), element(2)), 2, plain)).logits == reference
-    # The default Fisher–Rao corrector reads the ranges, and checks that they tile the logits.
+    plain = PathFollowingSettings{element}(; step_metric = TraceGeometry{element}(; distance = SummedDistance))
+    @test_throws MethodError trace_endpoint(LogitGame(RangelessGains(linear), element(2)), 2, plain)
+    # The default Fisher metric reads the ranges too, and the corrector checks that they tile the logits.
     @test_throws MethodError trace_endpoint(LogitGame(RangelessGains(linear), element(2)), 2, PathFollowingSettings{element}())
     @test_throws r"do not tile" trace_endpoint(LogitGame(MisrangedGains(linear), element(2)), 2, PathFollowingSettings{element}())
 end
@@ -173,16 +172,11 @@ function landed_at(game::LogitGame, gaps::AbstractVector{E}, settings::PathFollo
     return GameTracing.verified_landing(tracer, settings.endpoint_tolerance, settings.endpoint_ulps, (; label = :landed))
 end
 
-"""Gambit's norm of a correction `correction` from logit 1/2 at precision one, a binary player (`LogProbabilityChange`)."""
-function flat_gambit(correction::E)::E where {E <: Real}
-    return GameTracing.log_probability_change(E[1 // 2 + correction, 1], E[1 // 2, 1], (1:1,))
-end
-
 @testset "the PathFollowing endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
     settings = PathFollowingSettings{element}()
     tolerance = settings.distance.tolerance
     # Under its onset the noise is off: the gain is `level`, the root `w = level`, and `δ / λ` off it a correction `δ`.
-    # At logit 1/2 a strategy moves about 0.485 δ Fisher–Rao, so δ = tolerance settles and δ = 4 tolerance does not.
+    # At logit 1/2 the profile moves about 0.72 δ in Gambit's norm, so δ = tolerance settles and δ = 4 tolerance does not.
     flat = LogitGame(NoisyFlatPass(element(1 // 2), element(1.0f-7), element(10), UInt(1)), one(element))
     settled = unwrap(landed_at(flat, element[1 // 2 + tolerance], settings))
     @test settled.logits == element[1 // 2 + tolerance]
@@ -194,13 +188,15 @@ end
     @test unsettled.cause.stall.iterate[1] ≈ 1 // 2
     @test unsettled.stop.gaps == element[1 // 2 + 4 * tolerance]
     @test isapprox(unsettled.cause.stall.correction, flat_gambit(4 * tolerance); atol = 4 * eps(element))
-    # A strategy off the support moves almost no Fisher–Rao distance for a large logit move. `G = 10` puts the root at
-    # `w = 10`, logit 100 at λ = 10, so a point at logit 90 corrects the reference's log probability by 10.
+    # A strategy off the support moves almost no probability for a large logit move. `G = 10` puts the root at `w = 10`,
+    # logit 100 at λ = 10, so a point at logit 90 corrects the reference's log probability by 10: both tests refuse it.
     saturated = LogitGame(LinearGainPass(zeros(element, 1, 1), element[10]), element(10))
     far = unwrap_error(landed_at(saturated, element[9], settings))
     @test (failed_as(far, TraceCause.PrecisionExhausted), far.cause.stage) == (true, GameTracing.AtEndpoint)
     @test isapprox(far.cause.stall.correction, 10; rtol = 4 * eps(element))
-    loose = PathFollowingSettings{element}(; endpoint_tolerance = 20)
+    # A loose endpoint passes it only beside a loose settle test in Gambit's norm.
+    loose_distance = CorrectorDistance{element}(; tolerance = 20, target_correction = nothing)
+    loose = PathFollowingSettings{element}(; distance = loose_distance, endpoint_tolerance = 20, split_check = nothing)
     @test (loose.endpoint_tolerance, loose.endpoint_ulps) == (element(20), 16)
     @test isapprox(unwrap(landed_at(saturated, element[9], loose)).logit_accuracy, 10; rtol = 4 * eps(element))
     # `G = logistic(z) + b` has Jacobian `1 - λ/4` at `w = 0`, singular at λ = 4. With `b = -1/2`, `w = 0` is an exact
@@ -233,5 +229,7 @@ end
     # Under `from` the slope stays finite, and a point near the root passes.
     finite = LogitGame(NaNSlopePass(constant, 3), element(2))
     near = unwrap(GameTracing.verified_endpoint(progress(1 // 2 + 1 // 2^20), outcome, finite, work, corrector, (;)))
-    @test near.steps == 3 && isapprox(near.logit_accuracy, 2 / 2^20; rtol = sqrt(eps(element)))
+    # The correction moves the gap by 2⁻²⁰, the logit at λ = 2 by twice that: its Gambit's norm is the accuracy.
+    accuracy = GameTracing.log_probability_change(element[1 // 2 + 1 // 2^20, 2], element[1 // 2, 2], (1:1,))
+    @test near.steps == 3 && isapprox(near.logit_accuracy, accuracy; rtol = sqrt(eps(element)))
 end

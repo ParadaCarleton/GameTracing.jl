@@ -120,17 +120,19 @@ function log_probability_change(from::AbstractVector{E}, to::AbstractVector{E}, 
 end
 
 """
-    LogProbabilityChange(ranges)
+    LogProbabilityChange(ranges, rounding)
 
-Gambit's norm of a move between two points `[w; λ]` (path.cc): the root sum of squares of every strategy's change in
-log probability, over the players of `ranges` (`logit_ranges`, `log_probability_corrections`). Tuple ranges make it isbits.
+Gambit's norm of a move between two points `[w; λ]` (path.cc), past `rounding` times each strategy's rounding scale:
+`log_probability_corrections`' excess at scale one, over the players of `ranges` (`logit_ranges`). A move within
+rounding counts zero, as in the settle test. Tuple ranges make it isbits.
 """
-struct LogProbabilityChange{R} <: Function
+struct LogProbabilityChange{R, E <: Real} <: Function
     ranges::R
+    rounding::E
 end
 
-function (change::LogProbabilityChange)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return log_probability_change(from, to, change.ranges)
+function (change::LogProbabilityChange{R, E})(from::AbstractVector{E}, to::AbstractVector{E})::E where {R, E <: Real}
+    return last(log_probability_corrections(from, to, change.ranges, change.rounding, one(E)))
 end
 
 """

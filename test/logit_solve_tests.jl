@@ -81,7 +81,7 @@ const FOLD_EXHAUSTED_GAME = (
 
 """
 Whether a branch point settles as its engine's corrector settles points, by a Newton step with the precision free
-(`branch_step`): in logits, or in strategies (`StrategyDistance`).
+(`branch_step`): BifurcationKit's in logits, PathFollowing's in Gambit's norm (`CorrectorDistance`).
 """
 settled_point(gains::NormalFormGains, profile::LogitQREProfile, ::BifurcationKitSettings)::Bool =
     settled_branch_logits(gains, profile.logits, profile.lam, BifurcationKitSettings{eltype(profile.logits)}())
@@ -208,23 +208,18 @@ end
         @test isempty(unwrap(logit_solve_lambda(gains, element[]; settings = empty_settings)))
     end
     # A first correction far past a 1e-6 target is refused, and no refusal is allowed.
-    for distance in (StrategyDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6), LogitDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6))
+    let distance = CorrectorDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6)
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.engine.failure.refusals) == (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), 1)
     end
-    # The refusal factor 2 refuses a first correction past 4 times its target, which must lie under the distance's bound,
-    # π√2 for two players.
-    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 112 // 100)))
-    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 110 // 100))))
-    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = LogitDistance{element}(; target_correction = 100))))
+    # The refusal factor 2 refuses a first correction past 4 times its target. Gambit's norm has no bound, so any target is refusable.
+    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = CorrectorDistance{element}(; target_correction = 100))))
     # A settle tolerance at or past the target first correction is refused; without a target it is free.
-    for distance_type in (StrategyDistance{element}, LogitDistance{element})
-        @test_throws ArgumentError distance_type(; tolerance = 1 // 4, target_correction = 1 // 4)
-        @test distance_type(; tolerance = 1 // 5, target_correction = 1 // 4).tolerance == element(1 // 5)
-        @test distance_type(; tolerance = 1, target_correction = nothing).tolerance == 1
-    end
+    @test_throws ArgumentError CorrectorDistance{element}(; tolerance = 1 // 4, target_correction = 1 // 4)
+    @test CorrectorDistance{element}(; tolerance = 1 // 5, target_correction = 1 // 4).tolerance == element(1 // 5)
+    @test CorrectorDistance{element}(; tolerance = 1, target_correction = nothing).tolerance == 1
     # A zero settle tolerance, where the corrector settles by ulps alone, gives the default split check no scale.
-    for distance in (StrategyDistance{element}(; tolerance = 0), LogitDistance{element}(; tolerance = 0))
+    let distance = CorrectorDistance{element}(; tolerance = 0)
         @test_throws ArgumentError PathFollowingSettings{element}(; distance)
         # HalfStepCheck's own zero-tolerance check throws an ArgumentError too; only the default's names the fix.
         @test_throws "pass split_check" PathFollowingSettings{element}(; distance)
@@ -232,13 +227,13 @@ end
         check = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 13 // 10, tolerance = 1 // 1000)
         @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, split_check = check)))
     end
-    @test PathFollowingSettings{element}(; distance = LogitDistance{element}(; tolerance = 1 // 10^6)).split_check.tolerance == 10 * element(1 // 10^6)
+    @test PathFollowingSettings{element}(; distance = CorrectorDistance{element}(; tolerance = 1 // 10^6)).split_check.tolerance == 10 * element(1 // 10^6)
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; reach = 0))
     # A reach finite in a wider type that rounds to Inf would switch the refusal off.
     @test_throws ArgumentError PathFollowingSettings{element}(; reach = floatmax(widen(element)))
     @test PathFollowingSettings{element}(; reach = Inf32).reach == Inf32
     # A distance in another element type is refused.
-    @test_throws MethodError PathFollowingSettings{element}(; distance = StrategyDistance{BigFloat}())
+    @test_throws MethodError PathFollowingSettings{element}(; distance = CorrectorDistance{BigFloat}())
     # The error estimate's safety converts to the element type.
     halved = PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.ContractionEstimate(; safety = 1 // 2))
     @test halved.error_estimate.safety === element(1 // 2)
@@ -359,81 +354,55 @@ end
     @test gap_to_checked((; summed..., orientation_check = nothing, split_check = nothing)) > 1 // 2
 end
 
-@testset "FisherRaoChange is the root sum of squares of the players' Fisher–Rao distances ($element)" for element in (Float32, widen(Float32))
-    one_player = GameTracing.FisherRaoChange((1:1,))
-    # From even odds to odds of 1:3 the Bhattacharyya angle is 15°, so the distance is twice that: π / 6.
-    @test one_player(element[0, 1], element[log(element(3)), 1]) ≈ element(π) / 6
-    # The same strategy at twice the precision and half the gap.
-    @test one_player(element[0, 1], element[log(element(3)) / 2, 2]) ≈ element(π) / 6
-    @test isnan(one_player(element[NaN32, 1], element[0, 1]))
-    # Between opposite pure strategies the distance nears π, its largest (`correction_bound`); a logit move has none.
-    @test one_player(element[-100, 1], element[100, 1]) ≈ element(π)
-    @test GameTracing.PathFollowing.correction_bound(one_player, element) === element(π)
-    # Two players each move from even odds to 1:3: the profile moves √2 π / 6, and its distance is at most √2 π.
-    two_binary = GameTracing.FisherRaoChange((1:1, 2:2))
-    @test two_binary(element[0, 0, 1], element[log(element(3)), log(element(3)), 1]) ≈ sqrt(element(2)) * element(π) / 6
-    @test GameTracing.PathFollowing.correction_bound(two_binary, element) ≈ sqrt(element(2)) * element(π)
-    @test GameTracing.PathFollowing.correction_bound(GameTracing.LogProbabilityChange((1:1,)), element) === element(Inf32)
-    two_players = GameTracing.FisherRaoChange((1:2, 3:3))
-    @test two_players(element[0, 0, 0, 1], element[0, 0, log(element(3)), 1]) ≈ element(π) / 6
-    # A strategy outside the support moves 500 logits, but no probability. Gambit's norm counts its log probability.
-    @test two_players(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) <= eps(element)
-    @test GameTracing.LogProbabilityChange((1:2, 3:3))(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) ≈ 500
-    # A player whose first strategy left the support: its logits move together, and its strategy does not.
-    @test two_players(element[1000, 1000, 0, 1], element[1500, 1500, 0, 1]) <= eps(element)
-    # At odds 1:3:1 only the middle logit, log 3, is nonzero, so the spread is √(3/5) log 3.
-    @test last(GameTracing.fisher_rao_spread(element[0, 0, 1], element[log(element(3)), 0, 1], 1:2)) ≈ sqrt(element(3) / 5) * log(element(3))
-end
-
-@testset "a strategy move within its logits' settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
-    distance = StrategyDistance{element}()
-    tolerance, ulps = distance.tolerance, distance.settle_ulps
-    settled = GameTracing.settle_test(distance, GameTracing.StrategyChange((1:2,)))
-    # Strategies 2 and 3 share a large logit; the first has left the support. Their rounding alone passes the tolerance.
-    large = 64 * tolerance / eps(element)
-    rounded = large + 4 * eps(large)
-    @test GameTracing.FisherRaoChange((1:2,))(element[large, large, 1], element[rounded, large, 1]) > tolerance
-    @test settled(element[large, large, 1], element[rounded, large, 1], element[], one(element))
-    # A logit gap of four allowances moves the strategy two, one allowance past the test.
-    beyond = large + 4 * ulps * eps(element) * large
-    @test !settled(element[large, large, 1], element[beyond, large, 1], element[], one(element))
-    # Newton's error estimate scales the move: a tenth of it settles.
-    @test settled(element[large, large, 1], element[beyond, large, 1], element[], element(1 // 10))
-    # Small logits have no allowance to speak of: a move of four tolerances stays past it.
-    @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[], one(element))
-    @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[], one(element))
-end
-
-@testset "StrategyDistance reads Gambit's norm where Fisher–Rao cannot see a strategy near zero ($element)" for element in (Float32, widen(Float32))
-    distance = StrategyDistance{element}()
+@testset "PathFollowing's measure is Gambit's norm past each strategy's rounding ($element)" for element in (Float32, widen(Float32))
+    distance = CorrectorDistance{element}()
     measure = GameTracing.corrector_measure(distance, NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), 2)
-    settled = GameTracing.settle_test(distance, GameTracing.StrategyChange((1:1,)))
+    @test measure == GameTracing.LogProbabilityChange((1:1, 2:2), distance.settle_ulps * eps(element))
+    @test GameTracing.PathFollowing.correction_bound(measure, element) === element(Inf32)
+    # A strategy outside the support moves 500 logits and no probability; Gambit's norm counts its log probability.
+    @test GameTracing.LogProbabilityChange((1:2, 3:3), zero(element))(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) ≈ 500
     # A binary player at logit -30 whose logit moves by 1: its first strategy's log probability moves by about 1.
-    from, to = element[-30, 1], element[-29, 1]
-    fisher_rao = GameTracing.FisherRaoSettled((1:1,), distance.tolerance, distance.settle_ulps * eps(element))
-    @test fisher_rao(from, to, element[], one(element))
-    @test !settled(from, to, element[], one(element))
-    @test GameTracing.StrategyChange((1:1,))(from, to) ≈ inv(sqrt(element(2))) rtol = 1.0f-4
-    @test measure isa GameTracing.StrategyChange
+    settled = GameTracing.settle_test(distance, GameTracing.LogProbabilityChange((1:1,), distance.settle_ulps * eps(element)))
+    @test !settled(element[-30, 1], element[-29, 1], element[], one(element))
     # Four strategies, the second near certain at logit 10, its logit up 9e-5: Gambit's norm is about √3 · 9e-5.
-    four = GameTracing.settle_test(distance, GameTracing.StrategyChange((1:3,)))
+    four = GameTracing.settle_test(distance, GameTracing.LogProbabilityChange((1:3,), distance.settle_ulps * eps(element)))
     @test !four(element[10, 0, 0, 1], element[10 + 9.0f-5, 0, 0, 1], element[], one(element))
-    # Step control refuses past 4 targets, 0.28: Gambit's 0.4 refusal over √2.
-    @test 4 * distance.target_correction * sqrt(element(2)) <= element(0.4f0)
+    # A large logit's rounding counts zero in the measure, as in the settle test; four allowances do not.
+    large = 64 * distance.tolerance / eps(element)
+    rounded, beyond = large + 4 * eps(large), large + 4 * distance.settle_ulps * eps(element) * large
+    within = GameTracing.LogProbabilityChange((1:1,), distance.settle_ulps * eps(element))
+    @test within(element[large, 1], element[rounded, 1]) == 0
+    @test settled(element[large, 1], element[rounded, 1], element[], one(element))
+    @test within(element[large, 1], element[beyond, 1]) > distance.tolerance
+    @test !settled(element[large, 1], element[beyond, 1], element[], one(element))
+    # Newton's error estimate scales the move: a tenth of a small one settles.
+    @test settled(element[0, 1], element[4 * distance.tolerance, 1], element[], element(1 // 10))
+    @test !settled(element[0, 1], element[4 * distance.tolerance, 1], element[], one(element))
+    @test !settled(element[NaN32, 1], element[0, 1], element[], one(element))
+    # Step control refuses past 4 targets, at Gambit's 0.4.
+    @test 4 * distance.target_correction == element(2 // 5)
 end
 
-@testset "StrategyDistance turns a fold whose start settled only to its tolerance" begin
-    # The benchmark's 20x20 game from seed 6 folds back at λ ≈ 315.68, where each start settles only to its tolerance:
-    # a leftover error of about 1.5e-5 in Fisher–Rao, more than short predictor moves.
+@testset "both engines turn a fold in Float64; in Float32 each fails loudly at it" begin
+    # The benchmark's 20x20 game from seed 6 folds back at λ ≈ 315.68, with logits near 600 on strategies near zero.
     rng = Xoshiro(6)
     payoffs = ntuple(_ -> randn(rng, (20, 20)), 2)
     wide = widen(Float32)
-    @test !is_error(logit_solve(NormalFormGains(payoffs); maxregret = 1.0f-4, settings = PathFollowingSettings{wide}()))
-    # The default Fisher metric turns it in Float32 too.
+    for settings in (PathFollowingSettings{wide}(), BifurcationKitSettings{wide}())
+        @test !is_error(logit_solve(NormalFormGains(payoffs); maxregret = 1.0f-4, settings))
+    end
+    # A declared Float32 failure. The Newton step is ill-conditioned at the fold, and Gambit's norm counts the saturated
+    # strategies' log probabilities, so its error there passes any rounding allowance. Fisher–Rao ignored them.
     narrow = NormalFormGains(map(table -> Float32.(table), payoffs))
-    @test !is_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
-    # In the summed metric the turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there, and the trace stops
-    # loudly at the fold.
+    path_following = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
+    @test path_following.cause == TraceCause.TraceStuck{Float32}(GameTracing.UnresolvedStep)
+    @test path_following.engine.failure.last_refusal == PathFollowing.Diverging
+    @test abs(path_following.stop.precision - 315.68f0) < 1
+    bifurcation_kit = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = BifurcationKitSettings{Float32}()))
+    @test failed_as(bifurcation_kit, TraceCause.PrecisionExhausted)
+    @test bifurcation_kit.cause.stage == GameTracing.MidTrace
+    @test abs(bifurcation_kit.stop.precision - 315.68f0) < 1
+    # In the summed metric the turn spans about 1e-4 in λ, four Float32 ulps: Newton diverges there too.
     summed = TraceGeometry{Float32}(; distance = SummedDistance, state_weight = 1)
     failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}(; step_metric = summed)))
     @test failed_as(failure, TraceCause.TraceStuck)
@@ -463,7 +432,7 @@ end
 
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
-    for distance in (StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), LogitDistance{element}(; tolerance = eps(element), settle_ulps = 0))
+    let distance = CorrectorDistance{element}(; tolerance = eps(element), settle_ulps = 0)
         settings = PathFollowingSettings{element}(; newton_iterations = 1, distance, max_refusals = 2)
         tracer = started_tracer(gains, settings)
         # The opening predictor passes this precision, so the first attempt corrects at it.

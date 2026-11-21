@@ -116,14 +116,15 @@ end
     )
     payload = (; p = element(3 // 4), ds = element(1 // 4), residual = zero(element))
     @test check((; payload..., x = predicted, z0 = (; u = start), step = 0); fromNewton = false)
-    # The predictor moved a logit by 0.5; this iterate moves one 1.5 further, past the reach of twice that.
+    # The predictor moved the logits by (0.25, -0.5); this iterate moves one 1.5 further, past the reach of twice that.
     @test !check((; payload..., x = far, step = 1); fromNewton = false)
     @test check.stalled == far
     @test check.state[].stalled_step == (; pin = payload.p, arclength = payload.ds)
     # The halved step's predictor is the start: no smaller step resolves, so the reach failure confirms noise.
     @test !check((; payload..., x = start, z0 = (; u = start), step = 0, ds = payload.ds / 2); fromNewton = false)
     @test GameTracing.noise_confirmed(check)
-    @test GameTracing.exhausted_record(check) == StalledCorrection(payload.p, element(3 // 2), far, payload.p, payload.ds)
+    move = GameTracing.log_probability_change(predicted, far, check.ranges)
+    @test GameTracing.exhausted_record(check) == StalledCorrection(payload.p, move, far, payload.p, payload.ds)
     # Only PALC's corrector stalls on a step; a plain Newton iterate has none to record.
     @test_throws ArgumentError GameTracing.record_stall!(check, (; x = far, step = 1, residual = zero(element)))
 end
@@ -320,7 +321,8 @@ end
     flat = LogitGame(NoisyFlatPass(element(1 // 2), element(1.0f-7), element(10), UInt(1)), one(element))
     settled = unwrap(reached_at(flat, element[1 // 2 + tolerance / 2], zero(element)))
     @test settled.logits == element[1 // 2 + tolerance / 2]
-    @test isapprox(settled.logit_accuracy, tolerance / 2; atol = 4 * eps(element))
+    # The accuracy is Gambit's norm of the correction, about 0.72 of the logit move at logit 1/2 (`flat_gambit`).
+    @test isapprox(settled.logit_accuracy, flat_gambit(tolerance / 2); atol = 4 * eps(element))
     # The corrector's own accuracy stands when it is the larger.
     @test unwrap(reached_at(flat, element[1 // 2 + tolerance / 2], tolerance)).logit_accuracy == tolerance
     unsettled = unwrap_error(reached_at(flat, element[1 // 2 + 2 * tolerance], zero(element)))
@@ -329,7 +331,7 @@ end
     @test unsettled.cause.stall.precision == unsettled.cause.stall.pin == last(unsettled.cause.stall.iterate) == 1
     @test unsettled.cause.stall.iterate[1] ≈ 1 // 2
     @test unsettled.stop.gaps == element[1 // 2 + 2 * tolerance]
-    @test isapprox(unsettled.cause.stall.correction, 2 * tolerance; atol = 4 * eps(element))
+    @test isapprox(unsettled.cause.stall.correction, flat_gambit(2 * tolerance); atol = 4 * eps(element))
     # A corrector can stop on a lucky draw of noise (issue #134). At the target `λ η` is 0.01, a hundred tolerances.
     target = element(1.0f5)
     noisy = LogitGame(NoisyFlatPass(element(1.0f-4), element(1.0f-7), element(10), UInt(3)), target)

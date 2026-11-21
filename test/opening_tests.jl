@@ -313,7 +313,8 @@ end
     @test solve_verdicts(noisy, stalled) == [true, true, true, false]
     @test GameTracing.noise_confirmed(noisy)
     @test noisy.state[].noise.suspect.precision == 1
-    @test noisy.state[].noise.suspect.correction ≈ 1.0f-2
+    # Near even odds Gambit's norm of a logit move of 0.01 is 0.01 / √2.
+    @test noisy.state[].noise.suspect.correction ≈ 1.0f-2 / sqrt(2.0f0) rtol = 1.0f-3
     # The record holds the iterate whose correction confirmed the stall; a corrector without one has no record.
     @test GameTracing.exhausted_record(noisy) == StalledCorrection(1.0f0, noisy.state[].correction, Float32[3.0f-2, 0, 1], 1.0f0, 0.25f0)
     @test_throws ArgumentError GameTracing.exhausted_record(poor)

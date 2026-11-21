@@ -389,23 +389,16 @@ function branch_step(pass::Any, logits::AbstractVector, precision::Real)::Vector
 end
 
 """
-Whether branch point `logits` solve `gains` at `precision` as PathFollowing's `StrategyDistance` corrector settles them:
-`branch_step` moves the profile (`StrategyChange`) no more than twice the settle tests' bound. The Fisher–Rao test
-allows the tolerance plus `settle_ulps` ulps of the logits' spread (`FisherRaoSettled`). Gambit's norm, over √2,
-allows its tolerance plus each strategy's allowance (`gambit_allowance`). Large Float32 logits round past the tolerance alone.
+Whether branch point `logits` solve `gains` at `precision` as PathFollowing's corrector settles them: `branch_step`
+moves the profile no more than twice the settle test's tolerance in Gambit's norm, past each strategy's rounding
+(`LogProbabilityChange`, in double precision). Large Float32 logits round past the tolerance alone.
 """
-function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance{E})::Bool where {E <: Real}
+function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::CorrectorDistance{E})::Bool where {E <: Real}
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
     corrected = root .- branch_step(gains, logits, precision)
-    measure = GameTracing.corrector_measure(distance, gains, logit_count(gains))
+    measure = GameTracing.LogProbabilityChange(GameTracing.logit_ranges(gains), distance.settle_ulps * eps(E) * float(1))
     # The measure reads only the logits `z = λ w`, so `[z; 1]` serves at every precision, zero included.
-    point = [root; one(level)]
-    ranges = GameTracing.logit_ranges(gains)
-    relative = distance.settle_ulps * eps(E)
-    spread = sqrt(sum(range -> last(GameTracing.fisher_rao_spread(point, point, range))^2, ranges))
-    fisher_rao = distance.tolerance + relative * spread
-    gambit = (distance.log_probability_tolerance + gambit_allowance(point, ranges, relative)) / sqrt(2)
-    return measure(point, [corrected; one(level)]) <= 2 * max(fisher_rao, gambit)
+    return measure([root; one(level)], [corrected; one(level)]) <= 2 * distance.tolerance
 end
 
 """
@@ -435,6 +428,11 @@ function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::
     return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * 3 * largest * sqrt(E(2 * length(logits)))
 end
 
+"""Gambit's norm of a correction `correction` from logit 1/2 at precision one, a binary player (`LogProbabilityChange`)."""
+function flat_gambit(correction::E)::E where {E <: Real}
+    return GameTracing.log_probability_change(E[1 // 2 + correction, 1], E[1 // 2, 1], (1:1,))
+end
+
 """Gambit's norm of the move `step` from `logits` (`LogProbabilityChange`), over `pass`'s players, in double precision."""
 function gambit_move(pass::Any, logits::AbstractVector, step::AbstractVector)::Real
     point = [float.(collect(logits)) .* float(1); float(1)]
@@ -443,22 +441,16 @@ end
 
 """
 The largest Newton correction, in logits, that PathFollowing's corrector leaves settled under `distance` at the logits
-`logits` of `pass`'s game, to first order. The profile settles once it moves at most `tolerance` plus `settle_ulps` ulps
-of the root sum of squares of its logit spreads (`FisherRaoSettled`), doubled as in `settled_strategies`. Each player's
-move `d` is at most that. With the first logit fixed it moves logit `j` at most `d √(1/πⱼ + 1/π₀)`.
+`logits` of `pass`'s game, to first order. A settled correction moves the profile at most `tolerance` plus its rounding
+allowance in Gambit's norm (`gambit_allowance`), doubled as in `settled_strategies`. A logit's move is the difference of
+two log probabilities' moves, at most √2 times that norm.
 """
-function settle_bound(distance::StrategyDistance{E}, pass::Any, logits::AbstractVector)::E where {E <: Real}
+function settle_bound(distance::CorrectorDistance{E}, pass::Any, logits::AbstractVector)::E where {E <: Real}
     # The probabilities read only the logits `z = λ w`, so `[z; 1]` serves at every precision.
     point = [float.(collect(logits)) .* float(1); float(1)]
-    largest = zero(last(point))
-    spread = sqrt(sum(range -> last(GameTracing.fisher_rao_spread(point, point, range))^2, GameTracing.logit_ranges(pass)))
-    move = 2 * (distance.tolerance + distance.settle_ulps * eps(E) * spread)
-    for range in GameTracing.logit_ranges(pass)
-        normalizer = GameTracing.log_normalizer(point, range)
-        first_share = exp(-GameTracing.log_probability(point, 0, normalizer))
-        for index in range
-            largest = max(largest, move * sqrt(exp(-GameTracing.log_probability(point, index, normalizer)) + first_share))
-        end
+    allowance = gambit_allowance(point, GameTracing.logit_ranges(pass), distance.settle_ulps * eps(E))
+    return E(sqrt(2 * one(allowance)) * 2 * (distance.tolerance + allowance))
+end
     end
     return E(largest)
 end
@@ -806,9 +798,10 @@ function started_tracer(gains::NormalFormGains, settings::PathFollowingSettings{
 end
 
 """
-PathFollowing's step-control targets before the Gambit-strict defaults: a first correction of 1/4 and a turn of 1 rad.
-The jump hunts of the branch tests ran at them; the defaults keep those branches without the checks the tests isolate.
+PathFollowing's step-control targets before the Gambit-strict defaults: a turn of 1 rad, and a first correction of 1/4
+Fisher–Rao, 0.35 in Gambit's norm at even odds. The jump hunts of the branch tests ran at them; the defaults keep those
+branches without the checks the tests isolate.
 """
 function previous_targets(element::Type)::NamedTuple
-    return (; target_turn = 1, distance = StrategyDistance{element}(; target_correction = 1 // 4))
+    return (; target_turn = 1, distance = CorrectorDistance{element}(; target_correction = 7 // 20))
 end

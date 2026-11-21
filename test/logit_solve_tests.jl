@@ -212,9 +212,10 @@ end
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
         @test (refused.cause, refused.engine.failure.refusals) == (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), 1)
     end
-    # The refusal factor 2 refuses a first correction past 4 times its target, which must lie under the distance's bound.
-    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.8f0)))
-    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.78f0))))
+    # The refusal factor 2 refuses a first correction past 4 times its target, which must lie under the distance's bound,
+    # π√2 for two players.
+    @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 112 // 100)))
+    @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 110 // 100))))
     @test !is_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance = LogitDistance{element}(; target_correction = 100))))
     # A settle tolerance at or past the target first correction is refused; without a target it is free.
     for distance_type in (StrategyDistance{element}, LogitDistance{element})

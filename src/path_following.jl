@@ -35,11 +35,12 @@ struct StrategyDistance{E <: Real} <: CorrectorDistance{E}
     end
 end
 
-# Defaults: half the `LogitDistance` defaults, as a logit move at even odds is twice its Fisher–Rao distance.
+# Defaults: half the `LogitDistance` defaults, as a logit move at even odds is twice its Fisher–Rao distance. Gambit's
+# 1e-4 is 7.1e-5 here; its refusal of a correction of 0.4 is 0.28, and step control refuses past 4 targets.
 function StrategyDistance{E}(;
         tolerance::Real = 5.0f-5,
         settle_ulps::Integer = 16,
-        target_correction::Union{Nothing, Real} = 0.25f0,
+        target_correction::Union{Nothing, Real} = 7 // 100,
     )::StrategyDistance{E} where {E <: Real}
     return StrategyDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, target_correction))
 end
@@ -88,12 +89,12 @@ function settle_tolerance(tolerance::E, target_correction::Union{Nothing, E})::E
     return tolerance
 end
 
-# Defaults: the cheapest step control that kept Gambit's branch on ten benchmark games where others left it. A target
-# correction of 1 jumped branches on two 5x5x5 games; 0.5 did not, at about the same step count as 1.
+# Defaults: Gambit's limits, times √2 in logits. Its 1e-4 is 1.4e-4 here; its refusal of a correction of 0.4 is 0.57,
+# and step control refuses past 4 targets. A target of 1 jumped branches on two 5x5x5 games; 0.5 did not.
 function LogitDistance{E}(;
         tolerance::Real = 1.0f-4,
         settle_ulps::Integer = 16,
-        target_correction::Union{Nothing, Real} = 0.5f0,
+        target_correction::Union{Nothing, Real} = 14 // 100,
     )::LogitDistance{E} where {E <: Real}
     return LogitDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, target_correction))
 end
@@ -113,8 +114,8 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: `StrategyDistance` (Fisher–Rao, in mixed
   strategies) or `LogitDistance`. It carries the corrector's settle tolerance and step control's target correction.
 - `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
-  `distance`. `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the
-  settle tolerance, often one iteration sooner than `LastCorrection()`. Its numbers convert to `E`.
+  `distance`. `LastCorrection()` settles on the last correction, as Gambit does. `ContractionEstimate(; safety)` also
+  needs the error left in the iterate to be at most `safety` times the settle tolerance. Its numbers convert to `E`.
 - `target_contraction`, `target_turn`, `max_step_growth`, `reach`: PathFollowing's `StepControl`; `nothing` drops a
   target. The turn target is in radians under `step_metric`. A converged point farther than `reach` step lengths from
   its predictor refuses the step, as one that jumped to another branch, unless `distance` puts the move within the
@@ -161,9 +162,8 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     endpoint_check::LogitSettled{E}
 end
 
-# On logitnash_speed.jl's games and 100 larger ones, a 1 rad turn target took 14-18% fewer steps than 0.3 and kept every
-# branch. Without the orientation check, five of ten games ran back. ContractionEstimate at safety 0.2 ran 8.6% faster
-# than LastCorrection; safety 1 lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error.
+# Without the orientation check, five of ten logitnash_speed.jl games ran back. ContractionEstimate alone at safety 1
+# lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error; it now also needs the last correction to pass.
 function PathFollowingSettings{E}(;
         max_step::Real = Inf32,
         max_steps::Integer = 2_000,
@@ -172,8 +172,8 @@ function PathFollowingSettings{E}(;
         contraction_limit::Real = 0.5f0,
         error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate} = PathFollowing.ContractionEstimate(; safety = 0.2f0),
         target_contraction::Union{Nothing, Real} = 0.25f0,
-        # On hard_games.jl's 543 games, 0.3 left no endpoint off its branch to 1 rad's 3, at 15-62% more steps.
-        target_turn::Union{Nothing, Real} = 1.0f0,
+        # Step control refuses past twice the target: π/2, Gambit's refusal of a tangent that turns back (`t·newT < 0`).
+        target_turn::Union{Nothing, Real} = π / 4,
         # Both engines' default. Without the split check, all 10 random jump games of logitnash_tests.jl leave their
         # branch at growth 2 with the summed metric, and none at 1.1.
         max_step_growth::Real = GAMBIT_MAX_ACCEL,

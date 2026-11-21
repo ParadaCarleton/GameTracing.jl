@@ -41,7 +41,7 @@ end
 @derive StepFailure[Show, Eq, Hash]
 
 # Moshi declares each variant `public`, but not `Type`, the sum's own name.
-Core.eval(StepFailure, Expr(:public, :Type))
+@eval StepFailure $(Expr(:public, :Type))
 
 """
     AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)

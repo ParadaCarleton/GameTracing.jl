@@ -41,11 +41,12 @@ struct LastCorrection end
 """
     ContractionEstimate(; safety)
 
-`Newton`'s `error_estimate` that settles on the error left in the iterate: the last correction times `θ / (1 - θ)`, `θ`
+`Newton`'s `error_estimate` that bounds the error left in the iterate: the last correction times `θ / (1 - θ)`, `θ`
 its ratio to the one before, over `safety` in `(0, 1]` (Hairer and Wanner, Solving Ordinary Differential Equations II,
 1996, §IV.8, take 0.01 to 0.1). The first correction has no ratio and gets `scale = 1`; a ratio of one or more gets
-`Inf`, which never settles. A slow contraction estimates its error poorly, and `safety = 1` let one such corrector
-settle off the curve near a fold, which stopped the trace.
+`Inf`, which never settles. The corrector settles only when `converged` passes at `scale = 1` and at this scale
+(`settles`), so it is never looser than `LastCorrection()`. A slow contraction estimates its error poorly: alone, at
+`safety = 1`, the estimate let one corrector settle off the curve near a fold, which stopped the trace.
 """
 struct ContractionEstimate{E <: Real}
     safety::E
@@ -66,7 +67,7 @@ step metric.
   the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`. A `converged`
   that settles at an infinite or NaN `scale` throws an `ArgumentError`.
 - `contraction_limit`: a correction longer than this times the one before it is refused as diverging.
-- `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)`.
+- `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)` (`settles`).
 - `distance(from, to)`: a correction's length, for the contraction test, the error estimate and step control.
   `MetricDistance()` is the step metric's norm. A distance with a target first correction declares the largest length
   it measures (`correction_bound`).
@@ -86,6 +87,19 @@ function Newton(;
     max_iterations >= 1 || throw(ArgumentError(lazy"max_iterations must be at least 1; got $max_iterations"))
     contraction_limit > 0 || throw(ArgumentError(lazy"contraction_limit must be positive; got $contraction_limit"))
     return Newton{C, E, R, D}(Int(max_iterations), converged, contraction_limit, error_estimate, distance)
+end
+
+"""
+Whether the corrector settles at `iterate`, one correction from `previous`, at error `scale` (`error_scale`).
+`LastCorrection` asks `converged` at `scale`. `ContractionEstimate` also asks at scale 1 first: the last correction
+must pass on its own, as in Gambit's tracer (path.cc), and the estimated error must pass too.
+"""
+function settles(::LastCorrection, converged::Any, previous::V, iterate::V, residual::AbstractVector{E}, scale::E)::Bool where {E <: Real, V <: AbstractVector{E}}
+    return converged(previous, iterate, residual, scale)
+end
+
+function settles(::ContractionEstimate{E}, converged::Any, previous::V, iterate::V, residual::AbstractVector{E}, scale::E)::Bool where {E <: Real, V <: AbstractVector{E}}
+    return converged(previous, iterate, residual, one(E)) && converged(previous, iterate, residual, scale)
 end
 
 """The `scale` `converged` sees after a correction of length `correction` that followed one of length `before`."""

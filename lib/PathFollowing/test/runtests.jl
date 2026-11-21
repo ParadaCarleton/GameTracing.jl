@@ -489,7 +489,7 @@ end
         @test tracer.step_length == E(2) / 1000
     end
 
-    @testset "ContractionEstimate settles on the error left in the iterate, in fewer iterations" begin
+    @testset "ContractionEstimate settles only where the last correction and the error left in the iterate both pass" begin
         halved = ContractionEstimate(; safety = one(E) / 2)
         @test PathFollowing.error_scale(LastCorrection(), E(1) / 4, one(E)) == 1
         @test PathFollowing.error_scale(halved, E(1) / 4, E(NaN32)) == 1
@@ -499,7 +499,7 @@ end
         @test_throws ArgumentError ContractionEstimate(; safety = E(2))
         @test_throws TypeError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = ContractionEstimate(; safety = big(1)))
         # A half step up the unit circle corrects by 0.125, 8.9e-3 and 4.6e-5. At tolerance 2e-3, θ/(1-θ) times the
-        # second correction, 6.9e-4, settles; over safety 1/10 it does not, nor does the second correction itself.
+        # second correction, 6.9e-4, passes at safety 1, but the second correction itself does not, so none settles there.
         settle = E(1) / 500
         control = StepControl(;
             target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2),
@@ -513,7 +513,15 @@ end
             @test abs(hypot(tracer.point...) - 1) <= settle
             step.iterations
         end
-        @test iterations == (3, 3, 2)
+        @test iterations == (3, 3, 3)
+        # The estimate passes and the last correction fails: no settle. Both pass: settle.
+        previous, iterate, residual = E[0], E[1], E[0]
+        estimate = ContractionEstimate(; safety = one(E))
+        @test !PathFollowing.settles(estimate, Settled(one(E) / 2), previous, iterate, residual, one(E) / 4)
+        @test PathFollowing.settles(LastCorrection(), Settled(one(E) / 2), previous, iterate, residual, one(E) / 4)
+        @test PathFollowing.settles(estimate, Settled(one(E)), previous, iterate, residual, one(E) / 4)
+        # The last correction passes and the estimate fails: no settle.
+        @test !PathFollowing.settles(estimate, Settled(one(E)), previous, iterate, residual, E(2))
     end
 
     @testset "a custom distance measures corrections" begin

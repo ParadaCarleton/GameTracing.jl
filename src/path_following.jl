@@ -615,8 +615,10 @@ function engine_endpoint(
         context::NamedTuple,
     )::TraceResult{E} where {E <: Real}
     problem = path_problem(game.pass!!, zero(start[begin:(end - 1)]), start, pass_work)
-    started = path_init(problem, settings, PositivePrecision(callbacks.accept_corrected))
-    return landed_endpoint(started, start, E(game.target_precision), settings, callbacks.keep_going, context)
+    return landed_endpoint(
+        path_init(problem, settings, PositivePrecision(callbacks.accept_corrected)),
+        start, E(game.target_precision), settings, callbacks.keep_going, context,
+    )
 end
 
 """

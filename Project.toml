@@ -16,11 +16,43 @@ Moshi = "2e0e35c7-a2e4-4343-998d-7ef72827ed2d"
 PathFollowing = "1a562490-5fa8-4704-8cda-902e0afefdcf"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
-[sources]
-Corset = {url = "https://github.com/ParadaCarleton/Corset.jl", rev = "e6ab42c93325fadefc401c1e9f79a39a85bdd901"}
-BifurcationKit = {url = "https://github.com/ParadaCarleton/BifurcationKit.jl", rev = "irv"}
-# Dependents record a path source as a depot-relative path; CI.yml develops lib/PathFollowing over this one.
-PathFollowing = {url = "https://github.com/ParadaCarleton/GameTracing.jl", subdir = "lib/PathFollowing", rev = "main"}
+[sources.BifurcationKit]
+rev = "irv"
+url = "https://github.com/ParadaCarleton/BifurcationKit.jl"
+
+[sources.Corset]
+rev = "e6ab42c93325fadefc401c1e9f79a39a85bdd901"
+url = "https://github.com/ParadaCarleton/Corset.jl"
+
+[sources.PathFollowing]
+rev = "main"
+subdir = "lib/PathFollowing"
+url = "https://github.com/ParadaCarleton/GameTracing.jl"
+
+[compat]
+BifurcationKit = "0.8.8"
+CommonSolve = "0.2.4"
+CondaPkg = "0.2.38"
+Corset = "0.1"
+ErrorTypes = "0.5.2"
+ErrorfreeArithmetic = "0.5.2"
+JLArrays = "0.2, 0.3, 0.5"
+KernelAbstractions = "0.9"
+LinearAlgebra = "1"
+LinearSolve = "3, 4, 5"
+LogExpFunctions = "0.3.29, 1.0.3"
+Logging = "1"
+LogitNash = "0.3"
+Mooncake = "0.5.67"
+Moshi = "0.3.13"
+PathFollowing = "0.4"
+Printf = "1"
+PythonCall = "0.9.37"
+Random = "1"
+StaticArrays = "1"
+Statistics = "1"
+Test = "1"
+julia = "1.13"
 
 [extras]
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
@@ -38,28 +70,3 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["CondaPkg", "Corset", "ErrorTypes", "JLArrays", "LogitNash", "Mooncake", "Moshi", "Printf", "PythonCall", "Random", "Statistics", "Test"]
-
-[compat]
-BifurcationKit = "0.8.8"
-CommonSolve = "0.2.4"
-CondaPkg = "0.2.38"
-Corset = "0.1"
-ErrorTypes = "0.5.2"
-ErrorfreeArithmetic = "0.5.2"
-JLArrays = "0.2, 0.3"
-KernelAbstractions = "0.9"
-LinearAlgebra = "1"
-LinearSolve = "3, 4, 5"
-LogExpFunctions = "0.3.29, 1.0.3"
-Logging = "1"
-LogitNash = "0.3"
-Mooncake = "0.5.67"
-Moshi = "0.3.13"
-PathFollowing = "0.4"
-Printf = "1"
-PythonCall = "0.9.37"
-Random = "1"
-StaticArrays = "1"
-Statistics = "1"
-Test = "1"
-julia = "1.13"

@@ -143,10 +143,10 @@ end
     Traced(logits, steps, logit_accuracy)
 
 The `logits` of a trace at its target precision, a root of the game in effect there, the continuation `steps` it took
-over every segment, and `logit_accuracy`. On BifurcationKit that is the largest last Newton correction in logits of any
+over every segment, and `logit_accuracy`. On BifurcationKit that is the largest last Newton logit move (`logit_change`) of any
 accepted point and of the endpoint's check (`verified_endpoint`), at most the corrector's `logit_tolerance` plus
-`settle_ulps` ulps of the largest logit it moved. On PathFollowing it is the endpoint check's correction in logits
-(`verified_landing`), at most `endpoint_tolerance` plus `endpoint_ulps` ulps of that logit.
+`settle_ulps` ulps of the logits it moved (`logit_corrections`). On PathFollowing it is the endpoint check's correction
+in logits (`verified_landing`), at most `endpoint_tolerance` plus `endpoint_ulps` ulps of those logits.
 """
 struct Traced{E <: Real}
     logits::Vector{E}

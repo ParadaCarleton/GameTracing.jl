@@ -4,16 +4,19 @@ using Logging: @debug
     CorrectorSettings{E}(; reach, max_kl, logit_tolerance, settle_ulps, pin_tolerance, contraction_limit,
                          contraction_offset, noise_ratio, noise_limit, newton_iterations)
 
-The corrector's controls (`CorrectorReach`); `nothing` switches a limit off. `reach`: a corrector that moves a logit
-further from the predictor than this times the predictor's own largest logit move is refused. `shift_share`: the share
+The corrector's controls (`CorrectorReach`); `nothing` switches a limit off. Every logit move is the Euclidean length
+of the logits' change (`logit_change`). `reach`: a corrector that moves the logits further from the predictor than this
+times the predictor's own logit move is refused. `shift_share`: the share
 of that reach a redraw's predicted root shift may use (`RootShift`). `max_kl`: a corrected point that moves any player's mixed
 strategy further from the predictor's than this KL is refused (`largest_kl`); the game's pass must define `logit_ranges`.
 A step's turn is limited by `StepControl`'s `turn_limit`.
 
-Convergence is scale-free, as in Gambit's tracer (path.cc:372, `c_tol` in log probabilities): a Newton correction that
-moves no logit more than `logit_tolerance`, at a precision within the relative `pin_tolerance` of its pin.
-Each logit also gets `settle_ulps` ulps of its own size (`logit_corrections`). A Float32 logit near 1e3 rounds by
-1.2e-4, past the default tolerance, so without this allowance a Float32 trace stalls near λ 300 on 20x20 games.
+Convergence is scale-free, as in Gambit's tracer (path.cc, `c_tol` on the Euclidean norm in log probabilities): a
+Newton correction whose logit move is at most `logit_tolerance`, at a precision within the relative `pin_tolerance` of
+its pin. A logit move is at most √2 times Gambit's norm, with equality for two strategies at even odds, so Gambit's
+`c_tol` 1e-4 is 1.4e-4 here. The allowance adds `settle_ulps` ulps of each logit's own size, in quadrature
+(`logit_corrections`). A Float32 logit near 1e3 rounds by 1.2e-4, past the default tolerance, so without this allowance
+a Float32 trace stalls near λ 300 on 20x20 games.
 A correction that moves the logits more than `contraction_limit` times the one before it (plus `logit_tolerance`
 times `contraction_offset`) fails to contract; BifurcationKit's step growth reads the same rate (`corrector_quality`).
 Suspected noise is confirmed when the halved step's stalled correction is at least `noise_ratio` of the suspect's
@@ -43,29 +46,30 @@ Base.@kwdef struct CorrectorSettings{E <: Real}
     newton_iterations::Int = 25
 end
 
-"""The largest change of a logit from `from` to `to`, two points `[w; λ]` (`logits_at`), one logit at a time."""
+"""The Euclidean length of the logits' change from `from` to `to`, two points `[w; λ]` (`logits_at`)."""
 function logit_change(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    largest = zero(E)
+    squared = zero(E)
     for index in firstindex(to):(lastindex(to) - 1)
-        largest = max(largest, abs(last(to) * to[index] - last(from) * from[index]))
+        squared += (last(to) * to[index] - last(from) * from[index])^2
     end
-    return largest
+    return sqrt(squared)
 end
 
 """
-`(correction, excess)` of a Newton step from `from` to `to`, two points `[w; λ]`: the largest change of a logit
-(`logit_change`), and the largest change times `scale` past `relative` times that logit's own size, which the settle
-test reads. `scale` turns a change into an estimate of the error it leaves (PathFollowing's `error_estimate`).
+`(correction, excess)` of a Newton step from `from` to `to`, two points `[w; λ]`: the logits' Euclidean change
+(`logit_change`), and that change times `scale` past the rounding allowance, which the settle test reads. The allowance
+is `relative` times the Euclidean length of the logits' own sizes, each at its larger end. `scale` turns a change into
+an estimate of the error it leaves (PathFollowing's `error_estimate`).
 """
 function logit_corrections(from::AbstractVector{E}, to::AbstractVector{E}, relative::E, scale::E)::NTuple{2, E} where {E <: Real}
-    largest, excess = zero(E), zero(E)
+    squared_change, squared_size = zero(E), zero(E)
     for index in firstindex(to):(lastindex(to) - 1)
         later, earlier = last(to) * to[index], last(from) * from[index]
-        change = abs(later - earlier)
-        largest = max(largest, change)
-        excess = max(excess, scale * change - relative * max(abs(later), abs(earlier)))
+        squared_change += (later - earlier)^2
+        squared_size += max(abs(later), abs(earlier))^2
     end
-    return (largest, excess)
+    correction = sqrt(squared_change)
+    return (correction, scale * correction - relative * sqrt(squared_size))
 end
 
 """
@@ -107,7 +111,7 @@ end
         stalled_step)
 
 The scalars a `CorrectorReach` carries between BifurcationKit's calls: the current step's `step_length` and its
-predictor's largest logit change `predictor_move`; the current solve's last `correction` in logits, its
+predictor's logit move `predictor_move` (`logit_change`); the current solve's last `correction` in logits, its
 non-contracting corrections in a row (`stalls`) and whether it settled (`settled_here`); and the trace's `noise`
 (`NoiseRecord`). `stalled_step` holds the `pin` and `arclength` of the PALC step whose iterate `stalled` holds
 (`record_stall!`), NaN before any stall.
@@ -149,7 +153,7 @@ Two such corrections in a row, each larger than the predictor's own move in logi
 noise floor (`noise_floor`), are suspected rounding noise (`noise`), confirmed at the next halved step; the check then refuses every corrector (`noise_confirmed`).
 A non-finite residual stops the corrector,
 and so does any iterate whose logits are further from the predictor's than `settings.reach` times the predictor's own
-largest logit move (`within_reach`); the step then halves. A predictor within `RESOLUTION_ULPS` ulps of each of the
+logit move (`within_reach`); the step then halves. A predictor within `RESOLUTION_ULPS` ulps of each of the
 point's coordinates (`step_unresolved`) refuses that corrector and every later one (`unresolved`): no smaller step can
 add a point, so the trace ends as `TraceStuck`, or as `PrecisionExhausted` when the corrector before it stopped past its
 reach (`unresolved_noise`). On a smooth branch that distance is the branch's curvature
@@ -396,7 +400,7 @@ end
 
 `check`'s verdict on a Newton `iterate` that its other tests let `proceed`, in logits `z = λ w`. The first iterate
 is the solve's start and never settles. Each later one is a correction `Δz` from the iterate before: it settles
-(`NewtonConverged`) when `settled` by the part of `Δz` past each logit's `settle_ulps`. A correction past `contraction_limit` times the one before (plus
+(`NewtonConverged`) when `settled` by the part of `Δz` past the logits' `settle_ulps` (`logit_corrections`). A correction past `contraction_limit` times the one before (plus
 `logit_tolerance · contraction_offset`) fails to contract, Gambit's test (path.cc), and stops the corrector, so the
 step halves. Two in a row, each larger than the predictor's own move and within `noise_limit` of the noise floor
 (`noise_floor`), are suspected noise (`noise`), the iterate in `check.stalled`; the
@@ -468,9 +472,9 @@ function pin_residual(iterate::NamedTuple)::eltype(iterate.x)
 end
 
 """
-Whether `check`'s corrector has settled `iterate`, reached by a Newton step whose largest logit move past that
-logit's `settle_ulps` is `correction` (`logit_corrections`): the step moved no logit more than `logit_tolerance` past
-its rounding, and the precision `λ` is at its pin to the relative `pin_tolerance`. The pin
+Whether `check`'s corrector has settled `iterate`, reached by a Newton step whose logit move past the logits'
+`settle_ulps` is `correction` (`logit_corrections`): the step moved the logits no more than `logit_tolerance` past
+their rounding, and the precision `λ` is at its pin to the relative `pin_tolerance`. The pin
 needs its own test: a far target's logits barely move with `λ`, so they would pass a `λ` that never left its start.
 """
 function settled(check::CorrectorReach, iterate::I, correction::Real)::Bool where {
@@ -485,8 +489,8 @@ function settled(check::CorrectorReach, iterate::I, correction::Real)::Bool wher
 end
 
 """
-Whether `point` moved no logit further from the predictor's than `check.settings.reach` times the predictor's own
-largest logit move (`logit_change`). Logits are target-free, as the convergence test is; a weighted norm can shrink a
+Whether `point` moved the logits no further from the predictor's than `check.settings.reach` times the predictor's
+own logit move (`logit_change`). Logits are target-free, as the convergence test is; a weighted norm can shrink a
 branch jump (a frozen Fisher metric) or swell a settled point (the norm's `P²` on the gaps at a far target).
 """
 function within_reach(check::CorrectorReach, point::AbstractVector)::Bool

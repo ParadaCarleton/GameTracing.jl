@@ -877,7 +877,7 @@ landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's met
 corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
 
 The correction is `pinned_correction`'s, which fails `NotFinite` or `Singular`. An unsettled correction (as `settled`:
-past `corrector.logit_tolerance` beyond `settle_ulps` ulps of each logit) fails `PrecisionExhausted` (`AtEndpoint`).
+past `corrector.logit_tolerance` beyond `settle_ulps` ulps of the logits, `logit_corrections`) fails `PrecisionExhausted` (`AtEndpoint`).
 Its `StalledCorrection` runs from the endpoint (`gaps`, `precision`) to a plain Newton iterate pinned at the
 endpoint's precision, arclength zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the correction.
 """

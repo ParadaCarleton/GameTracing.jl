@@ -47,8 +47,9 @@ end
 """
     LogitDistance{E}(; tolerance, settle_ulps, target_correction)
 
-Measure a move by the largest change of any logit (`logit_change`). The corrector settles once a correction moves no
-logit more than `tolerance` past `settle_ulps` ulps of its own size (`LogitSettled`). Step control's target first
+Measure a move by the Euclidean length of the logits' change (`logit_change`), at most √2 times Gambit's norm in log
+probabilities. The corrector settles once a correction moves the logits no more than `tolerance` past `settle_ulps` ulps
+of their own size (`LogitSettled`). Step control's target first
 correction is `target_correction`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
 support: its logit grows like `λ`, and its corrections, `λ` times the square of the others', hold the steps short.
 A set target must lie above `tolerance` (`settle_tolerance`).
@@ -65,8 +66,8 @@ end
 """
     LogitSettled(tolerance, rounding)
 
-PathFollowing's `converged` over points `[w; λ]`: the last correction, times Newton's `scale`, moved no logit more
-than `tolerance` past `rounding` times that logit's own size (`logit_corrections`).
+PathFollowing's `converged` over points `[w; λ]`: the last correction's logit move, times Newton's `scale`, is at
+most `tolerance` past `rounding` times the logits' own size (`logit_corrections`).
 """
 struct LogitSettled{E <: Real}
     tolerance::E
@@ -136,8 +137,8 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`
   (`UnresolvedStep`).
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
-- `endpoint_tolerance`, `endpoint_ulps`: `trace_endpoint`'s last Newton correction at the target must move no logit more
-  than `endpoint_tolerance` past `endpoint_ulps` ulps of its size (`LogitSettled`, `verified_landing`). The defaults
+- `endpoint_tolerance`, `endpoint_ulps`: `trace_endpoint`'s last Newton correction at the target must move the logits
+  no more than `endpoint_tolerance` past `endpoint_ulps` ulps of their size (`LogitSettled`, `verified_landing`). The defaults
   are BifurcationKit's `logit_tolerance` and `settle_ulps`, so both engines bound `Traced.logit_accuracy` alike.
 """
 struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineSettings{E}
@@ -659,7 +660,7 @@ The `TraceResult` at `tracer`'s point on its target precision, after one more Ne
 (`pinned_correction`), the check of BifurcationKit's `verified_endpoint`. That correction fails `NotFinite` or
 `Singular` (`AtEndpoint`). It must settle under the trace's own corrector (`settle_test`) and in logits
 (`endpoint_check`, a `LogitSettled`), else it fails `PrecisionExhausted` (`AtEndpoint`). Its `StalledCorrection`
-holds the correction's largest logit move and its iterate, pinned at the endpoint's precision, as BifurcationKit's
+holds the correction's logit move (`logit_change`) and its iterate, pinned at the endpoint's precision, as BifurcationKit's
 does. Else the point is `Ok(Traced)`, its `logit_accuracy` that logit move. The logit test bounds the endpoint's logits
 where the default `StrategyDistance` does not: a strategy off the support counts by its probability.
 """

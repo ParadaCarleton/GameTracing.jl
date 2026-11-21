@@ -9,7 +9,7 @@ struct NoRedraw end
     ShiftedGame(game, point, factorization, shift, shift_move, within, pass_work)
 
 A candidate `game` at the accepted point `point = [w; λ]` (`RootShift`): its bordered Jacobian `[∂F/∂x; bᵀ]` there,
-factored, its root `shift` `δ`, that shift's largest logit move `shift_move`, whether the move is `within` the
+factored, its root `shift` `δ`, that shift's logit move `shift_move` (`logit_change`), whether the move is `within` the
 check's limit, and the game's pass work arrays (`pass_workspace`), which a swap hands on to the trace. A non-finite
 map or Jacobian at `point` has no factorization (`nothing`), a NaN shift and is never `within`; a restart on it fails
 as LAPACK's check of a non-finite matrix does, at the swap point.
@@ -93,7 +93,7 @@ The check a `redraw` hook receives at the accepted point `point = [w; λ]`. Call
 the `ShiftedGame`: one evaluation of the game's map and Jacobian at `point`, the bordered system under the
 corrector's `border` factored once, and the root shift `δ` from `[∂F/∂x; borderᵀ] δ = [-F(point); 0]`, one Newton
 step of the bordered corrector. The old map's residual at an accepted point is within the corrector's tolerance, so
-`-F(point)` stands for `F_old(point) - F_new(point)`. The shift is `within` when it moves no logit further than
+`-F(point)` stands for `F_old(point) - F_new(point)`. The shift is `within` when its logit move is at most
 `limit`: `settings.shift_share` of the corrector's reach on the next step, the predictor `step` (`CorrectorSettings`),
 or `nothing` when the reach is off, and every game passes. A hook returns the `ShiftedGame` to install its game, and
 the restart reuses its factorization.

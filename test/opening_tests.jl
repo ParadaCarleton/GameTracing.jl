@@ -223,6 +223,13 @@ end
     @test last(GameTracing.logit_corrections(element[large, 1], element[beyond, 1], ulps * eps(element), one(element))) > tolerance
     # A small logit has no allowance to speak of: twice the tolerance stays past it.
     @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element), one(element))) > tolerance
+    # Two logits that each move 4/5 of the tolerance move √2 · 4/5 of it together, past the tolerance, as Gambit's norm.
+    apart = 4 * tolerance / 5
+    @test first(GameTracing.logit_corrections(element[0, 0, 1], element[apart, apart, 1], ulps * eps(element), one(element))) ≈ sqrt(element(2)) * apart
+    @test last(GameTracing.logit_corrections(element[0, 0, 1], element[apart, apart, 1], ulps * eps(element), one(element))) > tolerance
+    # Two large logits share their allowances in quadrature: each moved by its own allowance, they settle.
+    allowance = ulps * eps(element) * large
+    @test last(GameTracing.logit_corrections(element[large, large, 1], element[large + allowance, large + allowance, 1], ulps * eps(element), one(element))) <= tolerance
     # The corrector settles the large logit's rounding at its first correction.
     check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element), nothing)
     GameTracing.restate!(check; predictor_move = one(element))

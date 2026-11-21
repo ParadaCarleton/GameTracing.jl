@@ -271,7 +271,7 @@ end
 
 """The steps a trace under the step budget `limit` has left after `steps`: `nothing` for no limit."""
 steps_left(::Nothing, ::Integer)::Nothing = nothing
-steps_left(limit::Integer, steps::Integer)::Int = limit - steps
+steps_left(limit::Integer, steps::Integer)::Integer = limit - steps
 
 """`merge(own, options)`, or an `ArgumentError` where `options` names a keyword of `own`, which the trace sets itself."""
 function added_options(own::NamedTuple, options::NamedTuple)::NamedTuple

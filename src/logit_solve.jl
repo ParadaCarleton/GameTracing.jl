@@ -277,11 +277,12 @@ end
 """
     precision_ceiling(E)
 
-The precision of a `logit_solve` trace with no `maximum_precision`: `√floatmax(E)`, the largest whose square is finite,
-as a plain norm at the target squares it (`plain_weights`). The regret stalls long before it (`regret_stalled`).
+The precision of a `logit_solve` trace with no `maximum_precision`: `eps(E)^-2`, 2^46 in Float32 and 2^104 in Float64.
+It only makes the target finite; the regret stalls long before it (`regret_stalled`). Its square stays finite, so a
+pass that squares the precision stays finite too.
 """
 function precision_ceiling(::Type{E})::E where {E <: AbstractFloat}
-    return sqrt(floatmax(E))
+    return inv(eps(E))^2
 end
 
 """

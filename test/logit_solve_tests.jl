@@ -652,9 +652,9 @@ end
     end
 end
 
-@testset "a trace with no cap runs to the largest precision whose square is finite ($element)" for element in (Float32, widen(Float32))
+@testset "a trace with no cap runs to eps^-2, whose square is finite ($element)" for element in (Float32, widen(Float32))
     ceiling = GameTracing.precision_ceiling(element)
-    @test isfinite(ceiling^2) && ceiling > floatmax(element)^(1 // 3)
+    @test isfinite(ceiling^2) && ceiling == exp2(2 * (precision(element) - 1))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     @test GameTracing.trace_ceiling(PathFollowingSettings{element}(), nothing) == ceiling
     @test GameTracing.trace_ceiling(GameTracing.gambit_settings(element, GameTracing.GAMBIT_MAX_ACCEL), nothing) == ceiling

@@ -2,6 +2,8 @@
 
 using Corset
 using KernelAbstractions: CPU
+using Moshi.Data: is_data_type, variant_fieldnames, variant_name, variants
+using PathFollowing: PathFollowing
 using Corset:
     Repository,
     Site,
@@ -253,4 +255,29 @@ in_benchmark(site::Site)::Bool = normpath(site.file) == ARMS_FILE
     ] ==
         Site[]
     @test concrete_returns(ARMS_FILE, located_source(ARMS_FILE), ArmBenchmark) == Site[]
+end
+
+"""The parametric Moshi sums that `namespace` defines: the `Type` of each `@data` module in it that takes a parameter."""
+function parametric_sums(namespace::Module)::AbstractVector
+    held = [getglobal(namespace, name) for name in names(namespace; all = true) if isdefined(namespace, name)]
+    return [data.Type for data in held if data isa Module && isdefined(data, :Type) && is_data_type(data.Type) && data.Type isa UnionAll]
+end
+
+@testset "every fieldless variant of a parametric Moshi sum is called with its parameter" begin
+    # `X.V()` builds `X.Type{Union{}}`: it converts to `X.Type{E}`, but `==` and `isequal` with `X.V{E}()` are false.
+    sums = [parametric_sums(GameTracing); parametric_sums(PathFollowing)]
+    @test issubset([TraceCause.Type, EngineRecord.Type, PathFollowing.StepFailure.Type], sums)
+    fieldless = [variant_name(variant) for sum_type in sums for variant in variants(sum_type) if isempty(variant_fieldnames(variant))]
+    bare = Regex("\\.(" * join(fieldless, "|") * ")\\(\\)")
+    @test occursin(bare, "EngineRecord.NoRecord()") && !occursin(bare, "EngineRecord.NoRecord{E}()")
+    directories = joinpath.((pkgdir(GameTracing), pkgdir(PathFollowing)), "src")
+    calls = [
+        (file, line)
+            for directory in directories
+            for file in readdir(directory; join = true)
+            if endswith(file, ".jl")
+            for (line, text) in enumerate(eachline(file))
+            if occursin(bare, text)
+    ]
+    @test calls == Tuple{String, Int}[]
 end

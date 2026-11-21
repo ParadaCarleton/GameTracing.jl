@@ -162,8 +162,7 @@ end
 @testset "logit_solve_branch fails NoConvergence when maximum_precision comes before maxregret ($engine)" for (engine, settings) in engine_settings(Float32)
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
     failure = unwrap_error(logit_solve_branch(gains; maximum_precision = 1, settings))
-    @test failure.cause == GameTracing.NoConvergence
-    @test failure.context.reason == :maximum_precision
+    @test failure.cause == TraceCause.NoConvergence{Float32}(GameTracing.MaximumPrecision)
 end
 
 # The 3x3 game of seed 8 in benchmark/logitnash_speed.jl. Its Float32 logits pass 1e3 before maxregret 1e-4, where their
@@ -202,12 +201,16 @@ end
 @testset "PathFollowing's spent steps, refusals and unresolved steps fail as values ($element)" for element in (Float32, widen(Float32))
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     spent = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; max_steps = 1)))
-    @test (spent.cause, spent.context.reason, spent.context.steps) == (GameTracing.NoConvergence, :max_steps, 1)
+    @test (spent.cause, spent.stop.steps) == (TraceCause.NoConvergence{element}(GameTracing.MaxSteps), 1)
     @test unwrap_error(logit_solve_lambda(gains, 100; settings = PathFollowingSettings{element}(; max_steps = 1))).context.lam == 100
+    # No precision asks for no trace, on either engine.
+    for empty_settings in (BifurcationKitSettings{element}(), PathFollowingSettings{element}())
+        @test isempty(unwrap(logit_solve_lambda(gains, element[]; settings = empty_settings)))
+    end
     # A first correction far past a 1e-6 target is refused, and no refusal is allowed.
     for distance in (StrategyDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6), LogitDistance{element}(; tolerance = 1.0f-7, target_correction = 1.0f-6))
         refused = unwrap_error(logit_solve(gains; settings = PathFollowingSettings{element}(; distance, max_refusals = 0)))
-        @test (refused.cause, refused.context.reason, refused.context.refusals) == (GameTracing.TraceStuck, :refusals, 1)
+        @test (refused.cause, refused.engine.failure.refusals) == (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), 1)
     end
     # The refusal factor 2 refuses a first correction past 4 times its target, which must lie under the distance's bound.
     @test_throws ArgumentError logit_solve(gains; settings = PathFollowingSettings{element}(; distance = StrategyDistance{element}(; target_correction = 0.8f0)))
@@ -241,19 +244,21 @@ end
     @test PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.LastCorrection()).error_estimate === GameTracing.PathFollowing.LastCorrection()
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; min_step_ulps = round(Int, 2^10 / eps(element)))))
-    @test (unresolved.cause, unresolved.context.reason, unresolved.context.steps) == (GameTracing.TraceStuck, :unresolved_step, 1)
+    @test (unresolved.cause, unresolved.stop.steps) == (TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep), 1)
     # A trace sent back from its start would fall below precision zero, so every step it tries is refused. Without the
     # orientation check, a step of a few ulps rounds above zero and the trace creeps there until `max_steps`.
     reversed = started_tracer(gains, PathFollowingSettings{element}())
     reversed.tangent .*= -1
     recorder = GameTracing.BranchRecorder(gains, zero(element))
     below = unwrap_error(GameTracing.recorded_points(reversed, recorder, element(100), 10, (;)))
-    @test (below.cause, below.context.reason, below.context.steps) == (GameTracing.TraceStuck, :refusals, 0)
-    @test below.context.last_refusal == GameTracing.PathFollowing.AcceptRefused
-    @test below.context.precision == 0 && isempty(recorder.precisions)
+    @test (below.cause, below.stop.steps) == (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), 0)
+    @test below.engine.failure.last_refusal == GameTracing.PathFollowing.AcceptRefused
+    @test below.stop.precision == 0 && isempty(recorder.precisions)
     poisoned = NormalFormGains((element[NaN32 0; 0 0], element[0 0; 0 0]))
-    @test unwrap_error(logit_solve(poisoned; settings = PathFollowingSettings{element}())).cause == GameTracing.NotFinite
-    @test unwrap_error(logit_solve_lambda(poisoned, 1; settings = PathFollowingSettings{element}())).context.reason == :not_finite_start
+    @test unwrap_error(logit_solve(poisoned; settings = PathFollowingSettings{element}())).cause == TraceCause.NotFinite{element}(GameTracing.AtStart)
+    # A failure at the start names the lowest precision asked for.
+    poisoned_start = unwrap_error(logit_solve_lambda(poisoned, [2, 1]; settings = PathFollowingSettings{element}()))
+    @test (poisoned_start.cause, poisoned_start.context) == (TraceCause.NotFinite{element}(GameTracing.AtStart), (; lam = element(1)))
     # Step control without its turn and contraction terms still solves.
     plain = PathFollowingSettings{element}(; target_contraction = nothing, target_turn = nothing)
     @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
@@ -406,8 +411,8 @@ end
     # loudly at the fold.
     summed = TraceGeometry{Float32}(; distance = SummedDistance, state_weight = 1)
     failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}(; step_metric = summed)))
-    @test failure.cause == GameTracing.TraceStuck
-    @test abs(failure.context.precision - 315.68f0) < 1
+    @test failed_as(failure, TraceCause.TraceStuck)
+    @test abs(failure.stop.precision - 315.68f0) < 1
 end
 
 @testset "StrategyDistance takes long steps where a strategy leaves the support ($element)" for element in (Float32, widen(Float32))
@@ -451,9 +456,9 @@ end
         # The opening predictor passes this precision, so the first attempt corrects at it.
         precision = tracer.step_length * last(tracer.tangent) * 9 // 10
         failure = unwrap_error(last(GameTracing.stepped_landing!!(tracer, precision, 10, GameTracing.AcceptAll(), (; lam = precision))))
-        @test (failure.cause, failure.context.reason, failure.context.lam) == (GameTracing.TraceStuck, :refusals, precision)
-        @test failure.context.last_refusal == PathFollowing.NotConverged
-        @test iszero(failure.context.precision)
+        @test (failure.cause, failure.context.lam) == (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), precision)
+        @test failure.engine.failure.last_refusal == PathFollowing.NotConverged
+        @test iszero(failure.stop.precision)
     end
 end
 
@@ -461,12 +466,12 @@ end
     gains = NormalFormGains(map(table -> Float32.(table), LOGITNASH_GAMES.prisoners_dilemma))
     settings = BifurcationKitSettings{Float32}(; max_steps = 1)
     # A one-step budget ends a stalled step as a stall (TraceStuck), a moving one as NoConvergence, as on main.
-    spent = (GameTracing.NoConvergence, GameTracing.TraceStuck)
-    @test unwrap_error(logit_solve_lambda(gains, 100; settings)).cause in spent
+    spent = (TraceCause.NoConvergence, TraceCause.TraceStuck)
+    @test failed_as(unwrap_error(logit_solve_lambda(gains, 100; settings)), spent...)
     for failure in unwrap_error.((logit_solve_branch(gains; settings), logit_solve(gains; settings)))
-        @test failure.cause in spent
+        @test failed_as(failure, spent...)
         # The trace's own failure, not the one logit_solve_branch builds when the trace ends unsettled.
-        @test !haskey(failure.context, :maximum_precision)
+        @test failure.cause != TraceCause.NoConvergence{Float32}(GameTracing.MaximumPrecision)
     end
 end
 

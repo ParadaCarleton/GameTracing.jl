@@ -9,9 +9,9 @@ function land!!(
         tracer::T,
         bound::Bound{E},
         max_steps::Integer,
-    )::Tuple{T, Result{V, StepFailure{E}}} where {E <: Real, V <: AbstractVector{E}, T <: Tracer{E, V}}
+    )::Tuple{T, Result{V, StepFailure.Type{E}}} where {E <: Real, V <: AbstractVector{E}, T <: Tracer{E, V}}
     while !on_bound(bound, tracer.point)
-        tracer.steps < max_steps || return tracer, Err(StepFailure(TooManySteps, NoRefusal, tracer.step_length, 0))
+        tracer.steps < max_steps || return tracer, Err(StepFailure.TooManySteps{E}())
         tracer, stepped = step!!(tracer, bound)
         is_error(stepped) && return tracer, Err(unwrap_error(stepped))
     end
@@ -19,24 +19,25 @@ function land!!(
 end
 
 """
-    Landing(point, steps, cause, last_refusal, step_length, refusals)
+    Landing(point, steps, step_length, failure)
 
-How a `land_batch` trace ended, as an isbits record that a device array holds: its last `point`, its accepted `steps`,
-and its `StepFailure`'s fields. Cause `NoFailure` marks a landing on the bound. `landing_result` gives the `Result`.
+How a `land_batch` trace ended, as a record that a device array holds inline: its last `point`, its accepted `steps`,
+the step its tracer held (zero after a failure at the start), and `some(StepFailure)`, or `none` for a landing on the
+bound. A Moshi sum is no isbits type, but it is stored inline with no pointer (`Base.allocatedinline`), so a device
+array holds a `Landing` too. `landing_result` gives the `Result`.
 """
 struct Landing{V <: StaticVector, E <: Real}
     point::V
     steps::Int
-    cause::FailureCause
-    last_refusal::Refusal
     step_length::E
-    refusals::Int
+    failure::Option{StepFailure.Type{E}}
 end
 
 """`landing`'s landed point, or the `StepFailure` that ended its trace."""
-function landing_result(landing::Landing{V, E})::Result{V, StepFailure{E}} where {E <: Real, V <: StaticVector{<:Any, E}}
-    landing.cause == NoFailure && return Ok(landing.point)
-    return Err(StepFailure(landing.cause, landing.last_refusal, landing.step_length, landing.refusals))
+function landing_result(landing::Landing{V, E})::Result{V, StepFailure.Type{E}} where {E <: Real, V <: StaticVector{<:Any, E}}
+    # A `none` failure is a landing.
+    is_error(landing.failure) && return Ok(landing.point)
+    return Err(unwrap(landing.failure))
 end
 
 """
@@ -117,12 +118,9 @@ function landed(
         max_steps::Int,
     )::Landing{V, E} where {E <: Real, V <: SVector{<:Any, E}}
     started = CommonSolve.init(problem, algorithm; first_step)
-    if is_error(started)
-        failure = unwrap_error(started)
-        return Landing(problem.start, 0, failure.cause, failure.last_refusal, failure.step_length, failure.refusals)
-    end
+    # A trace that fails at its start holds no step.
+    is_error(started) && return Landing(problem.start, 0, zero(E), some(unwrap_error(started)))
     tracer, outcome = land!!(unwrap(started), bound, max_steps)
-    is_error(outcome) || return Landing(tracer.point, tracer.steps, NoFailure, NoRefusal, tracer.step_length, 0)
-    failure = unwrap_error(outcome)
-    return Landing(tracer.point, tracer.steps, failure.cause, failure.last_refusal, failure.step_length, failure.refusals)
+    is_error(outcome) || return Landing(tracer.point, tracer.steps, tracer.step_length, none(StepFailure.Type{E}))
+    return Landing(tracer.point, tracer.steps, tracer.step_length, some(unwrap_error(outcome)))
 end

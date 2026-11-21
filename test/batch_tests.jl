@@ -17,7 +17,7 @@ function cpu_batch(games::AbstractVector, lam::Real, settings::PathFollowingSett
 end
 
 """A `ProfileResult`'s logits, or its failure's cause."""
-function outcome(result::Result)::Union{AbstractVector, GameTracing.TraceCause}
+function outcome(result::Result)::Union{AbstractVector, TraceCause.Type}
     return is_error(result) ? unwrap_error(result).cause : unwrap(result).logits
 end
 
@@ -26,14 +26,15 @@ function largest_strategy_gap(left::Tuple, right::Tuple)::Real
     return maximum(maximum.(abs, left .- right))
 end
 
-"""Whether two failure contexts hold one set of keys and equal values, each float within `tolerance` relative."""
-function same_context(left::NamedTuple, right::NamedTuple, tolerance::Real)::Bool
-    return keys(left) == keys(right) && all(close_or_equal(left[key], right[key], tolerance) for key in keys(left))
-end
-
-"""Whether two context values agree: floats within `tolerance` relative, anything else equal."""
-function close_or_equal(left::Any, right::Any, ::Real)::Bool
-    return isequal(left, right)
+"""
+Whether two failures, or two of their parts, agree: floats within `tolerance` relative, a value with no properties
+equal, and anything else of one type with each property in agreement. A Moshi sum lists its variant's fields.
+"""
+function close_or_equal(left::Any, right::Any, tolerance::Real)::Bool
+    names = propertynames(left)
+    isempty(names) && return isequal(left, right)
+    return typeof(left) == typeof(right) && propertynames(right) == names &&
+        all(close_or_equal(getproperty(left, name), getproperty(right, name), tolerance) for name in names)
 end
 
 function close_or_equal(left::T, right::T, tolerance::Real)::Bool where {T <: Union{AbstractFloat, AbstractVector{<:AbstractFloat}}}
@@ -99,7 +100,7 @@ end
         launch = PathFollowing.land_kernel!(JLBackend(), 2)
         launch(device, problems, inputs.algorithm, JLArray(inputs.first_steps), inputs.bound, settings.max_steps; ndrange = length(problems))
         @test isequal(Array(device), host)
-        @test all(landing -> landing.cause == PathFollowing.NoFailure, host)
+        @test all(landing -> !is_error(PathFollowing.landing_result(landing)), host)
     end
 end
 
@@ -125,19 +126,19 @@ end
     # As in logit_solve_tests.jl: 2^10 / eps ulps resolve only the move off precision zero.
     unresolved = (; min_step_ulps = round(Int, 2^10 / eps(element)))
     # A normal-form start has `∂F/∂w = I`, so PathFollowing's SingularStart cannot occur.
-    for (options, payoffs, cause, reason) in (
-            ((; max_steps = 1), drawn, GameTracing.NoConvergence, :max_steps),
-            ((;), poisoned, GameTracing.NotFinite, :not_finite_start),
-            (unsettled, drawn, GameTracing.TraceStuck, :refusals),
-            (unresolved, drawn, GameTracing.TraceStuck, :unresolved_step),
+    for (options, payoffs, cause) in (
+            ((; max_steps = 1), drawn, TraceCause.NoConvergence{element}(GameTracing.MaxSteps)),
+            ((;), poisoned, TraceCause.NotFinite{element}(GameTracing.AtStart)),
+            (unsettled, drawn, TraceCause.TraceStuck{element}(GameTracing.StepRefusals)),
+            (unresolved, drawn, TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep)),
         )
         results = cpu_batch(static_game.(payoffs), lam, batch_settings(element; options...))
         @test length(results) == length(payoffs)
         for (payoff, result) in zip(payoffs, results)
             failure = unwrap_error(result)
             expected = unwrap_error(logit_solve_lambda(NormalFormGains(payoff), lam; settings = PathFollowingSettings{element}(; options...)))
-            @test (failure.cause, failure.context.reason) == (expected.cause, expected.context.reason) == (cause, reason)
-            @test same_context(failure.context, expected.context, 256 * eps(element))
+            @test failure.cause == expected.cause == cause
+            @test close_or_equal(failure, expected, 256 * eps(element))
         end
     end
 end

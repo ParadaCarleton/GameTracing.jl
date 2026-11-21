@@ -1,6 +1,8 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
 using Logging: Logging
 using LinearAlgebra: LAPACKException, SingularException
+using Moshi.Data: variant_type, variants
+using PathFollowing: PathFollowing
 
 const FAILURE_SETTINGS = BifurcationKitSettings{Float32}(max_step = 0.05f0)
 
@@ -11,8 +13,8 @@ const FAILURE_SETTINGS = BifurcationKitSettings{Float32}(max_step = 0.05f0)
         FAILURE_SETTINGS,
     )
     @test is_error(result)
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
-    @test unwrap_error(result).context.precision <= 1.0f0
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
+    @test unwrap_error(result).stop.precision <= 1.0f0
 end
 
 @testset "a non-finite Jacobian is a failure value" begin
@@ -22,7 +24,7 @@ end
         FAILURE_SETTINGS,
     )
     @test is_error(result)
-    @test unwrap_error(result).cause in (GameTracing.Singular, GameTracing.TraceStuck)
+    @test failed_as(unwrap_error(result), TraceCause.Singular, TraceCause.TraceStuck)
 end
 
 @testset "a caller's exception propagates" begin
@@ -45,7 +47,7 @@ struct RefuseConverged end
         accept_corrected = RefuseConverged(),
     )
     @test is_error(result)
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
 end
 
 """An `accept_corrected` that refuses every corrector past precision `level`."""
@@ -61,7 +63,7 @@ end
         trace_endpoint(LogitGame(GAME, TARGET_PRECISION), WIDTH, FAILURE_SETTINGS; accept_corrected = refusal)
     end
     messages = [(log.message, get(log.kwargs, :reason, nothing)) for log in logs]
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
     # At λ = 0 any move of λ resolves: halving ends at BifurcationKit's zero step, never at an unresolved predictor.
     @test count(==(("corrector stopped", :unresolved)), messages) == ifelse(refusal isa RefuseConverged, 0, 1)
     # Halving 0.05 to Float32's smallest subnormal 2^-149 takes log2(0.05) + 149 ≈ 145 steps (measured: 143 from
@@ -103,8 +105,8 @@ end
     @test is_error(result)
     # A step that halves to the float type's resolution after reach refusals is labeled PrecisionExhausted
     # (`unresolved_noise`): a refused correction under `logit_tolerance` is rounding noise too. The trace still fails.
-    @test unwrap_error(result).cause in (GameTracing.TraceStuck, GameTracing.NoConvergence, GameTracing.PrecisionExhausted)
-    @test isfinite(unwrap_error(result).context.precision)
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck, TraceCause.NoConvergence, TraceCause.PrecisionExhausted)
+    @test isfinite(unwrap_error(result).stop.precision)
 end
 
 @testset "a reach failure that halves to an unresolved step exhausts the precision at the failed iterate and its step ($element)" for element in (Float32, widen(Float32))
@@ -121,8 +123,7 @@ end
     # The halved step's predictor is the start: no smaller step resolves, so the reach failure confirms noise.
     @test !check((; payload..., x = start, z0 = (; u = start), step = 0, ds = payload.ds / 2); fromNewton = false)
     @test GameTracing.noise_confirmed(check)
-    @test GameTracing.exhausted_record(check) ==
-        (; precision = payload.p, correction = element(3 // 2), stalled_iterate = far, stalled_pin = payload.p, stalled_arclength = payload.ds)
+    @test GameTracing.exhausted_record(check) == StalledCorrection(payload.p, element(3 // 2), far, payload.p, payload.ds)
     # Only PALC's corrector stalls on a step; a plain Newton iterate has none to record.
     @test_throws ArgumentError GameTracing.record_stall!(check, (; x = far, step = 1, residual = zero(element)))
 end
@@ -143,6 +144,66 @@ end
     @test GameTracing.solver_blowup(ArgumentError("LAPACK failed"))
     @test !GameTracing.solver_blowup(ArgumentError("bad game"))
     @test !GameTracing.solver_blowup(DimensionMismatch("bad game"))
+end
+
+"""A BifurcationKit trace's progress in `E` after `steps` accepted points, its last point `unmoved` or not."""
+function stopped_progress(::Type{E}, steps::Integer, unmoved::Bool)::GameTracing.TraceProgress{E} where {E <: Real}
+    return GameTracing.TraceProgress(E[1 // 10, -1 // 10], one(E), Int(steps), zero(E), one(E), E[1 // 2, 1 // 4], E(1 // 8), unmoved)
+end
+
+"""How a BifurcationKit trace in `E` ended: `unresolved` or not, with the caught `exception`, or `nothing`."""
+function stopped_outcome(::Type{E}, unresolved::Bool, exception::Any)::NamedTuple where {E <: Real}
+    return (; step_length = E(1 // 10), accepted_step = E(1 // 5), exhausted = nothing, logit_accuracy = E(1 // 1000), unresolved, exception)
+end
+
+@testset "stop_cause gives each way a BifurcationKit trace stops its cause ($element)" for element in (Float32, widen(Float32))
+    moving, unmoved, spent = stopped_progress(element, 3, false), stopped_progress(element, 3, true), stopped_progress(element, 5, false)
+    stops = [
+        (moving, stopped_outcome(element, false, "Stopping continuation."), TraceCause.TraceStuck{element}(GameTracing.UncorrectedStart)),
+        (moving, stopped_outcome(element, false, SingularException(2)), TraceCause.Singular{element}(GameTracing.MidTrace)),
+        (moving, stopped_outcome(element, true, nothing), TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep)),
+        (unmoved, stopped_outcome(element, false, nothing), TraceCause.TraceStuck{element}(GameTracing.UnmovedPoint)),
+        (spent, stopped_outcome(element, false, nothing), TraceCause.NoConvergence{element}(GameTracing.MaxSteps)),
+        (moving, stopped_outcome(element, false, nothing), TraceCause.TraceStuck{element}(GameTracing.StoppedShort)),
+    ]
+    @test [GameTracing.stop_cause(progress, outcome, 5) for (progress, outcome, _) in stops] == last.(stops)
+end
+
+@testset "a BifurcationKit failure keeps the caught exception's text and the trace's stop ($element)" for element in (Float32, widen(Float32))
+    progress = stopped_progress(element, 3, false)
+    uncorrected = stopped_outcome(element, false, ErrorException("Newton failed to converge at the start"))
+    failure = TraceFailure(TraceCause.TraceStuck{element}(GameTracing.UncorrectedStart), progress, uncorrected, (; label = :caught))
+    @test failure.engine.message == "Newton failed to converge at the start"
+    @test failure.stop == TraceStop(progress.gaps, progress.gaps, one(element), 3, uncorrected.step_length)
+    @test failure.engine.logit_tangent ≈ element[1 // 2 + 1 // 80, 1 // 4 - 1 // 80]
+    @test failure.context == (; label = :caught)
+    singular = TraceFailure(TraceCause.Singular{element}(GameTracing.MidTrace), progress, stopped_outcome(element, false, SingularException(2)), (;))
+    @test startswith(singular.engine.message, "SingularException")
+    @test isempty(TraceFailure(TraceCause.TraceStuck{element}(GameTracing.StoppedShort), progress, stopped_outcome(element, false, nothing), (;)).engine.message)
+end
+
+"""One `StepFailure` of each variant, in `E`."""
+function every_step_failure(::Type{E})::Vector{PathFollowing.StepFailure.Type{E}} where {E <: Real}
+    return [
+        PathFollowing.StepFailure.Unresolved{E}(PathFollowing.TooFast, 2),
+        PathFollowing.StepFailure.TooManyRefusals(PathFollowing.PastBound, E(1 // 8), 3),
+        PathFollowing.StepFailure.NotFiniteStart{E}(),
+        PathFollowing.StepFailure.SingularStart{E}(),
+        PathFollowing.StepFailure.TooManySteps{E}(),
+    ]
+end
+
+@testset "path_cause gives every PathFollowing StepFailure variant its trace cause ($element)" for element in (Float32, widen(Float32))
+    failures = every_step_failure(element)
+    # Moshi lists the variants: a new one fails here until `every_step_failure` and `path_cause` hold it.
+    @test Set(variant_type.(failures)) == Set(variants(PathFollowing.StepFailure.Type{element}))
+    @test GameTracing.path_cause.(failures) == [
+        TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep),
+        TraceCause.TraceStuck{element}(GameTracing.StepRefusals),
+        TraceCause.NotFinite{element}(GameTracing.AtStart),
+        TraceCause.Singular{element}(GameTracing.AtStart),
+        TraceCause.NoConvergence{element}(GameTracing.MaxSteps),
+    ]
 end
 
 @testset "a bordered matrix of the wrong size is rejected" begin
@@ -213,9 +274,9 @@ end
         FAILURE_SETTINGS,
     )
     @test is_error(result)
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
     # The two-point start counts as BifurcationKit's step 1; no point was accepted off the flat start.
-    @test unwrap_error(result).context.precision == 0
+    @test unwrap_error(result).stop.precision == 0
 end
 
 @testset "BifurcationKit's report of an uncorrectable start is a stuck trace" begin
@@ -238,7 +299,7 @@ end
         (;),
     )
     @test is_error(result)
-    @test unwrap_error(result).cause == GameTracing.TraceStuck
+    @test failed_as(unwrap_error(result), TraceCause.TraceStuck)
 end
 
 """The `guarded_trace` outcome of a segment that ran to its target, its accepted points settled within `accuracy`."""
@@ -263,27 +324,27 @@ end
     # The corrector's own accuracy stands when it is the larger.
     @test unwrap(reached_at(flat, element[1 // 2 + tolerance / 2], tolerance)).logit_accuracy == tolerance
     unsettled = unwrap_error(reached_at(flat, element[1 // 2 + 2 * tolerance], zero(element)))
-    @test unsettled.cause == GameTracing.PrecisionExhausted
+    @test failed_as(unsettled, TraceCause.PrecisionExhausted)
     # The correction runs from the endpoint to a plain Newton iterate at the target.
-    @test unsettled.context.lambda == unsettled.context.stalled_pin == last(unsettled.context.stalled_iterate) == 1
-    @test unsettled.context.stalled_iterate[1] ≈ 1 // 2
-    @test unsettled.context.gaps == element[1 // 2 + 2 * tolerance]
-    @test isapprox(unsettled.context.correction, 2 * tolerance; atol = 4 * eps(element))
+    @test unsettled.cause.stall.precision == unsettled.cause.stall.pin == last(unsettled.cause.stall.iterate) == 1
+    @test unsettled.cause.stall.iterate[1] ≈ 1 // 2
+    @test unsettled.stop.gaps == element[1 // 2 + 2 * tolerance]
+    @test isapprox(unsettled.cause.stall.correction, 2 * tolerance; atol = 4 * eps(element))
     # A corrector can stop on a lucky draw of noise (issue #134). At the target `λ η` is 0.01, a hundred tolerances.
     target = element(1.0f5)
     noisy = LogitGame(NoisyFlatPass(element(1.0f-4), element(1.0f-7), element(10), UInt(3)), target)
     lucky = unwrap_error(reached_at(noisy, element[1.0f-4], zero(element)))
-    @test lucky.cause == GameTracing.PrecisionExhausted
-    @test lucky.context.lambda == target
+    @test failed_as(lucky, TraceCause.PrecisionExhausted)
+    @test lucky.cause.stall.precision == target
     # One draw of at most `λ η`, plus the rounding of the logit `λ level`.
-    @test tolerance < lucky.context.correction <= target * noisy.pass!!.noise + 2 * eps(target * noisy.pass!!.level)
+    @test tolerance < lucky.cause.stall.correction <= target * noisy.pass!!.noise + 2 * eps(target * noisy.pass!!.level)
     # `G = logistic(z) + b` has Jacobian `1 - λ/4` at `w = 0`, singular at λ = 4. With `b = -1/2`, `w = 0` is an exact
     # root there and needs no correction; with `b = 0` it is no root, and Newton's method has no step.
     exact = unwrap(reached_at(LogitGame(LinearGainPass(ones(element, 1, 1), element[-1 // 2]), element(4)), zeros(element, 1), tolerance))
     @test exact.logits == zeros(element, 1)
     @test exact.logit_accuracy == tolerance
     singular = unwrap_error(reached_at(LogitGame(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), element(4)), zeros(element, 1), zero(element)))
-    @test singular.cause == GameTracing.Singular
+    @test failed_as(singular, TraceCause.Singular)
 end
 
 """A `trace_record_point` record of BifurcationKit's branch at `step`: the point `(gaps, param)` and a unit tangent."""
@@ -363,7 +424,7 @@ end
             (;),
         )
     ).cause ==
-        GameTracing.TraceStuck
+        TraceCause.TraceStuck{Float32}(GameTracing.StoppedShort)
     stuck = GameTracing.branch_progress(
         [start, moved, branch_record(moved.gaps, moved.param, 2)],
         opening,
@@ -372,8 +433,7 @@ end
     @test stuck.steps == 2
     # A stall that spends the step budget is still a stall; moving points that spend it are not.
     stalled = unwrap_error(GameTracing.reached_state(stuck, outcome, game, pass_workspace(game.pass!!, stuck.gaps), settings, (;)))
-    @test stalled.cause == GameTracing.TraceStuck
-    @test stalled.context.unmoved
+    @test stalled.cause == TraceCause.TraceStuck{Float32}(GameTracing.UnmovedPoint)
     spent = GameTracing.branch_progress(
         [start, moved, branch_record(moved.gaps, 0.6f0, 2)],
         opening,
@@ -389,7 +449,7 @@ end
             (;),
         )
     ).cause ==
-        GameTracing.NoConvergence
+        TraceCause.NoConvergence{Float32}(GameTracing.MaxSteps)
 end
 
 """

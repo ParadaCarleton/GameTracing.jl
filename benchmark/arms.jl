@@ -7,6 +7,7 @@ using GameTracing
 using ErrorTypes: Result, is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
 using Logging: AbstractLogger, Debug, LogLevel, with_logger
+using Moshi.Data: variant_name
 import Logging: catch_exceptions, handle_message, min_enabled_level, shouldlog
 using Printf: @sprintf
 using Random: AbstractRNG, Xoshiro
@@ -16,6 +17,7 @@ const TEST_DIRECTORY = joinpath(@__DIR__, "..", "test")
 include(joinpath(TEST_DIRECTORY, "games.jl"))
 include(joinpath(TEST_DIRECTORY, "fixtures.jl"))
 include(joinpath(TEST_DIRECTORY, "arms.jl"))
+include(joinpath(TEST_DIRECTORY, "causes.jl"))
 
 """A benchmark game: a fixed map (`Case`) or a map redrawn mid-trace (`SwapCase`)."""
 abstract type BenchmarkCase end
@@ -100,7 +102,7 @@ precision, from the same trace stopped there. A trace that fails before it gives
 function redraw_precision(swap::SwapCase{C, A, R, E}, settings::S)::E where {C, A, R, E, S <: BifurcationKitSettings}
     (; case) = swap
     stopped = trace_endpoint(LogitGame(case.pass, case.precision), case.width, settings; keep_going = StopAt(swap.swap_precision))
-    return E(unwrap_error(stopped).context.precision)
+    return E(unwrap_error(stopped).stop.precision)
 end
 
 """
@@ -162,7 +164,7 @@ function swap_cases()::AbstractVector{BenchmarkCase}
     ]
 end
 
-"""A logger that sends each trace or redraw-crossing record's message and `reason` (`:none` without one) into `sink`."""
+"""A logger that sends each trace or redraw-crossing record's message and reason (`record_reason`) into `sink`."""
 struct TraceCounter <: AbstractLogger
     sink::Channel{Pair{String, Symbol}}
 end
@@ -172,8 +174,14 @@ shouldlog(::TraceCounter, ::LogLevel, ::Module, group::Any, ::Any)::Bool = group
 catch_exceptions(::TraceCounter)::Bool = false
 
 function handle_message(counter::TraceCounter, ::LogLevel, message::Any, ::Module, ::Any, ::Any, ::Any, ::Any; keywords...)::Nothing
-    put!(counter.sink, string(message) => Symbol(get(keywords, :reason, :none)))
+    put!(counter.sink, string(message) => record_reason(values(keywords)))
     return nothing
+end
+
+"""The reason of a record with `keywords`: a trace stop's `cause_detail`, a corrector record's `reason`, else `:none`."""
+function record_reason(keywords::NamedTuple)::typeof(:none)
+    haskey(keywords, :cause) && return Symbol(cause_detail(keywords.cause))
+    return Symbol(get(keywords, :reason, :none))
 end
 
 # Checks GameTracing's corrector callback logs when it stops or refuses a corrector; its `:contraction` and
@@ -284,7 +292,7 @@ function Outcome(result::R, sink::AbstractChannel{Pair{String, Symbol}}, bytes::
         last([:none; refusals]), last([:none; stops]),
     )
     if is_error(result)
-        return Outcome(Float32[], string(unwrap_error(result).cause), tally...)
+        return Outcome(Float32[], string(variant_name(unwrap_error(result).cause)), tally...)
     end
     return Outcome(Float32.(endpoint_choices(pass, unwrap(result))), "reached", tally...)
 end

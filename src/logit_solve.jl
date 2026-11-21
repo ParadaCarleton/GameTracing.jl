@@ -20,10 +20,15 @@ struct LogitQREProfile{E <: Real, S <: Tuple, L <: AbstractVector{E}}
     end
 end
 
-# The results of `logit_solve` and of the branch searches, over `N` players in element type `E`.
+# The results of `logit_solve` and of the branch searches, over `N` players in element type `E`, their failures with
+# context `C`: `LambdaContext` for `logit_solve_lambda`, `RegretContext` for `logit_solve` and `logit_solve_branch`.
 const QREProfile{E, N} = LogitQREProfile{E, NTuple{N, Vector{E}}, Vector{E}}
-const ProfileResult{E, N} = Result{QREProfile{E, N}, TraceFailure}
-const BranchResult{E, N} = Result{Vector{QREProfile{E, N}}, TraceFailure}
+const ProfileResult{E, N, C} = Result{QREProfile{E, N}, TraceFailure{E, C}}
+const BranchResult{E, N, C} = Result{Vector{QREProfile{E, N}}, TraceFailure{E, C}}
+# A `logit_solve_lambda` failure's context: the precision its trace was heading to.
+const LambdaContext{E} = @NamedTuple{lam::E}
+# A `logit_solve` or `logit_solve_branch` failure's context: the regret tolerance, in the trace's element type.
+const RegretContext{E} = @NamedTuple{maxregret::E}
 
 """
     gambit_settings(E, max_accel)
@@ -128,7 +133,7 @@ function (recorder::BranchRecorder{G, E})(logits::AbstractVector{E}, precision::
 end
 
 """The logits at precision `lam` on the principal branch of `gains`, traced with `settings`."""
-function lambda_logits(gains::NormalFormGains, lam::E, settings::BifurcationKitSettings{E})::Result{Vector{E}, TraceFailure} where {E <: Real}
+function lambda_logits(gains::NormalFormGains, lam::E, settings::BifurcationKitSettings{E})::Result{Vector{E}, TraceFailure{E, LambdaContext{E}}} where {E <: Real}
     result = trace_endpoint(LogitGame(gains, lam), logit_count(gains), settings; context = (; lam))
     if is_error(result)
         return Err(unwrap_error(result))
@@ -145,14 +150,15 @@ pygambit's `logit_solve_lambda`: the `LogitQREProfile` on the principal branch o
 `first_step` has no counterpart: every trace's first step comes from the game (`opening_step`).
 `PathFollowingSettings` trace once, their steps stopping at each precision in turn. Every precision must be
 non-negative and finite in the trace's element type (`ArgumentError` otherwise). Profiles take `float` of the payoffs'
-element type (Float64 for integer payoffs), and `settings` must share it (`ArgumentError` otherwise).
+element type (Float64 for integer payoffs), and `settings` must share it (`ArgumentError` otherwise). A failure's
+context is the precision its trace was heading to (`LambdaContext`).
 """
 function logit_solve_lambda(
         gains::NormalFormGains{N},
         lam::AbstractVector{<:Real};
         max_accel::Real = GAMBIT_MAX_ACCEL,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains)), max_accel),
-    )::BranchResult{E, N} where {N, E <: Real}
+    )::BranchResult{E, N, LambdaContext{E}} where {N, E <: Real}
     require_payoff_type(gains, settings)
     precisions = E.(lam)
     # Checked before and after conversion to `E`, which rounds a tiny negative precision to -0 and a huge one to Inf.
@@ -174,7 +180,7 @@ function engine_lambdas(
         gains::NormalFormGains,
         precisions::AbstractVector{E},
         settings::BifurcationKitSettings{E},
-    )::Result{Vector{Vector{E}}, TraceFailure} where {E <: Real}
+    )::Result{Vector{Vector{E}}, TraceFailure{E, LambdaContext{E}}} where {E <: Real}
     # ponytail: one trace per precision; `PathFollowingSettings` land on each precision in one trace instead.
     results = lambda_logits.((gains,), precisions, (settings,))
     for result in results
@@ -186,7 +192,7 @@ function engine_lambdas(
 end
 
 # The vector method's keywords, passed on whole.
-function logit_solve_lambda(gains::NormalFormGains{N}, lam::Real; keywords...)::BranchResult{<:Real, N} where {N}
+function logit_solve_lambda(gains::NormalFormGains{N}, lam::Real; keywords...)::BranchResult{<:Real, N, <:LambdaContext} where {N}
     return logit_solve_lambda(gains, [lam]; keywords...)
 end
 
@@ -203,7 +209,7 @@ function settled_points(
         maximum_precision::Real = 1.0f6,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains)), max_accel),
         maxregret::Real = sqrt(eps(element_type(settings))),
-    )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
+    )::Result{BranchPoints{E}, TraceFailure{E, RegretContext{E}}} where {E <: Real}
     if !(maxregret > 0)
         throw(ArgumentError("maxregret must be positive; got $maxregret"))
     end
@@ -212,30 +218,38 @@ function settled_points(
         throw(ArgumentError("maximum_precision must be positive and finite in $E; got $maximum_precision"))
     end
     require_payoff_type(gains, settings)
-    return engine_points(gains, settings, E(maximum_precision), E(maxregret) * E(payoff_range(gains)), (; maxregret))
+    return engine_points(gains, settings, E(maximum_precision), E(maxregret) * E(payoff_range(gains)), (; maxregret = E(maxregret)))
 end
 
 """
 `settled_points` on BifurcationKit: the accepted points of a trace of `gains` to `maximum_precision`, to the first
-whose largest regret is at most `tolerance`, or the failure with `context`.
+whose largest regret is at most `tolerance`, or the failure with `context`. A trace that reaches `maximum_precision`
+unsettled fails `NoConvergence` (`MaximumPrecision`) there.
 """
 function engine_points(
         gains::NormalFormGains,
         settings::BifurcationKitSettings{E},
         maximum_precision::E,
         tolerance::E,
-        context::NamedTuple,
-    )::Result{BranchPoints{E}, TraceFailure} where {E <: Real}
+        context::C,
+    )::Result{BranchPoints{E}, TraceFailure{E, C}} where {E <: Real, C <: NamedTuple}
     recorder = BranchRecorder(gains, tolerance)
     result = trace_endpoint(LogitGame(gains, maximum_precision), logit_count(gains), settings; keep_going = recorder, context)
     settled = !isempty(recorder.logits) && max_regret!(recorder.work, gains, last(recorder.logits)) <= recorder.tolerance
-    if !settled && is_error(result)
-        return Err(unwrap_error(result))
-    end
-    if !settled
-        return Err(TraceFailure(NoConvergence, failure_context(context, (; maximum_precision, reason = :maximum_precision))))
-    end
-    return Ok((; recorder.precisions, recorder.logits))
+    settled && return Ok((; recorder.precisions, recorder.logits))
+    is_error(result) && return Err(unwrap_error(result))
+    return Err(TraceFailure(unwrap(result), maximum_precision, context))
+end
+
+"""
+    TraceFailure(traced::Traced, maximum_precision, context)
+
+The failure of a trace that reached `maximum_precision` as `traced` but did not settle there: `NoConvergence`
+(`MaximumPrecision`) at its endpoint. The engine ran to its end, so it holds no step and no record.
+"""
+function TraceFailure(traced::Traced{E}, maximum_precision::E, context::C)::TraceFailure{E, C} where {E <: Real, C <: NamedTuple}
+    stop = TraceStop(traced.logits, traced.logits ./ maximum_precision, maximum_precision, traced.steps, zero(E))
+    return TraceFailure(TraceCause.NoConvergence{E}(MaximumPrecision), stop, EngineRecord.NoRecord{E}(), context)
 end
 
 """
@@ -243,15 +257,16 @@ end
 
 pygambit's `logit_solve_branch`: every accepted point of the principal branch of the normal-form game `gains`, from
 the first step to the first point where no player's regret passes `maxregret` times the payoff range. The trace runs
-to `maximum_precision` at most, and fails `NoConvergence` with reason `:maximum_precision` if it ends there unsettled;
-any other failure of the trace is returned as is. `maxregret` defaults to `sqrt(eps(E))` in the trace's element type `E`. `max_accel` and `settings` are `logit_solve_lambda`'s.
+to `maximum_precision` at most, and fails `NoConvergence` (`MaximumPrecision`) if it ends there unsettled; any other
+failure of the trace is returned as is. A failure's context holds `maxregret` in the trace's element type `E`
+(`RegretContext`). `maxregret` defaults to `sqrt(eps(E))`. `max_accel` and `settings` are `logit_solve_lambda`'s.
 """
-function logit_solve_branch(gains::NormalFormGains{N}; keywords...)::BranchResult{<:Real, N} where {N}
+function logit_solve_branch(gains::NormalFormGains{N}; keywords...)::BranchResult{<:Real, N, <:RegretContext} where {N}
     return branch_profiles(gains, settled_points(gains; keywords...))
 end
 
 """Every point of `points` (`settled_points`) as a profile of `gains`, or the failure."""
-function branch_profiles(gains::NormalFormGains{N}, points::Result{BranchPoints{E}, TraceFailure})::BranchResult{E, N} where {N, E <: Real}
+function branch_profiles(gains::NormalFormGains{N}, points::Result{BranchPoints{E}, TraceFailure{E, C}})::BranchResult{E, N, C} where {N, E <: Real, C <: NamedTuple}
     if is_error(points)
         return Err(unwrap_error(points))
     end
@@ -264,12 +279,12 @@ end
 pygambit's `logit_solve`: the last point of `logit_solve_branch`, an approximate Nash equilibrium of the normal-form
 game `gains` at which no player's regret passes `maxregret` times the payoff range. Only that point's profile is built.
 """
-function logit_solve(gains::NormalFormGains{N}; keywords...)::ProfileResult{<:Real, N} where {N}
+function logit_solve(gains::NormalFormGains{N}; keywords...)::ProfileResult{<:Real, N, <:RegretContext} where {N}
     return last_profile(gains, settled_points(gains; keywords...))
 end
 
 """The last point of `points` (`settled_points`) as a profile of `gains`, or the failure."""
-function last_profile(gains::NormalFormGains{N}, points::Result{BranchPoints{E}, TraceFailure})::ProfileResult{E, N} where {N, E <: Real}
+function last_profile(gains::NormalFormGains{N}, points::Result{BranchPoints{E}, TraceFailure{E, C}})::ProfileResult{E, N, C} where {N, E <: Real, C <: NamedTuple}
     if is_error(points)
         return Err(unwrap_error(points))
     end

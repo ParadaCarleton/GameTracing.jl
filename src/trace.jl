@@ -418,11 +418,12 @@ Follow `game`'s branch of `width` logits from the flat start (zero logits, the o
 `keep_going(logits, λ)` runs at each accepted point before the next step's corrector, and `false` stops the trace.
 `accept_corrected(logits, λ, converged)` runs as each corrector ends, and `false` refuses a converged point, which
 shrinks the step. `redraw(logits, λ, shift)` swaps the game mid-trace; only `BifurcationKitSettings` runs it
-(`check_redraw`). `context` rides on every failure.
+(`check_redraw`). `context`, a `NamedTuple`, rides on every failure as its own field (`TraceFailure`).
 
-A non-finite start fails `NotFinite`, and a zero target returns the flat start with no step. A trace that stops short
-fails `NoConvergence` when it spends `settings.max_steps`, and `TraceStuck`, `Singular` or `PrecisionExhausted`
-otherwise. The point at the target passes one more Newton correction there, settled in logits, or fails.
+A non-finite start fails `NotFinite` (`AtStart`), and a zero target returns the flat start with no step. A trace that
+stops short fails `NoConvergence` (`MaxSteps`) when it spends `settings.max_steps`, and `TraceStuck`, `Singular` or
+`PrecisionExhausted` otherwise (`TraceCause`). The point at the target passes one more Newton correction there,
+settled in logits, or fails.
 """
 function trace_endpoint(
         game::LogitGame,
@@ -431,8 +432,8 @@ function trace_endpoint(
         keep_going::Any = AcceptAll(),
         accept_corrected::Any = AcceptAll(),
         redraw::Any = NoRedraw(),
-        context::NamedTuple = (;),
-    )::TraceResult{E} where {E <: Real}
+        context::C = (;),
+    )::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
     check_redraw(settings, redraw)
     flat = zeros(E, width)
     # One set of pass work arrays serves every evaluation of the game; a redraw's swap brings the new game's.
@@ -440,7 +441,8 @@ function trace_endpoint(
     start = trace_start(game, flat, pass_work)
     # The start is a root for every finite game; a non-finite gain shows in its gaps.
     if !all(isfinite, start)
-        return Err(TraceFailure(NotFinite, failure_context(context, (; logits = flat, precision = zero(E)))))
+        stop = TraceStop(flat, collect(payoff_gaps(start)), zero(E), 0, zero(E))
+        return Err(TraceFailure(TraceCause.NotFinite{E}(AtStart), stop, EngineRecord.NoRecord{E}(), context))
     end
     # The flat start is the only root at precision zero, so a zero target takes no step. Checked in `E`, where a tiny
     # target rounds to 0.
@@ -474,8 +476,8 @@ function engine_endpoint(
         pass_work::Any,
         settings::BifurcationKitSettings{E},
         callbacks::NamedTuple,
-        context::NamedTuple,
-    )::TraceResult{E} where {E <: Real}
+        context::C,
+    )::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
     (; keep_going, accept_corrected, redraw) = callbacks
     gaps = payoff_gaps(start)[:]
     opening = TraceProgress(gaps, zero(E), 0, zero(E), zero(E), zero(gaps), zero(E), false)
@@ -506,8 +508,8 @@ function redrawn_trace(
         finalise::TraceFinalise,
         settings::BifurcationKitSettings{E},
         accept_corrected::Any,
-        context::NamedTuple,
-    )::TraceResult{E} where {E <: Real}
+        context::C,
+    )::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
     (; progress) = outcome
     slot = finalise.slot[]
     if !isnothing(outcome.exception) || !slot.pending
@@ -616,21 +618,17 @@ function segment_outcome(
 end
 
 """
-The confirmed stall at rounding noise of `corrector` (`noise_confirmed`): the noise record's `precision` and
-`correction`, its stalled Newton iterate `stalled_iterate = [w; λ]`, and its step's `stalled_pin` and
-`stalled_arclength` (`record_stall!`). A corrector without a confirmed stall throws.
+The confirmed stall at rounding noise of `corrector` (`noise_confirmed`), a `StalledCorrection`: the noise record's
+`precision` and `correction`, its stalled Newton iterate `[w; λ]`, and its step's `pin` and `arclength`
+(`record_stall!`). A corrector without a confirmed stall throws.
 """
-function exhausted_record(
-        corrector::CorrectorReach{C, E, V},
-    )::@NamedTuple{
-        precision::E, correction::E, stalled_iterate::V, stalled_pin::E, stalled_arclength::E,
-    } where {C, E <: Real, V <: AbstractVector{E}}
+function exhausted_record(corrector::CorrectorReach{C, E})::StalledCorrection{E} where {C, E <: Real}
     if !noise_confirmed(corrector)
         throw(ArgumentError("the corrector has no confirmed stall at rounding noise"))
     end
     (; precision, correction) = corrector.state[].noise.suspect
     (; pin, arclength) = corrector.state[].stalled_step
-    return (; precision, correction, stalled_iterate = copy(corrector.stalled), stalled_pin = pin, stalled_arclength = arclength)
+    return StalledCorrection(precision, correction, collect(corrector.stalled), pin, arclength)
 end
 
 """How a guarded BifurcationKit call ended other than with its result: `Thrown` or `Ended`."""
@@ -813,10 +811,9 @@ end
 
 The `TraceResult` (`Ok(Traced)` or `Err(TraceFailure)`) of a trace whose `progress` holds the last accepted point and
 whose `outcome` (`guarded_trace`) is the last corrector's step length, its `exhausted` record, or the BifurcationKit
-exception that ended it. A corrector at rounding noise fails `PrecisionExhausted`. Its context carries the stalled Newton
-iterate `stalled_iterate = [w; λ]`, its precision `lambda`, its last `correction` in logits, and its step's
-`stalled_pin` and `stalled_arclength`. A point at the target passes one more Newton correction (`verified_endpoint`)
-on `game`'s pass work `pass_work`.
+exception that ended it. A corrector at rounding noise fails `PrecisionExhausted` (`MidTrace`) with that record, a
+`StalledCorrection`. A point at the target passes one more Newton correction (`verified_endpoint`) on `game`'s pass
+work `pass_work`. Any other stop fails for its `stop_cause`.
 """
 function reached_state(
         progress::TraceProgress{E},
@@ -824,62 +821,49 @@ function reached_state(
         game::LogitGame,
         pass_work::Any,
         settings::BifurcationKitSettings{E},
-        context::NamedTuple,
-    )::TraceResult{E} where {E <: Real}
-    target_precision = game.target_precision
+        context::C,
+    )::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
     if !isnothing(outcome.exhausted)
-        (; precision, correction, stalled_iterate, stalled_pin, stalled_arclength) = outcome.exhausted
-        @debug "trace stopped" _group = :trace reason = :precision_exhausted precision correction
-        return Err(
-            TraceFailure(
-                PrecisionExhausted,
-                stopped_context(progress, outcome, failure_context(context, (; lambda = precision, correction, stalled_iterate, stalled_pin, stalled_arclength))),
-            )
-        )
+        return Err(TraceFailure(TraceCause.PrecisionExhausted(MidTrace, outcome.exhausted), progress, outcome, context))
     end
-    if isnothing(outcome.exception) && progress.precision == E(target_precision)
+    if isnothing(outcome.exception) && progress.precision == E(game.target_precision)
         return verified_endpoint(progress, outcome, game, pass_work, settings.corrector, context)
     end
-    # Why the trace stopped short: a start that would not correct, a broken linear solve, a step below resolution, a point that did not move,
-    # spent steps, or else `keep_going` or a refusal (`STOP_CAUSES`).
-    reason = if uncorrected_start(outcome.exception)
-        :uncorrected_start
-    elseif !isnothing(outcome.exception)
-        :solver_blowup
-    elseif outcome.unresolved
-        :unresolved_step
-    elseif progress.unmoved
-        :unmoved
-    elseif progress.steps >= settings.max_steps
-        :max_steps
-    else
-        :stopped_short
-    end
-    @debug "trace stopped" _group = :trace reason
-    return Err(
-        TraceFailure(
-            STOP_CAUSES[reason],
-            stopped_context(progress, outcome, context),
-        )
-    )
+    return Err(TraceFailure(stop_cause(progress, outcome, settings.max_steps), progress, outcome, context))
 end
 
-"""`pinned_correction`'s result: the corrected point and the residual it corrected, or the cause that stopped it."""
-const PinnedCorrection{E} = Result{@NamedTuple{corrected::Vector{E}, residual::Vector{E}}, TraceCause}
+"""
+Why a BifurcationKit trace whose last accepted point `progress` holds stopped short after `outcome`, in order: a start
+that would not correct (`UncorrectedStart`), a broken linear solve (`Singular`, `MidTrace`), a step below resolution
+(`UnresolvedStep`), a point that did not move (`UnmovedPoint`), `max_steps` spent (`MaxSteps`), or else `keep_going` or
+a refusal (`StoppedShort`).
+"""
+function stop_cause(progress::TraceProgress{E}, outcome::NamedTuple, max_steps::Integer)::TraceCause.Type{E} where {E <: Real}
+    uncorrected_start(outcome.exception) && return TraceCause.TraceStuck{E}(UncorrectedStart)
+    isnothing(outcome.exception) || return TraceCause.Singular{E}(MidTrace)
+    outcome.unresolved && return TraceCause.TraceStuck{E}(UnresolvedStep)
+    progress.unmoved && return TraceCause.TraceStuck{E}(UnmovedPoint)
+    progress.steps >= max_steps && return TraceCause.NoConvergence{E}(MaxSteps)
+    return TraceCause.TraceStuck{E}(StoppedShort)
+end
+
+"""`pinned_correction`'s result: the corrected point and the residual it corrected, or the `TraceCause` that stopped it."""
+const PinnedCorrection{E} = Result{@NamedTuple{corrected::Vector{E}, residual::Vector{E}}, TraceCause.Type{E}}
 
 """
     pinned_correction(game, point, pass_work)
 
 The endpoint check's Newton correction of `point = [w; λ]` on `game`, with `λ` pinned (`branch_system!` on the pass
 work `pass_work`): `Ok((; corrected, residual))`, the point itself at an exact root, which needs none. A non-finite
-residual or Jacobian fails `NotFinite`, at an exact root too, and a singular Jacobian off one fails `Singular`.
+residual or Jacobian fails `NotFinite` (`AtEndpoint`), at an exact root too, and a singular Jacobian off one fails
+`Singular` (`AtEndpoint`).
 """
 function pinned_correction(game::LogitGame, point::AbstractVector{E}, pass_work::Any)::PinnedCorrection{E} where {E <: Real}
     system = branch_system!(BranchWorkspace(point, pass_work), game, point, last(point))
-    (all(isfinite, system.residual) && all(isfinite, system.jacobian)) || return Err(NotFinite)
+    (all(isfinite, system.residual) && all(isfinite, system.jacobian)) || return Err(TraceCause.NotFinite{E}(AtEndpoint))
     all(iszero, system.residual) && return Ok((; corrected = collect(point), system.residual))
     factorization = lu!(system.jacobian; check = false)
-    issuccess(factorization) || return Err(Singular)
+    issuccess(factorization) || return Err(TraceCause.Singular{E}(AtEndpoint))
     return Ok((; corrected = point .- factorization \ system.residual, system.residual))
 end
 
@@ -893,9 +877,9 @@ landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's met
 corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
 
 The correction is `pinned_correction`'s, which fails `NotFinite` or `Singular`. An unsettled correction (as `settled`:
-past `corrector.logit_tolerance` beyond `settle_ulps` ulps of each logit) fails `PrecisionExhausted`. Its `correction`
-runs from the endpoint (`gaps`, `precision`) to `stalled_iterate`, a plain Newton iterate at pin `lambda`, arclength
-zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the correction.
+past `corrector.logit_tolerance` beyond `settle_ulps` ulps of each logit) fails `PrecisionExhausted` (`AtEndpoint`).
+Its `StalledCorrection` runs from the endpoint (`gaps`, `precision`) to a plain Newton iterate pinned at the
+endpoint's precision, arclength zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the correction.
 """
 function verified_endpoint(
         progress::TraceProgress{E},
@@ -903,57 +887,43 @@ function verified_endpoint(
         game::LogitGame,
         pass_work::Any,
         corrector::CorrectorSettings{E},
-        context::NamedTuple,
-    )::TraceResult{E} where {E <: Real}
+        context::C,
+    )::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
     (; gaps, precision) = progress
     point = [gaps; precision]
     pinned = pinned_correction(game, point, pass_work)
-    is_error(pinned) && return Err(TraceFailure(unwrap_error(pinned), stopped_context(progress, outcome, context)))
+    is_error(pinned) && return Err(TraceFailure(unwrap_error(pinned), progress, outcome, context))
     (; corrected) = unwrap(pinned)
     (; logit_tolerance, settle_ulps) = corrector
     correction, excess = logit_corrections(point, corrected, settle_ulps * eps(E), one(E))
     if !(excess <= logit_tolerance)
-        @debug "trace stopped" _group = :trace reason = :unsettled_endpoint correction
-        stall = (; lambda = precision, correction, stalled_iterate = corrected, stalled_pin = precision, stalled_arclength = zero(E))
-        return Err(TraceFailure(PrecisionExhausted, stopped_context(progress, outcome, failure_context(context, stall))))
+        stall = StalledCorrection(precision, correction, corrected, precision, zero(E))
+        return Err(TraceFailure(TraceCause.PrecisionExhausted(AtEndpoint, stall), progress, outcome, context))
     end
     return Ok(Traced(logits_at(point), progress.steps, max(E(outcome.logit_accuracy), correction)))
 end
 
-# The cause a trace that stops short for each reason fails with.
-const STOP_CAUSES = (;
-    uncorrected_start = TraceStuck, solver_blowup = Singular, max_steps = NoConvergence, unmoved = TraceStuck, unresolved_step = TraceStuck,
-    stopped_short = TraceStuck,
-)
-
 """
-    stopped_context(progress, outcome, context)
+    TraceFailure(cause, progress, outcome, context)
 
-The context of a trace that stopped at `progress`'s last accepted point after `outcome`: `context` (`failure_context`), the steps, the
-precision and its range, the `unmoved` and `unresolved` flags, the logits and payoff `gaps`, the step held, the arclength step of the last accepted point (`accepted_step`,
-zero when no step was accepted), the tangent in logits and in payoff gaps (`gap_tangent`, `tangent_precision`), the
-`logit_accuracy` of its accepted points and the exception.
+The failure for `cause` of a BifurcationKit trace whose last accepted point `progress` holds, after the segment
+`outcome` (`guarded_trace`), with the caller's `context`. Its `TraceStop` holds that point and the step its last
+corrector held, and its `BifurcationKitTrace` record the rest of `progress` and `outcome`.
 """
-function stopped_context(
+function TraceFailure(
+        cause::TraceCause.Type{E},
         progress::TraceProgress{E},
         outcome::NamedTuple,
-        context::NamedTuple,
-    )::NamedTuple where {E <: Real}
-    return failure_context(
-        context, (;
-            progress.steps,
-            progress.precision,
-            progress.precision_min, progress.precision_max, progress.unmoved, outcome.unresolved,
-            logits = progress.precision .* progress.gaps,
-            progress.gaps,
-            step_length = E(outcome.step_length),
-            accepted_step = ifelse(progress.steps > 0, E(outcome.accepted_step), zero(E)),
-            logit_tangent = progress.precision .* progress.gap_tangent .+
-                progress.tangent_precision .* progress.gaps,
-            progress.gap_tangent,
-            progress.tangent_precision,
-            logit_accuracy = E(outcome.logit_accuracy),
-            outcome.exception,
-        ),
+        context::C,
+    )::TraceFailure{E, C} where {E <: Real, C <: NamedTuple}
+    @debug "trace stopped" _group = :trace cause
+    stop = TraceStop(progress.precision .* progress.gaps, progress.gaps, progress.precision, progress.steps, E(outcome.step_length))
+    # The caught exception's text, empty when none ended the segment.
+    message = isnothing(outcome.exception) ? "" : sprint(showerror, outcome.exception)
+    record = EngineRecord.BifurcationKitTrace(
+        ifelse(progress.steps > 0, E(outcome.accepted_step), zero(E)), progress.precision_min, progress.precision_max,
+        progress.precision .* progress.gap_tangent .+ progress.tangent_precision .* progress.gaps, progress.gap_tangent,
+        progress.tangent_precision, E(outcome.logit_accuracy), message,
     )
+    return TraceFailure(cause, stop, record, context)
 end

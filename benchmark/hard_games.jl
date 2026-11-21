@@ -12,6 +12,7 @@ using Random: Xoshiro
 
 include(joinpath(@__DIR__, "..", "test", "games.jl"))
 include(joinpath(@__DIR__, "..", "test", "fixtures.jl"))
+include(joinpath(@__DIR__, "..", "test", "causes.jl"))
 
 const NORMAL_SIZES = ((2, 2), (3, 3), (5, 5), (10, 10), (20, 20), (2, 2, 2), (3, 3, 3), (5, 5, 5), (2, 2, 2, 2), (3, 3, 3, 3), (2, 2, 2, 2, 2))
 const COMMON_SIZES = ((5, 5), (10, 10), (20, 20), (4, 4, 4), (3, 3, 3, 3))
@@ -52,13 +53,13 @@ const GAMES = vcat(
     ],
 )
 
-"""Every accepted point of a trace of `gains` under `overrides` as a flat profile, or the failure's cause and reason."""
+"""Every accepted point of a trace of `gains` under `overrides` as a flat profile, or the failure's cause (`cause_label`)."""
 function traced(gains::NormalFormGains, overrides::NamedTuple)::NamedTuple
     settings = PathFollowingSettings{WIDE}(; max_steps = 20_000, overrides...)
     branch = logit_solve_branch(gains; maxregret = MAXREGRET, settings)
     if is_error(branch)
         failure = unwrap_error(branch)
-        return (; outcome = "$(failure.cause) $(get(failure.context, :reason, ""))", points = Vector{WIDE}[], lam = WIDE(NaN32))
+        return (; outcome = cause_label(failure.cause), points = Vector{WIDE}[], lam = WIDE(NaN32))
     end
     points = unwrap(branch)
     return (; outcome = "Ok", points = [reduce(vcat, point.profile) for point in points], lam = last(points).lam)

@@ -6,6 +6,7 @@
 using GameTracing: NormalFormGains, PathFollowingSettings, StrategyDistance, LogitDistance, logit_solve, logit_solve_branch
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
+using Moshi.Data: variant_name
 using Pkg: Pkg
 using Chairmarks: @be
 using CSV: CSV
@@ -101,12 +102,12 @@ solve(::Nash, input::Tuple)::Tuple = LogitNash.solve(first(input); stop_iters = 
 """
 `(; strategies, outcome, lam, steps)` of `solver`'s `result` on `input`. `strategies` is each player's strategy in
 Float64, or `nothing` when the run missed the regret bound. `steps` is GameTracing's recorded branch points, LogitNash's
-iterations. A failed trace gives the precision and steps of its last accepted point, NaN and 0 where its context has none.
+iterations. A failed trace gives its cause's variant and the precision and steps of its last accepted point.
 """
 function run_outcome(solver::Tracing, input::Tuple, result::Any)::NamedTuple
     if is_error(result)
-        (; cause, context) = unwrap_error(result)
-        return (; strategies = nothing, outcome = string(cause), lam = WIDE(get(context, :precision, NaN32)), steps = get(context, :steps, 0))
+        (; cause, stop) = unwrap_error(result)
+        return (; strategies = nothing, outcome = string(variant_name(cause)), lam = WIDE(stop.precision), stop.steps)
     end
     profile = unwrap(result)
     steps = length(unwrap(logit_solve_branch(first(input); maxregret = last(input), settings_keywords(solver)...)))

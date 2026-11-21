@@ -79,30 +79,30 @@ end
         # A non-finite start, with the caller's context beside the flat start.
         broken = LinearGainPass(element[NaN32 1; 1 0], element[1 // 2, -1 // 4])
         start = unwrap_error(trace_endpoint(LogitGame(broken, target), 2, settings; context = (; label = :broken)))
-        @test (start.cause, start.context.label, start.context.logits, start.context.precision) == (GameTracing.NotFinite, :broken, zeros(element, 2), 0)
+        @test (start.cause, start.context.label, start.stop.logits, start.stop.precision) == (TraceCause.NotFinite{element}(GameTracing.AtStart), :broken, zeros(element, 2), 0)
         # A zero target takes no step.
         flat = unwrap(trace_endpoint(LogitGame(linear, zero(element)), 2, settings))
         @test (flat.logits, flat.steps, flat.logit_accuracy) == (zeros(element, 2), 0, 0)
         # A spent step budget.
         budget = unwrap_error(trace_endpoint(LogitGame(linear, target), 2, engine{element}(; max_step = element(1 // 100), max_steps = 3)))
-        @test budget.cause == GameTracing.NoConvergence
-        @test 0 < budget.context.precision < target
+        @test failed_as(budget, TraceCause.NoConvergence)
+        @test 0 < budget.stop.precision < target
         # A refusing `keep_going` stops the trace on the branch, short of the target.
         stopped = unwrap_error(trace_endpoint(LogitGame(linear, target), 2, settings; keep_going = RecordedStop(target / 2, element[])))
-        @test stopped.cause == GameTracing.TraceStuck
-        (; logits, gaps, precision, steps, step_length) = stopped.context
+        @test failed_as(stopped, TraceCause.TraceStuck)
+        (; logits, gaps, precision, steps, step_length) = stopped.stop
         @test 0 < precision < target && steps > 0 && step_length > 0
         @test logits ≈ precision .* gaps
         @test residual_norm(linear, logits, precision) < 1.0f-4
         # Refusing every corrector past a level stops the trace there.
         refused = unwrap_error(trace_endpoint(LogitGame(linear, target), 2, settings; accept_corrected = RecordedRefusal(target / 4, Bool[])))
-        @test refused.cause == GameTracing.TraceStuck
-        @test refused.context.precision <= target / 4
+        @test failed_as(refused, TraceCause.TraceStuck)
+        @test refused.stop.precision <= target / 4
         # A game non-finite past a precision stops short of it; one non-finite at every positive precision, at the start.
         for poison in (one(element), zero(element))
             poisoned = unwrap_error(trace_endpoint(LogitGame(PoisonedPass(linear, poison), target), 2, settings))
-            @test poisoned.cause == GameTracing.TraceStuck
-            @test poisoned.context.precision <= poison
+            @test failed_as(poisoned, TraceCause.TraceStuck)
+            @test poisoned.stop.precision <= poison
         end
         # A caller's exception and a pass without a gap bound propagate.
         @test_throws ArgumentError trace_endpoint(LogitGame(ThrowingPass(linear), target), 2, settings)
@@ -123,12 +123,12 @@ end
     refusal = RecordedRefusal(target / 4, Bool[])
     refused = unwrap_error(trace_endpoint(LogitGame(linear, target), 2, settings; accept_corrected = refusal))
     @test all(refusal.flags) && !isempty(refusal.flags)
-    @test refused.context.last_refusal == PathFollowing.AcceptRefused
-    @test refused.context.reason in (:refusals, :unresolved_step)
+    @test refused.engine.failure.last_refusal == PathFollowing.AcceptRefused
+    @test refused.cause in (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep))
     # A non-finite Jacobian at a finite start fails there as `NotFinite`; BifurcationKit's fails `Singular` or `TraceStuck`.
     nan_slope = unwrap_error(trace_endpoint(LogitGame(NaNSlopePass(linear, 0), target), 2, settings; context = (; label = :slope)))
-    @test (nan_slope.cause, nan_slope.context.reason, nan_slope.context.label) == (GameTracing.NotFinite, :not_finite_start, :slope)
-    @test (nan_slope.context.precision, nan_slope.context.logits, nan_slope.context.steps) == (0, zeros(element, 2), 0)
+    @test (nan_slope.cause, nan_slope.context.label) == (TraceCause.NotFinite{element}(GameTracing.AtStart), :slope)
+    @test (nan_slope.stop.precision, nan_slope.stop.logits, nan_slope.stop.steps) == (0, zeros(element, 2), 0)
 end
 
 @testset "PathFollowing's trace_endpoint throws on a redraw; NoRedraw passes ($element)" for element in (Float32, widen(Float32))
@@ -183,17 +183,17 @@ end
     @test settled.logits == element[1 // 2 + tolerance]
     @test isapprox(settled.logit_accuracy, tolerance; atol = 4 * eps(element))
     unsettled = unwrap_error(landed_at(flat, element[1 // 2 + 4 * tolerance], settings))
-    @test (unsettled.cause, unsettled.context.reason, unsettled.context.label) == (GameTracing.PrecisionExhausted, :unsettled_endpoint, :landed)
-    @test unsettled.context.lambda == unsettled.context.stalled_pin == last(unsettled.context.stalled_iterate) == 1
-    @test unsettled.context.stalled_iterate[1] ≈ 1 // 2
-    @test unsettled.context.gaps == element[1 // 2 + 4 * tolerance]
-    @test isapprox(unsettled.context.correction, 4 * tolerance; atol = 4 * eps(element))
+    @test (failed_as(unsettled, TraceCause.PrecisionExhausted), unsettled.cause.stage, unsettled.context.label) == (true, GameTracing.AtEndpoint, :landed)
+    @test unsettled.cause.stall.precision == unsettled.cause.stall.pin == last(unsettled.cause.stall.iterate) == 1
+    @test unsettled.cause.stall.iterate[1] ≈ 1 // 2
+    @test unsettled.stop.gaps == element[1 // 2 + 4 * tolerance]
+    @test isapprox(unsettled.cause.stall.correction, 4 * tolerance; atol = 4 * eps(element))
     # A strategy off the support moves almost no Fisher–Rao distance for a large logit move. `G = 10` puts the root at
     # `w = 10`, logit 100 at λ = 10, so a point at logit 90 corrects by 10: the logit test refuses what Fisher–Rao passes.
     saturated = LogitGame(LinearGainPass(zeros(element, 1, 1), element[10]), element(10))
     far = unwrap_error(landed_at(saturated, element[9], settings))
-    @test (far.cause, far.context.reason) == (GameTracing.PrecisionExhausted, :unsettled_endpoint)
-    @test isapprox(far.context.correction, 10; rtol = 4 * eps(element))
+    @test (failed_as(far, TraceCause.PrecisionExhausted), far.cause.stage) == (true, GameTracing.AtEndpoint)
+    @test isapprox(far.cause.stall.correction, 10; rtol = 4 * eps(element))
     loose = PathFollowingSettings{element}(; endpoint_tolerance = 20)
     @test loose.endpoint_check == GameTracing.LogitSettled(element(20), 16 * eps(element))
     @test isapprox(unwrap(landed_at(saturated, element[9], loose)).logit_accuracy, 10; rtol = 4 * eps(element))
@@ -202,14 +202,14 @@ end
     exact = unwrap(landed_at(LogitGame(LinearGainPass(ones(element, 1, 1), element[-1 // 2]), element(4)), zeros(element, 1), settings))
     @test (exact.logits, exact.steps, exact.logit_accuracy) == (zeros(element, 1), 0, 0)
     singular = unwrap_error(landed_at(LogitGame(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), element(4)), zeros(element, 1), settings))
-    @test (singular.cause, singular.context.reason) == (GameTracing.Singular, :singular_endpoint)
+    @test singular.cause == TraceCause.Singular{element}(GameTracing.AtEndpoint)
     # A Jacobian non-finite only at the target fails `NotFinite`; LAPACK would throw on it.
     late_nan = LogitGame(NaNSlopePass(LinearGainPass(ones(element, 1, 1), zeros(element, 1)), 1), element(2))
     not_finite = unwrap_error(landed_at(late_nan, element[1 // 2], settings))
-    @test (not_finite.cause, not_finite.context.reason, not_finite.context.label) == (GameTracing.NotFinite, :not_finite_endpoint, :landed)
+    @test (not_finite.cause, not_finite.context.label) == (TraceCause.NotFinite{element}(GameTracing.AtEndpoint), :landed)
     # At an exact root as well: `G = 1/2` has its root at `w = 1/2`.
     exact_nan = LogitGame(NaNSlopePass(LinearGainPass(zeros(element, 1, 1), element[1 // 2]), 1), element(2))
-    @test unwrap_error(landed_at(exact_nan, element[1 // 2], settings)).cause == GameTracing.NotFinite
+    @test unwrap_error(landed_at(exact_nan, element[1 // 2], settings)).cause == TraceCause.NotFinite{element}(GameTracing.AtEndpoint)
 end
 
 @testset "BifurcationKit's endpoint check fails NotFinite on a non-finite Jacobian ($element)" for element in (Float32, widen(Float32))
@@ -221,8 +221,9 @@ end
     corrector = BifurcationKitSettings{element}().corrector
     late_nan = LogitGame(NaNSlopePass(constant, 1), element(2))
     failure = unwrap_error(GameTracing.verified_endpoint(progress(1 // 4), outcome, late_nan, work, corrector, (; label = :bk)))
-    @test (failure.cause, failure.context.steps, failure.context.label) == (GameTracing.NotFinite, 3, :bk)
-    @test unwrap_error(GameTracing.verified_endpoint(progress(1 // 2), outcome, late_nan, work, corrector, (;))).cause == GameTracing.NotFinite
+    @test (failure.cause, failure.stop.steps, failure.context.label) == (TraceCause.NotFinite{element}(GameTracing.AtEndpoint), 3, :bk)
+    @test unwrap_error(GameTracing.verified_endpoint(progress(1 // 2), outcome, late_nan, work, corrector, (;))).cause ==
+        TraceCause.NotFinite{element}(GameTracing.AtEndpoint)
     # Under `from` the slope stays finite, and a point near the root passes.
     finite = LogitGame(NaNSlopePass(constant, 3), element(2))
     near = unwrap(GameTracing.verified_endpoint(progress(1 // 2 + 1 // 2^20), outcome, finite, work, corrector, (;)))

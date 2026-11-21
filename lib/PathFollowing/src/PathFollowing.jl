@@ -17,6 +17,8 @@ module PathFollowing
 using Accessors: @reset
 using CommonSolve: CommonSolve
 using ErrorTypes: Err, Ok, Option, Result, is_error, none, some, unwrap, unwrap_error
+using Moshi.Data: @data
+using Moshi.Derive: @derive
 using GPUArraysCore: AnyGPUArray, @allowscalar
 using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel
 using LinearAlgebra: LinearAlgebra
@@ -26,8 +28,7 @@ using StaticArrays: StaticArrays, SArray, SMatrix, StaticArray, StaticVector, SV
 
 export CurveProblem, PseudoArclength, Newton, LastCorrection, ContractionEstimate, StepControl, DeterminantSign, FixedWeights, StaticLU
 export Metric, MetricDistance, HalfStepCheck, correction_bound, frozen_metric, freeze_metric!!, metric_inner, metric_apply!!
-export Tracer, Workspace, AcceptedStep, StepFailure, FailureCause, Refusal, Bound, Into, step!!, land!!, land_batch, Landing, landing_result
-export Unresolved, TooManyRefusals, NotFiniteStart, SingularStart, TooManySteps, NoFailure
+export Tracer, Workspace, AcceptedStep, StepFailure, Refusal, Bound, Into, step!!, land!!, land_batch, Landing, landing_result
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor, SplitMismatch
 # For wrappers that convert their own `reach` before they build a `StepControl`.
 public reach_in

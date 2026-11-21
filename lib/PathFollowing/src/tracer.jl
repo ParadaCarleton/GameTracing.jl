@@ -1,12 +1,4 @@
 """
-Why a trace ended: `Unresolved` (a predictor below the float type's resolution), `TooManyRefusals` (more refusals in
-one step than `max_refusals`), `NotFiniteStart` (`H` or its Jacobian is not finite at the start), `SingularStart`
-(no tangent at the start along `direction`), or `TooManySteps` (a `land!!` past its step budget). `NoFailure`
-marks a landing in a `Landing`; a `StepFailure` never holds it.
-"""
-@enum FailureCause Unresolved TooManyRefusals NotFiniteStart SingularStart TooManySteps NoFailure
-
-"""
 Why a step attempt was refused: the corrector ran out of iterations (`NotConverged`) or diverged (`Diverging`), `H`
 was not finite at an iterate (`NotFiniteResidual`), a bordered system was singular (`SingularSystem`), `accept`
 returned `false` (`AcceptRefused`), step control found the step too long (`TooFast`), or the orientation check found
@@ -15,6 +7,41 @@ farther from its predictor than step control's `reach` (`FarFromPredictor`), or 
 (`SplitMismatch`, `HalfStepCheck`). `NoRefusal` marks an accepted attempt.
 """
 @enum Refusal NoRefusal NotConverged Diverging NotFiniteResidual SingularSystem AcceptRefused TooFast OrientationFlip PastBound FarFromPredictor SplitMismatch
+
+"""
+A trace's end short of its caller's goal, a Moshi sum in the step's element type `E`. `last_refusal` is the last
+`Refusal` before the end (`NoRefusal` when none came first), and `refusals` counts the failed step's refusals.
+
+- `Unresolved(last_refusal, refusals)`: a predictor below the float type's resolution. The returned tracer holds the
+  step it judged: the controller's step, or the retry that did not shrink below the predictor it refuses.
+- `TooManyRefusals(last_refusal, step_length, refusals)`: more refusals in one step than `max_refusals`. `step_length`
+  is the last refused predictor, cut at a `Bound`.
+- `NotFiniteStart()`: `H` or its Jacobian is not finite at the start.
+- `SingularStart()`: no tangent at the start along `direction`.
+- `TooManySteps()`: a `land!!` past its step budget.
+
+A variant with no field of type `E` takes it explicitly: `StepFailure.TooManySteps{E}()`.
+"""
+# No `E <: Real` bound: Moshi's `@derive Eq` of a sum that holds a `StepFailure` builds its type at `E = Any`.
+@data StepFailure{E} begin
+    struct Unresolved
+        last_refusal::Refusal
+        refusals::Int
+    end
+    struct TooManyRefusals
+        last_refusal::Refusal
+        step_length::E
+        refusals::Int
+    end
+    NotFiniteStart()
+    SingularStart()
+    TooManySteps()
+end
+
+@derive StepFailure[Show, Eq, Hash]
+
+# Moshi declares each variant `public`, but not `Type`, the sum's own name.
+@eval StepFailure $(Expr(:public, :Type))
 
 """
     AcceptedStep(step_length, iterations, refusals, contraction, first_correction, turn)
@@ -30,25 +57,6 @@ struct AcceptedStep{E <: Real}
     contraction::E
     first_correction::E
     turn::E
-end
-
-"""
-    StepFailure(cause, last_refusal, step_length, refusals)
-
-A trace's end short of its caller's goal: the `FailureCause`, the last `Refusal` before it (`NoRefusal` at the start),
-the step length its failing check judged and the refusals in the failed step. That length is the first step at the
-start, and the last refused predictor, cut at a `Bound`, for `TooManyRefusals`. For `Unresolved` it is the controller's
-step, or the retry that did not shrink below the predictor it refuses.
-"""
-struct StepFailure{E <: Real}
-    cause::FailureCause
-    last_refusal::Refusal
-    step_length::E
-    refusals::Int
-    function StepFailure(cause::FailureCause, last_refusal::Refusal, step_length::E, refusals::Integer)::StepFailure{E} where {E <: Real}
-        cause == NoFailure && throw(ArgumentError("a StepFailure needs a cause; NoFailure marks a landing"))
-        return new{E}(cause, last_refusal, step_length, refusals)
-    end
 end
 
 """
@@ -89,7 +97,7 @@ function CommonSolve.init(
         problem::CurveProblem{S, V},
         algorithm::PseudoArclength;
         first_step::Real,
-    )::Result{<:Tracer{E}, StepFailure{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
+    )::Result{<:Tracer{E}, StepFailure.Type{E}} where {S, E <: Real, V <: AbstractVector{E}}  # concrete in `started`
     # Checked in `E`, where a tiny or huge `first_step` rounds to 0 or Inf.
     valid_first_step(E(first_step)) || throw(ArgumentError(lazy"first_step must be positive and finite in $E; got $first_step"))
     # The step control computes in its own type: a shrink below 1 there can round back to the same step in `E`.
@@ -112,11 +120,11 @@ end
 valid_first_step(step::Real)::Bool = 0 < step < Inf
 
 """`tracer` with its unit tangent at its start, where `init` froze its metrics, or the `StepFailure` there."""
-function started(tracer::T)::Result{T, StepFailure{E}} where {E <: Real, T <: Tracer{E}}
+function started(tracer::T)::Result{T, StepFailure.Type{E}} where {E <: Real, T <: Tracer{E}}
     tracer, finite = evaluate!!(tracer, tracer.point)
-    finite || return Err(StepFailure(NotFiniteStart, NoRefusal, tracer.step_length, 0))
+    finite || return Err(StepFailure.NotFiniteStart{E}())
     tracer, oriented = tangent_solve!!(tracer, tracer.problem.direction)
-    is_error(oriented) && return Err(StepFailure(SingularStart, NoRefusal, tracer.step_length, 0))
+    is_error(oriented) && return Err(StepFailure.SingularStart{E}())
     @reset tracer.tangent = Into(tracer.tangent) .= tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)
     @reset tracer.orientation = unwrap(oriented)
     return Ok(tracer)
@@ -163,7 +171,7 @@ point. A retry no shorter than the predictor it refuses fails `Unresolved`. The 
 function step!!(
         tracer::T,
         bound::Union{Nothing, Bound{E}} = nothing,
-    )::Tuple{T, Result{AcceptedStep{E}, StepFailure{E}}} where {E <: Real, T <: Tracer{E}}
+    )::Tuple{T, Result{AcceptedStep{E}, StepFailure.Type{E}}} where {E <: Real, T <: Tracer{E}}
     (; algorithm) = tracer
     on_bound(bound, tracer.point) && throw(ArgumentError(lazy"the point lies on the bound $bound"))
     refusals = 0
@@ -173,7 +181,7 @@ function step!!(
         @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ tracer.step_length .* tracer.tangent
         # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
         if unresolved(tracer.point, tracer.work.predicted, algorithm.min_step_ulps)
-            return tracer, Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
+            return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
         end
         lands = reaches(bound, tracer.point, tracer.work.predicted)
         tracer, taken = lands ? cut_predictor!!(tracer, bound) : (tracer, tracer.step_length)
@@ -192,10 +200,10 @@ function step!!(
         @reset tracer.step_length = taken / ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
         # A retry that rounds back to the refused length would repeat it: the step is below resolution.
         if !(tracer.step_length < taken)
-            return tracer, Err(StepFailure(Unresolved, last_refusal, tracer.step_length, refusals))
+            return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
         end
     end
-    return tracer, Err(StepFailure(TooManyRefusals, last_refusal, taken, refusals))
+    return tracer, Err(StepFailure.TooManyRefusals(last_refusal, taken, refusals))
 end
 
 """

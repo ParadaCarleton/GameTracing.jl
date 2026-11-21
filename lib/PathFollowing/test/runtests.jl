@@ -7,6 +7,7 @@ using GPUArraysCore: allowscalar
 using JLArrays: JLArray, JLBackend
 using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
+using Moshi.Data: isa_variant
 using StaticArrays: SMatrix, SVector
 using Supposition: Data, @check
 using Test: @inferred, @test, @testset, @test_throws
@@ -181,7 +182,7 @@ function landing_bytes(tracer::Tracer, bound::Bound, max_steps::Integer)::Int
 end
 
 """The `StepFailure` of `tracer`'s next step toward `bound`; an accepted step throws."""
-function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::StepFailure
+function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::StepFailure.Type
     return unwrap_error(last(step!!(tracer, bound)))
 end
 
@@ -321,7 +322,7 @@ end
             end
             push!(lambdas, tracer.point[2])
         end
-        @test failure.cause == Unresolved
+        @test isa_variant(failure, StepFailure.Unresolved)
         @test all(<(0), lambdas) && issorted(lambdas)
         @test tracer.orientation == 1 && tracer.point[1] == 0
     end
@@ -405,26 +406,26 @@ end
     @testset "a refusing accept ends the trace Unresolved" begin
         settings = algorithm(E; accept = (start, predicted, corrected) -> false)
         failure = unwrap_error(traced(CurveProblem(Fold(), E[-1, 1], E[1, -1]), settings, 1; first_step = E(1) / 10))
-        @test failure.cause == Unresolved
+        @test isa_variant(failure, StepFailure.Unresolved)
         @test failure.last_refusal == AcceptRefused
     end
 
     @testset "max_refusals ends the trace TooManyRefusals" begin
         settings = algorithm(E; accept = (start, predicted, corrected) -> false, max_refusals = 3)
         failure = unwrap_error(traced(CurveProblem(Fold(), E[-1, 1], E[1, -1]), settings, 1; first_step = E(1) / 10))
-        @test failure.cause == TooManyRefusals
+        @test isa_variant(failure, StepFailure.TooManyRefusals)
         @test failure.refusals == 4
     end
 
     @testset "a NaN residual refuses the step until the trace is unresolved" begin
         failure = unwrap_error(traced(CurveProblem(Edge(one(E), false), E[0, 0], E[1, 1]), algorithm(E), 200; first_step = E(1) / 4))
-        @test failure.cause == Unresolved
+        @test isa_variant(failure, StepFailure.Unresolved)
         @test failure.last_refusal == NotFiniteResidual
     end
 
     @testset "a singular bordered system refuses the step" begin
         failure = unwrap_error(traced(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E), 200; first_step = E(1) / 4))
-        @test failure.cause == Unresolved
+        @test isa_variant(failure, StepFailure.Unresolved)
         @test failure.last_refusal == SingularSystem
     end
 
@@ -531,7 +532,7 @@ end
         _, step = accepted(unwrap(init(problem, algorithm(E; step_control = control); first_step = E(3) / 4)))
         @test (step.refusals, step.step_length) == (1, E(3) / 8)
         failure = failed_step(unwrap(init(problem, algorithm(E; step_control = control, max_refusals = 0); first_step = E(3) / 4)))
-        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, FarFromPredictor)
+        @test isa_variant(failure, StepFailure.TooManyRefusals) && failure.last_refusal == FarFromPredictor
     end
 
     @testset "a start settled by a long correction allows no long move: the allowance is the corrector's error bound" begin
@@ -573,7 +574,7 @@ end
     @testset "a half step that fails refuses the step as SplitMismatch" begin
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
         failure = failed_step(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, split_check = check, max_refusals = 0))
-        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, SplitMismatch)
+        @test isa_variant(failure, StepFailure.TooManyRefusals) && failure.last_refusal == SplitMismatch
         @test last(accepted(untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, max_refusals = 0))).step_length == 1
     end
 
@@ -582,7 +583,7 @@ end
         corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = BandAvoidingMove())
         banded(max_refusals) = untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, corrector, split_check = check, max_refusals)
         failure = failed_step(banded(0))
-        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, SplitMismatch)
+        @test isa_variant(failure, StepFailure.TooManyRefusals) && failure.last_refusal == SplitMismatch
         tracer = banded(0)
         tracer.work.iterate .= E[0, 1]
         tracer.work.candidate .= E[0, 1]
@@ -653,7 +654,7 @@ end
         # From (-7/25, -24/25) a step of 4/5 passes y's minimum at (0, -1) to (3/5, -4/5), past y = -9/10.
         tracer = untargeted(Circle(one(E)), E[-7, -24] ./ 25, E[1, 0]; first_step = E(4) / 5, max_refusals = 0)
         tracer, outcome = step!!(tracer, Bound(2, -E(9) / 10))
-        @test (unwrap_error(outcome).cause, unwrap_error(outcome).last_refusal) == (TooManyRefusals, PastBound)
+        @test isa_variant(unwrap_error(outcome), StepFailure.TooManyRefusals) && unwrap_error(outcome).last_refusal == PastBound
         @test tracer.point == E[-7, -24] ./ 25
     end
 
@@ -676,7 +677,7 @@ end
         settings = algorithm(E; step_control = control, max_refusals = 0)
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(100)))
         failure = failed_step(tracer, bound)
-        @test failure.cause == TooManyRefusals
+        @test isa_variant(failure, StepFailure.TooManyRefusals)
         @test failure.step_length ≈ E(9) / 10 rtol = 10 * eps(E)
     end
 
@@ -701,10 +702,11 @@ end
         targets = (; target_contraction = nothing, target_correction = nothing, target_turn = nothing)
         control = StepControl(; targets..., max_step_growth = E(2), max_step = one(E), shrink = prevfloat(one(E)))
         settings = algorithm(E; step_control = control, accept = (start, predicted, corrected) -> false)
-        tracer = unwrap(init(CurveProblem(Line(), E[0, 0], E[1, 1]), settings; first_step = nextfloat(zero(E))))
-        failure = failed_step(tracer)
-        @test (failure.cause, failure.last_refusal, failure.refusals) == (Unresolved, AcceptRefused, 1)
-        @test failure.step_length == nextfloat(zero(E))
+        tracer, outcome = step!!(unwrap(init(CurveProblem(Line(), E[0, 0], E[1, 1]), settings; first_step = nextfloat(zero(E)))))
+        failure = unwrap_error(outcome)
+        @test isa_variant(failure, StepFailure.Unresolved) && (failure.last_refusal, failure.refusals) == (AcceptRefused, 1)
+        # The returned tracer holds the step the resolution check judged.
+        @test tracer.step_length == nextfloat(zero(E))
     end
 
     @testset "a bounded step over a fold's top stops at the first crossing" begin
@@ -746,7 +748,7 @@ end
         # From u = -3/5 a step of 227/200 passes λ's minimum and maximum to u ≈ 3/5, λ ≈ 48/125; λ = 0 lies between.
         tracer = untargeted(Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0]; first_step = E(227) / 200, max_refusals = 0)
         failure = failed_step(tracer, Bound(2, zero(E)))
-        @test (failure.cause, failure.last_refusal) == (TooManyRefusals, PastBound)
+        @test isa_variant(failure, StepFailure.TooManyRefusals) && failure.last_refusal == PastBound
         tracer = untargeted(Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0]; first_step = E(227) / 200)
         tracer, _ = bounded_steps(tracer, Bound(2, zero(E)), 20)
         @test tracer.point ≈ E[0, 0] atol = 100 * tolerance
@@ -754,12 +756,12 @@ end
 
     @testset "a NaN start fails NotFiniteStart" begin
         failure = unwrap_error(init(CurveProblem(Edge(-one(E), false), E[0, 0], E[1, 1]), algorithm(E); first_step = one(E)))
-        @test failure.cause == NotFiniteStart
+        @test isa_variant(failure, StepFailure.NotFiniteStart)
     end
 
     @testset "a direction normal to the tangent fails SingularStart" begin
         failure = unwrap_error(init(CurveProblem(Circle(one(E)), E[1, 0], E[1, 0]), algorithm(E); first_step = one(E)))
-        @test failure.cause == SingularStart
+        @test isa_variant(failure, StepFailure.SingularStart)
     end
 
     @testset "argument checks" begin
@@ -952,11 +954,10 @@ end
         bound = Bound(2, E(3) / 4)
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
         tracer, landed = land!!(tracer, bound, 2)
-        @test tracer.steps == 2 && unwrap_error(landed) == StepFailure(TooManySteps, NoRefusal, tracer.step_length, 0)
+        @test tracer.steps == 2 && unwrap_error(landed) == StepFailure.TooManySteps{E}()
         edge = unwrap(init(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 4))
         _, landed = land!!(edge, Bound(2, E(2)), 200)
         @test unwrap_error(landed).last_refusal == SingularSystem
-        @test_throws ArgumentError StepFailure(NoFailure, NoRefusal, one(E), 0)
     end
 
     @testset "land_batch traces each problem as land!! does, one work item each, on Vector and JLArray storage" begin
@@ -967,7 +968,11 @@ end
         problems = [CurveProblem(Circle(radius), SVector{2, E}(radius, 0), SVector{2, E}(0, 1)) for radius in radii]
         first_steps = E[1 // 10, 1 // 5, 1 // 10, 1 // 4, 1 // 10]
         expected = [PathFollowing.landed(problem, settings, first_step, bound, 40) for (problem, first_step) in zip(problems, first_steps)]
-        @test [landing.cause for landing in expected] == [NoFailure, NoFailure, TooManySteps, NoFailure, NotFiniteStart]
+        outcomes = landing_result.(expected)
+        @test !any(is_error, outcomes[[1, 2, 4]])
+        @test unwrap_error(outcomes[3]) == StepFailure.TooManySteps{E}() && unwrap_error(outcomes[5]) == StepFailure.NotFiniteStart{E}()
+        # A failure at the start holds no step; one past the budget holds its tracer's.
+        @test (expected[5].step_length, expected[5].steps) == (0, 0) && expected[3].step_length > 0
         @test all(landing -> landing.point[2] == bound.value, expected[[1, 2, 4]]) && expected[3].steps == 40
         tracer = unwrap(init(problems[2], settings; first_step = first_steps[2]))
         @test unwrap(landing_result(expected[2])) == unwrap(last(land!!(tracer, bound, 40)))

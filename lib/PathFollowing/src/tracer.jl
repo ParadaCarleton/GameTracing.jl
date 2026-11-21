@@ -177,7 +177,8 @@ function step!!(
     refusals = 0
     last_refusal = NoRefusal
     taken = tracer.step_length
-    while true
+    shorter = true
+    while shorter
         @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ tracer.step_length .* tracer.tangent
         # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
         if unresolved(tracer.point, tracer.work.predicted, algorithm.min_step_ulps)
@@ -198,11 +199,9 @@ function step!!(
         shrink = inv(algorithm.step_control.shrink)
         @reset tracer.step_length = taken / ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
         # A retry that rounds back to the refused length would repeat it: the step is below resolution.
-        if !(tracer.step_length < taken)
-            return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
-        end
+        shorter = tracer.step_length < taken
     end
-    return
+    return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
 end
 
 """

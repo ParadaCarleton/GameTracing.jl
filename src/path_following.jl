@@ -428,13 +428,14 @@ function recorded_points(
         max_steps::Union{Nothing, Integer},
         context::C,
     )::Result{Nothing, TraceFailure{E, C}} where {E <: Real, C <: NamedTuple}
-    while true
+    going = true
+    while going
         tracer, stepped = path_step!!(tracer, target, max_steps, context)
         is_error(stepped) && return Err(unwrap_error(stepped))
         point = tracer.point
-        (recorder(logits_at(point), last(point)) && last(point) < target) || return Ok(nothing)
+        going = recorder(logits_at(point), last(point)) && last(point) < target
     end
-    return
+    return Ok(nothing)
 end
 
 """

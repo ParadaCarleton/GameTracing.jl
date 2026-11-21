@@ -56,14 +56,14 @@ end
 
 """
 Whether a `TraceStuck` `failure` of `settings`' engine stalled where it says: BifurcationKit at a point that did not move
-or a step it could not resolve, PathFollowing at an unresolved step or its refusals.
+or a step it could not resolve, PathFollowing at an unresolved step.
 """
 function declared_stall(failure::TraceFailure, ::BifurcationKitSettings)::Bool
     return failure.cause.reason in (GameTracing.UnmovedPoint, GameTracing.UnresolvedStep)
 end
 
 function declared_stall(failure::TraceFailure, ::PathFollowingSettings)::Bool
-    return failure.cause.reason in (GameTracing.UnresolvedStep, GameTracing.StepRefusals)
+    return failure.cause.reason == GameTracing.UnresolvedStep
 end
 
 """The last accepted logits of a failed trace of `settings`' engine, in `NormalFormPass`' logits."""

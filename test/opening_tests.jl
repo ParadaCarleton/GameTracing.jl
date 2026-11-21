@@ -395,28 +395,26 @@ end
     @test 0 < correction <= 2 * lambda * pass.noise + 2 * eps(lambda * pass.level)
 end
 
-"""A `keep_going` that writes each accepted point of a trace into `precisions` and `logits`, and stops past `ceiling`."""
+"""A `keep_going` that appends each accepted point of a trace to `precisions` and `logits`, and stops past `ceiling`."""
 struct PointLog{E <: Real}
     ceiling::E
     precisions::Vector{E}
-    logits::Matrix{E}
+    logits::Vector{Vector{E}}
 end
 
 function (logbook::PointLog)(logits::AbstractVector, precision::Real)::Bool
-    point = something(findfirst(isnan, logbook.precisions))
-    setindex!(logbook.precisions, precision, point)
-    view(logbook.logits, :, point) .= logits
+    push!(logbook.precisions, precision)
+    push!(logbook.logits, collect(logits))
     return precision < logbook.ceiling
 end
 
 @testset "the target only caps a log-precision trace: each point to 1e6 up to 100 is the endpoint of a trace to its precision" begin
     gains = NormalFormGains(first(far_opening_games(Xoshiro(FAR_OPENING_SEED))))
     width = GameTracing.logit_count(gains)
-    steps = LOG_PRECISION_SETTINGS.max_steps + 1
-    logbook = PointLog(100.0f0, fill(Float32(NaN32), steps), zeros(Float32, width, steps))
+    logbook = PointLog(100.0f0, Float32[], Vector{Float32}[])
     trace_endpoint(LogitGame(gains, FAR_TARGET), width, LOG_PRECISION_SETTINGS; keep_going = logbook)
-    recorded = 1:count(!isnan, logbook.precisions)
-    for (precision, logits) in zip(view(logbook.precisions, recorded), eachcol(view(logbook.logits, :, recorded)))
+    recorded = eachindex(logbook.precisions)
+    for (precision, logits) in zip(logbook.precisions, logbook.logits)
         near = trace_endpoint(LogitGame(gains, precision), width, LOG_PRECISION_SETTINGS)
         @test !is_error(near)
         if !is_error(near)

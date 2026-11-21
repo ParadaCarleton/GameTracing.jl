@@ -14,35 +14,41 @@ step control's target first correction in the same units: `StrategyDistance` or 
 abstract type CorrectorDistance{E <: Real} end
 
 """
-    StrategyDistance{E}(; tolerance, settle_ulps, target_correction)
+    StrategyDistance{E}(; tolerance, log_probability_tolerance, settle_ulps, target_correction)
 
-Measure a move by its Fisher–Rao distance on the product of the players' simplices: the root sum of squares of each
-player's distance (`FisherRaoChange`). A strategy counts by its probability, so one that has left the support stops
-counting. The corrector settles once a correction moves the profile no further than `tolerance` past the distance
-`settle_ulps` ulps of each logit move it (`FisherRaoSettled`). Step control's target first correction is
-`target_correction`, or `nothing` to drop the term. A set target must lie above `tolerance` (`settle_tolerance`).
+Measure a move by its Fisher–Rao distance on the product of the players' simplices, floored by Gambit's norm over √2
+(`StrategyChange`). The corrector settles once a correction moves the profile no further than `tolerance` in
+Fisher–Rao distance (`FisherRaoSettled`) and `log_probability_tolerance` in Gambit's norm (`LogProbabilitySettled`),
+each past `settle_ulps` ulps of its rounding. Step control's target first correction is `target_correction`, or
+`nothing` to drop the term. A set target must lie above `tolerance` (`settle_tolerance`).
 
 Gambit's tracer measures a correction by its Euclidean norm in log probabilities (path.cc). A player's Fisher–Rao move
-is at most that norm over √2, with equality for two strategies at even odds (Popoviciu's inequality). So the profile's
-distance is at most Gambit's norm over √2, for any number of players, and Gambit's limits divide by √2 here.
+is at most that norm over √2 (Popoviciu's inequality), with equality for two strategies at even odds. The bound runs
+one way: a strategy near probability zero moves its log probability far and the profile little. So Fisher–Rao alone
+passes moves Gambit refuses, and the measure and settle test also read Gambit's norm. The floor makes the measure
+Gambit's norm over √2 up to rounding, so step control and its refusals are Gambit's, divided by √2.
 """
 struct StrategyDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
+    log_probability_tolerance::E
     settle_ulps::Int
     target_correction::Union{Nothing, E}
-    function StrategyDistance{E}(tolerance::E, settle_ulps::Int, target_correction::Union{Nothing, E})::StrategyDistance{E} where {E <: Real}
-        return new{E}(settle_tolerance(tolerance, target_correction), settle_ulps, target_correction)
+    function StrategyDistance{E}(tolerance::E, log_probability_tolerance::E, settle_ulps::Int, target_correction::Union{Nothing, E})::StrategyDistance{E} where {E <: Real}
+        # The measure reads Gambit's norm over √2, so that tolerance must lie under the target in those units too.
+        settle_tolerance(log_probability_tolerance / sqrt(E(2)), target_correction)
+        return new{E}(settle_tolerance(tolerance, target_correction), log_probability_tolerance, settle_ulps, target_correction)
     end
 end
 
-# Defaults: half the `LogitDistance` defaults, as a logit move at even odds is twice its Fisher–Rao distance. Gambit's
-# 1e-4 is 7.1e-5 here; its refusal of a correction of 0.4 is 0.28, and step control refuses past 4 targets.
+# Defaults: Gambit's `c_tol` 1e-4, and 5e-5 Fisher–Rao, under its 7.1e-5. Gambit's refusal of a correction of 0.4
+# is 0.28 here, and step control refuses past 4 targets.
 function StrategyDistance{E}(;
         tolerance::Real = 5.0f-5,
+        log_probability_tolerance::Real = 1.0f-4,
         settle_ulps::Integer = 16,
         target_correction::Union{Nothing, Real} = 7 // 100,
     )::StrategyDistance{E} where {E <: Real}
-    return StrategyDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, target_correction))
+    return StrategyDistance{E}(E(tolerance), E(log_probability_tolerance), Int(settle_ulps), optional_limit(E, target_correction))
 end
 
 """
@@ -51,8 +57,8 @@ end
 Measure a move by Gambit's norm, the root sum of squares of the log probabilities' change (`LogProbabilityChange`).
 The corrector settles once a correction moves the profile no more than `tolerance` past each strategy's `settle_ulps`
 ulps of its rounding scale (`LogProbabilitySettled`). Step control's target first
-correction is `target_correction`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
-support: its log probability falls like `-λ`, and its corrections, `λ` times the square of the others', hold the steps short.
+correction is `target_correction`, or `nothing` to drop the term. Where a strategy leaves the support its log
+probability falls like `-λ`, and its corrections, `λ` times the square of the others', hold the steps short, as in Gambit.
 A set target must lie above `tolerance` (`settle_tolerance`).
 """
 struct LogitDistance{E <: Real} <: CorrectorDistance{E}
@@ -321,14 +327,46 @@ end
 
 """
 The callable that measures a corrector's moves under `distance` over `width` logits of `pass!!`'s game:
-`LogProbabilityChange` or `FisherRaoChange` over its `logit_ranges` (`checked_ranges`).
+`LogProbabilityChange` or `StrategyChange` over its `logit_ranges` (`checked_ranges`).
 """
 function corrector_measure(::LogitDistance, pass!!::Any, width::Integer)::Function
     return LogProbabilityChange(checked_ranges(logit_ranges(pass!!), width))
 end
 
 function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::Function
-    return FisherRaoChange(checked_ranges(logit_ranges(pass!!), width))
+    return StrategyChange(checked_ranges(logit_ranges(pass!!), width))
+end
+
+"""
+    StrategyChange(ranges)
+
+`StrategyDistance`'s measure of a move between two points `[w; λ]`: the larger of its Fisher–Rao distance
+(`FisherRaoChange`) and Gambit's norm over √2 (`LogProbabilityChange`), over the players of `ranges`. Tuple ranges
+make it isbits.
+"""
+struct StrategyChange{R} <: Function
+    ranges::R
+end
+
+function (change::StrategyChange)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    fisher_rao = FisherRaoChange(change.ranges)(from, to)
+    gambit = log_probability_change(from, to, change.ranges)
+    # `max` keeps a NaN, which refuses the step.
+    return max(fisher_rao, gambit / sqrt(E(2)))
+end
+
+"""
+    BothSettled(first, second)
+
+PathFollowing's `converged`: both settle tests `first` and `second` pass.
+"""
+struct BothSettled{F, S}
+    first::F
+    second::S
+end
+
+function (settled::BothSettled)(previous::AbstractVector{E}, iterate::AbstractVector{E}, residual::AbstractVector{E}, scale::E)::Bool where {E <: Real}
+    return settled.first(previous, iterate, residual, scale) && settled.second(previous, iterate, residual, scale)
 end
 
 # A Fisher–Rao distance on one simplex is at most π, so on the product of `N` it is at most π√N; a logit move has no bound.
@@ -336,17 +374,24 @@ function PathFollowing.correction_bound(change::FisherRaoChange, ::Type{E})::E w
     return E(π) * sqrt(E(length(change.ranges)))
 end
 # Gambit's norm has no bound: a strategy's log probability falls without limit.
-function PathFollowing.correction_bound(::LogProbabilityChange, ::Type{E})::E where {E <: Real}
+function PathFollowing.correction_bound(::Union{LogProbabilityChange, StrategyChange}, ::Type{E})::E where {E <: Real}
     return E(Inf32)
 end
 
-"""The corrector's settle test under `distance`, whose moves `measure` measures: `LogProbabilitySettled` or `FisherRaoSettled`."""
+"""
+The corrector's settle test under `distance`, whose moves `measure` measures: `LogProbabilitySettled`, or under
+`StrategyDistance` both `FisherRaoSettled` and `LogProbabilitySettled` (`BothSettled`).
+"""
 function settle_test(distance::LogitDistance{E}, measure::LogProbabilityChange{R})::LogProbabilitySettled{R, E} where {R, E <: Real}
     return LogProbabilitySettled(measure.ranges, distance.tolerance, distance.settle_ulps * eps(E))
 end
 
-function settle_test(distance::StrategyDistance{E}, measure::FisherRaoChange{R})::FisherRaoSettled{R, E} where {R, E <: Real}
-    return FisherRaoSettled(measure.ranges, distance.tolerance, distance.settle_ulps * eps(E))
+function settle_test(distance::StrategyDistance{E}, measure::StrategyChange{R})::BothSettled{FisherRaoSettled{R, E}, LogProbabilitySettled{R, E}} where {R, E <: Real}
+    rounding = distance.settle_ulps * eps(E)
+    return BothSettled(
+        FisherRaoSettled(measure.ranges, distance.tolerance, rounding),
+        LogProbabilitySettled(measure.ranges, distance.log_probability_tolerance, rounding),
+    )
 end
 
 """

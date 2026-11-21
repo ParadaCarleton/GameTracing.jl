@@ -388,7 +388,7 @@ end
 @testset "a strategy move within its logits' settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
     distance = StrategyDistance{element}()
     tolerance, ulps = distance.tolerance, distance.settle_ulps
-    settled = GameTracing.settle_test(distance, GameTracing.FisherRaoChange((1:2,)))
+    settled = GameTracing.settle_test(distance, GameTracing.StrategyChange((1:2,)))
     # Strategies 2 and 3 share a large logit; the first has left the support. Their rounding alone passes the tolerance.
     large = 64 * tolerance / eps(element)
     rounded = large + 4 * eps(large)
@@ -402,6 +402,24 @@ end
     # Small logits have no allowance to speak of: a move of four tolerances stays past it.
     @test !settled(element[0, 0, 1], element[4 * tolerance, 0, 1], element[], one(element))
     @test !settled(element[NaN32, 0, 1], element[0, 0, 1], element[], one(element))
+end
+
+@testset "StrategyDistance reads Gambit's norm where Fisher–Rao cannot see a strategy near zero ($element)" for element in (Float32, widen(Float32))
+    distance = StrategyDistance{element}()
+    measure = GameTracing.corrector_measure(distance, NormalFormGains((zeros(element, 2, 2), zeros(element, 2, 2))), 2)
+    settled = GameTracing.settle_test(distance, GameTracing.StrategyChange((1:1,)))
+    # A binary player at logit -30 whose logit moves by 1: its first strategy's log probability moves by about 1.
+    from, to = element[-30, 1], element[-29, 1]
+    fisher_rao = GameTracing.FisherRaoSettled((1:1,), distance.tolerance, distance.settle_ulps * eps(element))
+    @test fisher_rao(from, to, element[], one(element))
+    @test !settled(from, to, element[], one(element))
+    @test GameTracing.StrategyChange((1:1,))(from, to) ≈ inv(sqrt(element(2))) rtol = 1.0f-4
+    @test measure isa GameTracing.StrategyChange
+    # Four strategies, the second near certain at logit 10, its logit up 9e-5: Gambit's norm is about √3 · 9e-5.
+    four = GameTracing.settle_test(distance, GameTracing.StrategyChange((1:3,)))
+    @test !four(element[10, 0, 0, 1], element[10 + 9.0f-5, 0, 0, 1], element[], one(element))
+    # Step control refuses past 4 targets, 0.28: Gambit's 0.4 refusal over √2.
+    @test 4 * distance.target_correction * sqrt(element(2)) <= element(0.4f0)
 end
 
 @testset "StrategyDistance turns a fold whose start settled only to its tolerance" begin
@@ -420,19 +438,6 @@ end
     failure = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}(; step_metric = summed)))
     @test failed_as(failure, TraceCause.TraceStuck)
     @test abs(failure.stop.precision - 315.68f0) < 1
-end
-
-@testset "StrategyDistance takes long steps where a strategy leaves the support ($element)" for element in (Float32, widen(Float32))
-    # The five-player game of `randn(Xoshiro(1), (2, 2, 2, 2, 2))` per player: its branch ends mixed, and a strategy
-    # outside the support has a logit that grows like λ. Measured in logits, its corrections hold the steps short.
-    rng = Xoshiro(1)
-    gains = NormalFormGains(ntuple(_ -> element.(randn(rng, (2, 2, 2, 2, 2))), 5))
-    # At the previous targets: at the defaults LogitDistance takes 68 steps in Float32 and 73 in Float64 to 78.
-    branches = map((StrategyDistance{element}(; target_correction = 1 // 4), LogitDistance{element}(; target_correction = 1 // 2))) do distance
-        unwrap(logit_solve_branch(gains; maxregret = 1.0f-5, settings = PathFollowingSettings{element}(; distance)))
-    end
-    @test 2 * length(first(branches)) < length(last(branches))
-    @test largest_gap(last(first(branches)).profile, last(last(branches)).profile) < 1.0f-3
 end
 
 @testset "PathFollowing's metric is the trace geometry's at target precision one ($element)" for element in (Float32, widen(Float32))

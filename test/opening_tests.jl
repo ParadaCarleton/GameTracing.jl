@@ -213,25 +213,24 @@ end
     settings = CorrectorSettings{element}()
     tolerance, ulps = settings.logit_tolerance, settings.settle_ulps
     relative, binary, two_binary = ulps * eps(element), (1:1,), ((1:1), (2:2))
-    corrections(from, to, ranges) = GameTracing.log_probability_corrections(element.(from), element.(to), ranges, relative, one(element))
     # A logit whose rounding alone passes the tolerance: 4 ulps of it is 256 tolerances. It moves the reference's log probability.
     large = 64 * tolerance / eps(element)
     rounded = large + 4 * eps(large)
     @test GameTracing.log_probability_change(element[large, 1], element[rounded, 1], binary) > tolerance
-    @test last(corrections([large, 1], [rounded, 1], binary)) <= 0
-    @test first(corrections([large, 1], [rounded, 1], binary)) == rounded - large
+    @test last(GameTracing.log_probability_corrections(element[large, 1], element[rounded, 1], binary, relative, one(element))) <= 0
+    @test first(GameTracing.log_probability_corrections(element[large, 1], element[rounded, 1], binary, relative, one(element))) == rounded - large
     # Twice the logit's allowance leaves an excess of about one allowance, 1024 tolerances.
     beyond = large + 2 * relative * large
-    @test last(corrections([large, 1], [beyond, 1], binary)) > tolerance
+    @test last(GameTracing.log_probability_corrections(element[large, 1], element[beyond, 1], binary, relative, one(element))) > tolerance
     # A small logit has no allowance to speak of: at even odds twice the tolerance moves √2 tolerances.
-    @test last(corrections([0, 1], [2 * tolerance, 1], binary)) > tolerance
+    @test last(GameTracing.log_probability_corrections(element[0, 1], element[2 * tolerance, 1], binary, relative, one(element))) > tolerance
     # Two players that each move 4/5 of the tolerance move √2 · 4/5 of it together, past the tolerance, as Gambit's norm.
     apart = sqrt(element(2)) * 4 * tolerance / 5
-    @test first(corrections([0, 0, 1], [apart, apart, 1], two_binary)) ≈ sqrt(element(2)) * 4 * tolerance / 5
-    @test last(corrections([0, 0, 1], [apart, apart, 1], two_binary)) > tolerance
+    @test first(GameTracing.log_probability_corrections(element[0, 0, 1], element[apart, apart, 1], two_binary, relative, one(element))) ≈ sqrt(element(2)) * 4 * tolerance / 5
+    @test last(GameTracing.log_probability_corrections(element[0, 0, 1], element[apart, apart, 1], two_binary, relative, one(element))) > tolerance
     # Two large players, each moved by its own allowance, settle.
     allowance = relative * large
-    @test last(corrections([large, large, 1], [large + allowance, large + allowance, 1], two_binary)) <= tolerance
+    @test last(GameTracing.log_probability_corrections(element[large, large, 1], element[large + allowance, large + allowance, 1], two_binary, relative, one(element))) <= tolerance
     # The corrector settles the large logit's rounding at its first correction.
     check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element), two_binary)
     GameTracing.restate!(check; predictor_move = one(element))
@@ -243,8 +242,8 @@ end
 @testset "a large unchanged logit leaves no allowance to another player's change ($element)" for element in (Float32, widen(Float32))
     settings = CorrectorSettings{element}()
     relative = settings.settle_ulps * eps(element)
-    # Player one's logit 1e6 holds still; player two's moves by 1, about 0.73 in Gambit's norm.
-    (change, excess) = GameTracing.log_probability_corrections(element[1e6, 0, 1], element[1e6, 1, 1], ((1:1), (2:2)), relative, one(element))
+    # Player one's logit 10⁶ holds still; player two's moves by 1, about 0.73 in Gambit's norm.
+    (change, excess) = GameTracing.log_probability_corrections(element[10^6, 0, 1], element[10^6, 1, 1], ((1:1), (2:2)), relative, one(element))
     @test change ≈ sqrt(log(2 / (1 + exp(-element(1))))^2 + log(2 / (1 + exp(element(1))))^2)
     @test excess > settings.logit_tolerance
     @test excess ≈ change rtol = 1.0f-4

@@ -390,9 +390,9 @@ end
 
 """
 Whether branch point `logits` solve `gains` at `precision` as PathFollowing's `StrategyDistance` corrector settles them:
-`branch_step` moves the profile (Fisher–Rao) no more than twice the settle test's bound (`FisherRaoSettled`): the
-tolerance plus `settle_ulps` ulps of the logits' spread. Large Float32 logits round past the tolerance alone. Saturated
-logits can sit far off the map in logit space while every strategy has settled.
+`branch_step` moves the profile (`StrategyChange`) no more than twice the settle tests' bound. The Fisher–Rao test
+allows the tolerance plus `settle_ulps` ulps of the logits' spread (`FisherRaoSettled`). Gambit's norm, over √2,
+allows its tolerance plus each strategy's allowance (`gambit_allowance`). Large Float32 logits round past the tolerance alone.
 """
 function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance{E})::Bool where {E <: Real}
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
@@ -400,8 +400,29 @@ function settled_strategies(gains::NormalFormGains, logits::AbstractVector, prec
     measure = GameTracing.corrector_measure(distance, gains, logit_count(gains))
     # The measure reads only the logits `z = λ w`, so `[z; 1]` serves at every precision, zero included.
     point = [root; one(level)]
-    spread = sqrt(sum(range -> last(GameTracing.fisher_rao_spread(point, point, range))^2, GameTracing.logit_ranges(gains)))
-    return measure(point, [corrected; one(level)]) <= 2 * (distance.tolerance + distance.settle_ulps * eps(E) * spread)
+    ranges = GameTracing.logit_ranges(gains)
+    relative = distance.settle_ulps * eps(E)
+    spread = sqrt(sum(range -> last(GameTracing.fisher_rao_spread(point, point, range))^2, ranges))
+    fisher_rao = distance.tolerance + relative * spread
+    gambit = (distance.log_probability_tolerance + gambit_allowance(point, ranges, relative)) / sqrt(2)
+    return measure(point, [corrected; one(level)]) <= 2 * max(fisher_rao, gambit)
+end
+
+"""
+The root sum of squares of every strategy's rounding allowance in Gambit's norm at `point = [z; 1]`, `relative` times
+its rounding scale (`log_probability_corrections`), over the players of `ranges`.
+"""
+function gambit_allowance(point::AbstractVector, ranges::Any, relative::Real)::Real
+    squared = zero(float(relative))
+    for range in ranges
+        normalizer = GameTracing.log_normalizer(point, range)
+        shared = GameTracing.normalizer_rounding(point, range, normalizer)
+        squared += (relative * (GameTracing.centered_rounding(point, 0, first(normalizer)) + shared))^2
+        for index in range
+            squared += (relative * (GameTracing.centered_rounding(point, index, first(normalizer)) + shared))^2
+        end
+    end
+    return sqrt(squared)
 end
 
 """
@@ -414,10 +435,10 @@ function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::
     return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * 3 * largest * sqrt(E(2 * length(logits)))
 end
 
-"""Gambit's norm of the move `step` from `logits` (`LogProbabilityChange`), over `pass`'s players."""
-function gambit_move(pass::Any, logits::AbstractVector, step::AbstractVector)::Float64
-    point = [Float64.(collect(logits)); 1.0]
-    return GameTracing.log_probability_change(point, point .- [step; 0.0], GameTracing.logit_ranges(pass))
+"""Gambit's norm of the move `step` from `logits` (`LogProbabilityChange`), over `pass`'s players, in double precision."""
+function gambit_move(pass::Any, logits::AbstractVector, step::AbstractVector)::Real
+    point = [float.(collect(logits)) .* float(1); float(1)]
+    return GameTracing.log_probability_change(point, point .- [step; zero(float(1))], GameTracing.logit_ranges(pass))
 end
 
 """

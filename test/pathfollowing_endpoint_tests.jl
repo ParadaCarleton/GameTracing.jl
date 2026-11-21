@@ -173,6 +173,11 @@ function landed_at(game::LogitGame, gaps::AbstractVector{E}, settings::PathFollo
     return GameTracing.verified_landing(tracer, settings.endpoint_tolerance, settings.endpoint_ulps, (; label = :landed))
 end
 
+"""Gambit's norm of a correction `correction` from logit 1/2 at precision one, a binary player (`LogProbabilityChange`)."""
+function flat_gambit(correction::E)::E where {E <: Real}
+    return GameTracing.log_probability_change(E[1 // 2 + correction, 1], E[1 // 2, 1], (1:1,))
+end
+
 @testset "the PathFollowing endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
     settings = PathFollowingSettings{element}()
     tolerance = settings.distance.tolerance
@@ -182,14 +187,13 @@ end
     settled = unwrap(landed_at(flat, element[1 // 2 + tolerance], settings))
     @test settled.logits == element[1 // 2 + tolerance]
     # The accuracy is Gambit's norm of the correction, about 0.72 δ at logit 1/2.
-    gambit(δ) = GameTracing.log_probability_change(element[1 // 2 + δ, 1], element[1 // 2, 1], (1:1,))
-    @test isapprox(settled.logit_accuracy, gambit(tolerance); atol = 4 * eps(element))
+    @test isapprox(settled.logit_accuracy, flat_gambit(tolerance); atol = 4 * eps(element))
     unsettled = unwrap_error(landed_at(flat, element[1 // 2 + 4 * tolerance], settings))
     @test (failed_as(unsettled, TraceCause.PrecisionExhausted), unsettled.cause.stage, unsettled.context.label) == (true, GameTracing.AtEndpoint, :landed)
     @test unsettled.cause.stall.precision == unsettled.cause.stall.pin == last(unsettled.cause.stall.iterate) == 1
     @test unsettled.cause.stall.iterate[1] ≈ 1 // 2
     @test unsettled.stop.gaps == element[1 // 2 + 4 * tolerance]
-    @test isapprox(unsettled.cause.stall.correction, gambit(4 * tolerance); atol = 4 * eps(element))
+    @test isapprox(unsettled.cause.stall.correction, flat_gambit(4 * tolerance); atol = 4 * eps(element))
     # A strategy off the support moves almost no Fisher–Rao distance for a large logit move. `G = 10` puts the root at
     # `w = 10`, logit 100 at λ = 10, so a point at logit 90 corrects the reference's log probability by 10.
     saturated = LogitGame(LinearGainPass(zeros(element, 1, 1), element[10]), element(10))

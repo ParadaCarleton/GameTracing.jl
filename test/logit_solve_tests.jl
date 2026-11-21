@@ -93,13 +93,67 @@ function branch_games(rng::AbstractRNG)::AbstractVector
     return [ntuple(_ -> 3 .* randn(rng, Float32, counts), length(counts)) for counts in ((3, 3), (2, 2, 2))]
 end
 
+# A probability this small at a Float32 stop marks a saturated strategy. The six new Float32 failures of the fold and
+# maxregret sweeps and one CI draw each stopped with a probability of at most 2.3e-24.
+const UNDERFLOWED_PROBABILITY = 1.0e-20
+
+"""
+Whether the Float32 failure `failure` on `payoffs` is a declared one: `PrecisionExhausted` or an unresolved step, where
+some strategy's probability at the stop, in double precision, is below `UNDERFLOWED_PROBABILITY`. Gambit's norm counts
+such a strategy's log probability, and its Newton step is ill-conditioned in Float32. About 1% of random games end so.
+"""
+function declared_float32_failure(failure::TraceFailure{Float32}, payoffs::Tuple)::Bool
+    stuck = failed_as(failure, TraceCause.TraceStuck) && failure.cause.reason == GameTracing.UnresolvedStep
+    wide = NormalFormGains(map(table -> widen(Float32).(table), payoffs))
+    least = minimum(minimum, mixed_strategies(wide, widen(Float32).(failure.stop.logits)))
+    return (stuck || failed_as(failure, TraceCause.PrecisionExhausted)) && least < UNDERFLOWED_PROBABILITY
+end
+
+"""`settings`' engine at its double-precision defaults."""
+widened_settings(::BifurcationKitSettings)::EngineSettings = GameTracing.gambit_settings(widen(Float32), GameTracing.GAMBIT_MAX_ACCEL)
+widened_settings(::PathFollowingSettings)::EngineSettings = PathFollowingSettings{widen(Float32)}()
+
+"""
+The settings that check `payoffs`: `settings`' engine in double precision where its Float32 branch ends in a declared
+failure (`declared_float32_failure`), else `settings`.
+"""
+function branch_settings(payoffs::Tuple, settings::EngineSettings{Float32})::EngineSettings
+    result = logit_solve_branch(NormalFormGains(payoffs); settings)
+    declared = is_error(result) && declared_float32_failure(unwrap_error(result), payoffs)
+    return declared ? widened_settings(settings) : settings
+end
+
+@testset "a declared Float32 failure is an unresolved step or exhausted precision at an underflowed strategy" begin
+    # The stop of a CI fresh (3, 3) draw on PathFollowing: its third logit of -73 leaves a probability near 1e-32.
+    payoffs = (
+        Float32[-4.2387643 1.4217767 -1.1962941; -4.5510254 -2.388023 -1.9435337; -4.2056694 -2.0468082 2.734892],
+        Float32[-0.22660792 -0.9483385 -2.6615784; -3.7655332 2.5611134 1.5807555; 3.9260883 3.1663141 3.9230294],
+    )
+    stop = TraceStop(Float32[-30.195833, 3.2393425, -73.32123, -9.163015], Float32[-0.3123064, 0.033503544, -0.7583394, -0.09477031], 96.68656f0, 57, 7.483035f-8)
+    engine = EngineRecord.PathFollowingStep(PathFollowing.StepFailure.Unresolved{Float32}(PathFollowing.Diverging, 3))
+    failure(cause, at) = TraceFailure(cause, at, engine, (;))
+    @test declared_float32_failure(failure(TraceCause.TraceStuck{Float32}(GameTracing.UnresolvedStep), stop), payoffs)
+    @test !declared_float32_failure(failure(TraceCause.TraceStuck{Float32}(GameTracing.StoppedShort), stop), payoffs)
+    # The same cause at logits a tenth as large leaves every probability above 1e-4.
+    near = TraceStop(stop.logits ./ 10, stop.gaps, stop.precision / 10, stop.steps, stop.step_length)
+    @test !declared_float32_failure(failure(TraceCause.TraceStuck{Float32}(GameTracing.UnresolvedStep), near), payoffs)
+end
+
 @testset "logit_solve_branch: each point solves the logit map at its precision, and the last meets maxregret ($engine)" for (engine, settings) in engine_settings(Float32)
     stuck_games = branch_games(Xoshiro(STUCK_BRANCH_SEED))
     # The seed's first payoff, as the failing run logged it.
     @test first(first(first(stuck_games))) == -0.4899592f0
-    for payoffs in (stuck_games..., SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, FOLD_EXHAUSTED_GAME, branch_games(fresh_rng())...)
-        gains = NormalFormGains(payoffs)
-        result = logit_solve_branch(gains; settings)
+    # The fixed games pass in Float32. A fresh draw may end in a declared Float32 failure; Float64 then checks it.
+    fixed = [payoffs => settings for payoffs in (stuck_games..., SATURATED_BRANCH_GAME, FOLD_PEAK_GAME, FOLD_EXHAUSTED_GAME)]
+    checks = [fixed; [payoffs => branch_settings(payoffs, settings) for payoffs in branch_games(fresh_rng())]]
+    fallbacks = count(check -> last(check) !== settings, checks)
+    @info "declared Float32 failures checked in Float64" engine fallbacks
+    # About 1% of random games fail so, so two of a run's two fresh draws fail with chance 1e-4.
+    @test fallbacks <= 1
+    for (payoffs, checked_with) in checks
+        element = GameTracing.element_type(checked_with)
+        gains = NormalFormGains(map(table -> element.(table), payoffs))
+        result = logit_solve_branch(gains; settings = checked_with)
         @test !is_error(result)
         if is_error(result)
             @error "logit_solve_branch failed" payoffs = repr(payoffs) payoff_bits = map(table -> reinterpret.(UInt32, table), payoffs) failure = unwrap_error(result)
@@ -108,11 +162,11 @@ end
         branch = unwrap(result)
         @test all(profile -> profile.lam > 0, branch)
         @test all(profile -> all(isfinite, profile.logits), branch)
-        @test GameTracing.max_regret(gains, last(branch).logits) <= GameTracing.default_maxregret(Float32) * GameTracing.payoff_range(gains)
-        solved = unwrap(logit_solve(gains; settings))
+        @test GameTracing.max_regret(gains, last(branch).logits) <= GameTracing.default_maxregret(element) * GameTracing.payoff_range(gains)
+        solved = unwrap(logit_solve(gains; settings = checked_with))
         @test solved.lam == last(branch).lam
         for profile in branch
-            @test settled_point(gains, profile, settings)
+            @test settled_point(gains, profile, checked_with)
         end
         # A fold leaves the λ-fixed checks below without a unique answer (`FOLD_PEAK_GAME`), even past its peak.
         folded = !issorted([profile.lam for profile in branch])
@@ -124,7 +178,7 @@ end
         # The last point is on Gambit's branch, and logit_solve_lambda finds it at its precision.
         @test largest_gap(last(branch).profile, gambit_strategies(payoffs, last(branch).lam).strategies) <
             profile_bound(last(branch)) + GAMBIT_PROBABILITY_TOLERANCE
-        again = only(unwrap(logit_solve_lambda(gains, solved.lam; settings)))
+        again = only(unwrap(logit_solve_lambda(gains, solved.lam; settings = checked_with)))
         @test largest_gap(again.profile, solved.profile) < profile_bound(again) + profile_bound(solved)
     end
 end

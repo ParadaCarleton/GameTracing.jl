@@ -249,6 +249,17 @@ end
     @test excess ≈ change rtol = 1.0f-4
 end
 
+@testset "two equal large logits allow their inputs' rounding, and no more ($element)" for element in (Float32, widen(Float32))
+    relative = CorrectorSettings{element}().settle_ulps * eps(element)
+    # Each logit `λ w` carries its inputs' rounding, `relative` times its size, though the pair's difference is exact.
+    large = element(10^6)
+    noise = relative * large
+    within = last(GameTracing.log_probability_corrections(element[large, large, 1], element[large, large + noise / 2, 1], (1:2,), relative, one(element)))
+    past = last(GameTracing.log_probability_corrections(element[large, large, 1], element[large, large + 16 * noise, 1], (1:2,), relative, one(element)))
+    @test iszero(within)
+    @test past > 4 * noise
+end
+
 @testset "a strategy near certainty moves every other log probability; Gambit's norm counts each ($element)" for element in (Float32, widen(Float32))
     settings = CorrectorSettings{element}()
     relative = settings.settle_ulps * eps(element)

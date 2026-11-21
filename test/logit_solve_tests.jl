@@ -47,9 +47,9 @@ end
         result = logit_solve(gains; settings)
         @test !is_error(result)
         solved = unwrap(result)
-        # Regret sqrt(eps) of the payoff range bounds a dominated strategy's weight near sqrt(eps) of the gap it loses.
+        # Regret r of the payoff range bounds a dominated strategy's weight near r of the gap it loses.
         @test largest_gap(solved.profile, equilibrium) < 1.0f-2
-        @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(Float32)) * GameTracing.payoff_range(gains)
+        @test GameTracing.max_regret(gains, solved.logits) <= GameTracing.default_maxregret(Float32) * GameTracing.payoff_range(gains)
     end
 end
 
@@ -108,7 +108,7 @@ end
         branch = unwrap(result)
         @test all(profile -> profile.lam > 0, branch)
         @test all(profile -> all(isfinite, profile.logits), branch)
-        @test GameTracing.max_regret(gains, last(branch).logits) <= sqrt(eps(Float32)) * GameTracing.payoff_range(gains)
+        @test GameTracing.max_regret(gains, last(branch).logits) <= GameTracing.default_maxregret(Float32) * GameTracing.payoff_range(gains)
         solved = unwrap(logit_solve(gains; settings))
         @test solved.lam == last(branch).lam
         for profile in branch
@@ -154,7 +154,7 @@ end
         if !is_error(result)
             solved = unwrap(result)
             @test all(strategy -> length(strategy) > 1 || strategy == [1], solved.profile)
-            @test GameTracing.max_regret(gains, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
+            @test GameTracing.max_regret(gains, solved.logits) <= GameTracing.default_maxregret(element) * GameTracing.payoff_range(gains)
         end
     end
 end
@@ -262,7 +262,7 @@ end
     @test (poisoned_start.cause, poisoned_start.context) == (TraceCause.NotFinite{element}(GameTracing.AtStart), (; lam = element(1)))
     # Step control without its turn and contraction terms still solves.
     plain = PathFollowingSettings{element}(; target_contraction = nothing, target_turn = nothing)
-    @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= sqrt(eps(element)) * GameTracing.payoff_range(gains)
+    @test GameTracing.max_regret(gains, unwrap(logit_solve(gains; settings = plain)).logits) <= GameTracing.default_maxregret(element) * GameTracing.payoff_range(gains)
     @test_throws ArgumentError logit_solve_lambda(gains, -1; settings = PathFollowingSettings{element}())
     # No step cap by default; the growth bound then must stay finite.
     @test PathFollowingSettings{element}().max_step == Inf32
@@ -450,7 +450,7 @@ end
     pennies = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.matching_pennies))
     log_precision = TraceGeometry{element}(; precision_term = LogPrecisionTerm, state_weight = 1 // 2)
     solved = unwrap(logit_solve(pennies; settings = PathFollowingSettings{element}(; step_metric = log_precision)))
-    @test GameTracing.max_regret(pennies, solved.logits) <= sqrt(eps(element)) * GameTracing.payoff_range(pennies)
+    @test GameTracing.max_regret(pennies, solved.logits) <= GameTracing.default_maxregret(element) * GameTracing.payoff_range(pennies)
 end
 
 @testset "a PathFollowing landing that does not converge fails TraceStuck ($element)" for element in (Float32, widen(Float32))

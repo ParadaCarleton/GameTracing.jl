@@ -233,7 +233,7 @@ end
     @test_throws ArgumentError PathFollowingSettings{element}(; reach = floatmax(widen(element)))
     @test PathFollowingSettings{element}(; reach = Inf32).reach == Inf32
     # A distance in another element type is refused.
-    @test_throws MethodError PathFollowingSettings{element}(; distance = CorrectorDistance{BigFloat}())
+    @test_throws TypeError PathFollowingSettings{element}(; distance = CorrectorDistance{BigFloat}())
     # The error estimate's safety converts to the element type.
     halved = PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.ContractionEstimate(; safety = 1 // 2))
     @test halved.error_estimate.safety === element(1 // 2)

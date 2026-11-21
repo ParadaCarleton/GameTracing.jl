@@ -48,11 +48,11 @@ end
 """
     LogitDistance{E}(; tolerance, settle_ulps, target_correction)
 
-Measure a move by the Euclidean length of the logits' change (`logit_change`), at most √2 times Gambit's norm in log
-probabilities. The corrector settles once a correction moves the logits no more than `tolerance` past `settle_ulps` ulps
-of their own size (`LogitSettled`). Step control's target first
+Measure a move by Gambit's norm, the root sum of squares of the log probabilities' change (`LogProbabilityChange`).
+The corrector settles once a correction moves the profile no more than `tolerance` past each strategy's `settle_ulps`
+ulps of its rounding scale (`LogProbabilitySettled`). Step control's target first
 correction is `target_correction`, or `nothing` to drop the term. Do not use it to high precision when a strategy leaves the
-support: its logit grows like `λ`, and its corrections, `λ` times the square of the others', hold the steps short.
+support: its log probability falls like `-λ`, and its corrections, `λ` times the square of the others', hold the steps short.
 A set target must lie above `tolerance` (`settle_tolerance`).
 """
 struct LogitDistance{E <: Real} <: CorrectorDistance{E}
@@ -65,18 +65,20 @@ struct LogitDistance{E <: Real} <: CorrectorDistance{E}
 end
 
 """
-    LogitSettled(tolerance, rounding)
+    LogProbabilitySettled(ranges, tolerance, rounding)
 
-PathFollowing's `converged` over points `[w; λ]`: the last correction's logit move, times Newton's `scale`, is at
-most `tolerance` past `rounding` times the logits' own size (`logit_corrections`).
+PathFollowing's `converged` over points `[w; λ]`, each player's logits in its range of `ranges` (`logit_ranges`). The
+last correction, times Newton's `scale`, moves the profile at most `tolerance` in Gambit's norm, past `rounding` times
+each strategy's rounding scale (`log_probability_corrections`). Tuple ranges make it isbits.
 """
-struct LogitSettled{E <: Real}
+struct LogProbabilitySettled{R, E <: Real}
+    ranges::R
     tolerance::E
     rounding::E
 end
 
-function (settled::LogitSettled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
-    return last(logit_corrections(previous, iterate, settled.rounding, scale)) <= settled.tolerance
+function (settled::LogProbabilitySettled{R, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {R, E <: Real}
+    return last(log_probability_corrections(previous, iterate, settled.ranges, settled.rounding, scale)) <= settled.tolerance
 end
 
 """
@@ -89,12 +91,11 @@ function settle_tolerance(tolerance::E, target_correction::Union{Nothing, E})::E
     return tolerance
 end
 
-# Defaults: Gambit's limits, times √2 in logits. Its 1e-4 is 1.4e-4 here; its refusal of a correction of 0.4 is 0.57,
-# and step control refuses past 4 targets. A target of 1 jumped branches on two 5x5x5 games; 0.5 did not.
+# Defaults: Gambit's limits in its own norm: `c_tol` 1e-4, and step control refuses past 4 targets, at `c_maxDist` 0.4.
 function LogitDistance{E}(;
         tolerance::Real = 1.0f-4,
         settle_ulps::Integer = 16,
-        target_correction::Union{Nothing, Real} = 14 // 100,
+        target_correction::Union{Nothing, Real} = 1 // 10,
     )::LogitDistance{E} where {E <: Real}
     return LogitDistance{E}(E(tolerance), Int(settle_ulps), optional_limit(E, target_correction))
 end
@@ -138,8 +139,9 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`
   (`UnresolvedStep`).
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
-- `endpoint_tolerance`, `endpoint_ulps`: `trace_endpoint`'s last Newton correction at the target must move the logits
-  no more than `endpoint_tolerance` past `endpoint_ulps` ulps of their size (`LogitSettled`, `verified_landing`). The defaults
+- `endpoint_tolerance`, `endpoint_ulps`: `trace_endpoint`'s last Newton correction at the target must move the profile
+  no more than `endpoint_tolerance` in Gambit's norm, past `endpoint_ulps` ulps of each strategy's rounding scale
+  (`LogProbabilitySettled`, `verified_landing`). The defaults
   are BifurcationKit's `logit_tolerance` and `settle_ulps`, so both engines bound `Traced.logit_accuracy` alike.
 """
 struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineSettings{E}
@@ -159,7 +161,8 @@ struct PathFollowingSettings{E <: Real, L, D <: CorrectorDistance{E}} <: EngineS
     min_step_ulps::Int
     step_metric::TraceGeometry{E}
     linear_solver::L
-    endpoint_check::LogitSettled{E}
+    endpoint_tolerance::E
+    endpoint_ulps::Int
 end
 
 # Without the orientation check, five of ten logitnash_speed.jl games ran back. ContractionEstimate alone at safety 1
@@ -193,7 +196,7 @@ function PathFollowingSettings{E}(;
         E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
         optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
         split_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
-        LogitSettled(E(endpoint_tolerance), endpoint_ulps * eps(E)),
+        E(endpoint_tolerance), Int(endpoint_ulps),
     )
 end
 
@@ -250,9 +253,10 @@ end
     FisherRaoSettled(ranges, tolerance, rounding)
 
 PathFollowing's `converged` under `StrategyDistance`, each player's logits in its range of `ranges` (`logit_ranges`). The
-last correction, times Newton's `scale`, moved the profile (`FisherRaoChange`) no further than `tolerance` plus
-`rounding` times the root sum of squares of the players' logit spreads (`fisher_rao_spread`). That product bounds the
-distance a relative rounding of `rounding` in each logit moves the profile. Tuple ranges make it isbits.
+last correction, times Newton's `scale`, moved each player's mixed strategy past `rounding` times its logit spread
+(`fisher_rao_spread`). The root sum of squares of those excesses is at most `tolerance`. That product bounds the
+distance a relative rounding of `rounding` in each logit moves a player, so a large player hides no other's move.
+Tuple ranges make it isbits.
 """
 struct FisherRaoSettled{R, E <: Real}
     ranges::R
@@ -261,14 +265,13 @@ struct FisherRaoSettled{R, E <: Real}
 end
 
 function (settled::FisherRaoSettled{R, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {R, E <: Real}
-    squared_distance, squared_spread = zero(E), zero(E)
+    squared_excess = zero(E)
     for range in settled.ranges
         (distance, spread) = fisher_rao_spread(previous, iterate, range)
-        squared_distance += distance^2
-        squared_spread += spread^2
+        # `max` keeps a NaN distance, which fails the comparison, so it never settles.
+        squared_excess += max(scale * distance - settled.rounding * spread, zero(E))^2
     end
-    # A NaN distance fails the comparison, so it never settles.
-    return scale * sqrt(squared_distance) <= settled.tolerance + settled.rounding * sqrt(squared_spread)
+    return sqrt(squared_excess) <= settled.tolerance
 end
 
 """
@@ -317,10 +320,12 @@ function fisher_rao_spread(from::AbstractVector{E}, to::AbstractVector{E}, range
 end
 
 """
-The callable that measures a corrector's moves under `distance` over `width` logits of `pass!!`'s game: `logit_change`,
-or `FisherRaoChange` over its `logit_ranges` (`checked_ranges`).
+The callable that measures a corrector's moves under `distance` over `width` logits of `pass!!`'s game:
+`LogProbabilityChange` or `FisherRaoChange` over its `logit_ranges` (`checked_ranges`).
 """
-corrector_measure(::LogitDistance, ::Any, ::Integer)::Function = logit_change
+function corrector_measure(::LogitDistance, pass!!::Any, width::Integer)::Function
+    return LogProbabilityChange(checked_ranges(logit_ranges(pass!!), width))
+end
 
 function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::Function
     return FisherRaoChange(checked_ranges(logit_ranges(pass!!), width))
@@ -330,13 +335,14 @@ end
 function PathFollowing.correction_bound(change::FisherRaoChange, ::Type{E})::E where {E <: Real}
     return E(π) * sqrt(E(length(change.ranges)))
 end
-function PathFollowing.correction_bound(::typeof(logit_change), ::Type{E})::E where {E <: Real}
+# Gambit's norm has no bound: a strategy's log probability falls without limit.
+function PathFollowing.correction_bound(::LogProbabilityChange, ::Type{E})::E where {E <: Real}
     return E(Inf32)
 end
 
-"""The corrector's settle test under `distance`, whose moves `measure` measures: `LogitSettled` or `FisherRaoSettled`."""
-function settle_test(distance::LogitDistance{E}, ::Any)::LogitSettled{E} where {E <: Real}
-    return LogitSettled(distance.tolerance, distance.settle_ulps * eps(E))
+"""The corrector's settle test under `distance`, whose moves `measure` measures: `LogProbabilitySettled` or `FisherRaoSettled`."""
+function settle_test(distance::LogitDistance{E}, measure::LogProbabilityChange{R})::LogProbabilitySettled{R, E} where {R, E <: Real}
+    return LogProbabilitySettled(measure.ranges, distance.tolerance, distance.settle_ulps * eps(E))
 end
 
 function settle_test(distance::StrategyDistance{E}, measure::FisherRaoChange{R})::FisherRaoSettled{R, E} where {R, E <: Real}
@@ -656,28 +662,29 @@ function landed_endpoint(
     is_error(started) && return Err(TraceFailure(unwrap_error(started), start, 0, zero(E), context))
     tracer, landed = stepped_landing!!(unwrap(started), target, settings.max_steps, keep_going, context)
     is_error(landed) && return Err(unwrap_error(landed))
-    return verified_landing(tracer, settings.endpoint_check, context)
+    return verified_landing(tracer, settings.endpoint_tolerance, settings.endpoint_ulps, context)
 end
 
 """
 The `TraceResult` at `tracer`'s point on its target precision, after one more Newton correction there with `λ` pinned
 (`pinned_correction`), the check of BifurcationKit's `verified_endpoint`. That correction fails `NotFinite` or
-`Singular` (`AtEndpoint`). It must settle under the trace's own corrector (`settle_test`) and in logits
-(`endpoint_check`, a `LogitSettled`), else it fails `PrecisionExhausted` (`AtEndpoint`). Its `StalledCorrection`
-holds the correction's logit move (`logit_change`) and its iterate, pinned at the endpoint's precision, as BifurcationKit's
-does. Else the point is `Ok(Traced)`, its `logit_accuracy` that logit move. The logit test bounds the endpoint's logits
-where the default `StrategyDistance` does not: a strategy off the support counts by its probability.
+`Singular` (`AtEndpoint`). It must settle under the trace's own corrector (`settle_test`) and in Gambit's norm, at
+most `tolerance` past `ulps` ulps of each strategy's rounding scale (`LogProbabilitySettled`), else it fails
+`PrecisionExhausted` (`AtEndpoint`). Its `StalledCorrection` holds the correction's move (`LogProbabilityChange`) and
+its iterate, pinned at the endpoint's precision, as BifurcationKit's does. Else the point is `Ok(Traced)`, its
+`logit_accuracy` that move.
 """
-function verified_landing(tracer::PathFollowing.Tracer{E}, endpoint_check::LogitSettled{E}, context::C)::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
+function verified_landing(tracer::PathFollowing.Tracer{E}, tolerance::E, ulps::Int, context::C)::TraceResult{E, C} where {E <: Real, C <: NamedTuple}
     (; point, steps) = tracer
     (; game, pass_work) = tracer.problem.system!!
     pinned = pinned_correction(game, point, pass_work)
     is_error(pinned) && return Err(TraceFailure(unwrap_error(pinned), tracer, context))
     (; corrected, residual) = unwrap(pinned)
     precision = last(point)
-    correction = logit_change(point, corrected)
+    ranges = checked_ranges(logit_ranges(game.pass!!), length(point) - 1)
+    correction, excess = log_probability_corrections(point, corrected, ranges, ulps * eps(E), one(E))
     settled = tracer.algorithm.corrector.converged(point, corrected, residual, one(E))
-    if !(settled && endpoint_check(point, corrected, residual, one(E)))
+    if !(settled && excess <= tolerance)
         stall = StalledCorrection(precision, correction, corrected, precision, zero(E))
         return Err(TraceFailure(TraceCause.PrecisionExhausted(AtEndpoint, stall), tracer, context))
     end

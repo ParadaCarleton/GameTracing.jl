@@ -9,7 +9,7 @@ struct NoRedraw end
     ShiftedGame(game, point, factorization, shift, shift_move, within, pass_work)
 
 A candidate `game` at the accepted point `point = [w; λ]` (`RootShift`): its bordered Jacobian `[∂F/∂x; bᵀ]` there,
-factored, its root `shift` `δ`, that shift's logit move `shift_move` (`logit_change`), whether the move is `within` the
+factored, its root `shift` `δ`, that shift's move `shift_move` (`LogProbabilityChange`), whether the move is `within` the
 check's limit, and the game's pass work arrays (`pass_workspace`), which a swap hands on to the trace. A non-finite
 map or Jacobian at `point` has no factorization (`nothing`), a NaN shift and is never `within`; a restart on it fails
 as LAPACK's check of a non-finite matrix does, at the swap point.
@@ -87,14 +87,15 @@ end
 
 """
     RootShift(point, border, limit)
-    RootShift(point, step, border, settings)
+    RootShift(point, step, border, settings, ranges)
 
 The check a `redraw` hook receives at the accepted point `point = [w; λ]`. Called on a candidate game, it returns
 the `ShiftedGame`: one evaluation of the game's map and Jacobian at `point`, the bordered system under the
 corrector's `border` factored once, and the root shift `δ` from `[∂F/∂x; borderᵀ] δ = [-F(point); 0]`, one Newton
 step of the bordered corrector. The old map's residual at an accepted point is within the corrector's tolerance, so
-`-F(point)` stands for `F_old(point) - F_new(point)`. The shift is `within` when its logit move is at most
-`limit`: `settings.shift_share` of the corrector's reach on the next step, the predictor `step` (`CorrectorSettings`),
+`-F(point)` stands for `F_old(point) - F_new(point)`. The shift is `within` when its move is at most
+`limit`: `settings.shift_share` of the corrector's reach on the next step, the predictor `step` (`CorrectorSettings`)
+over the players of `ranges` (`logit_ranges`),
 or `nothing` when the reach is off, and every game passes. A hook returns the `ShiftedGame` to install its game, and
 the restart reuses its factorization.
 """
@@ -109,8 +110,9 @@ function RootShift(
         step::AbstractVector{E},
         border::AbstractVector{E},
         settings::CorrectorSettings{E},
+        ranges::Any,
     )::RootShift{E} where {E <: Real}
-    move = logit_change(point, point .+ step)
+    move = log_probability_change(point, point .+ step, ranges)
     return RootShift(collect(point), collect(border), scaled_limit(scaled_limit(settings.reach, move), settings.shift_share))
 end
 
@@ -124,7 +126,7 @@ function (check::RootShift{E})(game::LogitGame)::ShiftedGame{typeof(game), E} wh
     end
     factorization = lu(bordered)
     shift = factorization \ [.-system.residual[1:width]; zero(E)]
-    move = logit_change(point, point .+ shift)
+    move = log_probability_change(point, point .+ shift, checked_ranges(logit_ranges(game.pass!!), width))
     return ShiftedGame(game, point, factorization, shift, move, within_limit(check.limit, move), system.pass_work)
 end
 
@@ -170,6 +172,7 @@ function redrawn_slot(
         step_length .* tangent.u,
         palc_border(algorithm.dotθ, eltype(point.u)(algorithm.θ), tangent.u),
         settings,
+        checked_ranges(logit_ranges(slot.game.pass!!), length(point.u) - 1),
     )
     return swapped(slot, shift, redraw(logits, point.p, shift))
 end

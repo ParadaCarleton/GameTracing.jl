@@ -81,7 +81,7 @@ end
         copy(point),
         copy(point),
         0.0f0,
-        nothing,
+        ((1:1), (2:2)),
     )
     GameTracing.restate!(check; settled_here = true)
     @test !check((; x = point .+ eps.(point), z0 = (; u = point), step = 0, residual = 0.0f0); fromNewton = false)
@@ -112,7 +112,7 @@ end
 @testset "a reach failure that halves to an unresolved step exhausts the precision at the failed iterate and its step ($element)" for element in (Float32, widen(Float32))
     start, predicted, far = element[1, -2, 1 // 2], element[1, -2, 3 // 4], element[3, -2, 3 // 4]
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), nothing,
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), ((1:1), (2:2)),
     )
     payload = (; p = element(3 // 4), ds = element(1 // 4), residual = zero(element))
     @test check((; payload..., x = predicted, z0 = (; u = start), step = 0); fromNewton = false)
@@ -244,12 +244,12 @@ end
         zeros(Float32, 3),
         zeros(Float32, 3),
         0.0f0,
-        nothing,
+        ((1:1), (2:2)),
     )
     @test GameTracing.within_reach(check, ones(Float32, 3))
 end
 
-@testset "reach measures logits: a far target's gap rounding is within it, a logit jump is not" begin
+@testset "reach measures the profile: a far target's gap rounding is within it, a logit jump is not" begin
     # At λ = 10 a gap move of 1e-8 moves the logit 1e-7.
     previous, predicted = Float32[0, 10.0f0], Float32[1.0f-6, 10.0f0]
     check = GameTracing.CorrectorReach(
@@ -260,9 +260,9 @@ end
         previous,
         predicted,
         1.0f0,
-        nothing,
+        (1:1,),
     )
-    GameTracing.restate!(check; predictor_move = GameTracing.logit_change(previous, predicted))
+    GameTracing.restate!(check; predictor_move = GameTracing.log_probability_change(previous, predicted, check.ranges))
     @test GameTracing.within_reach(check, predicted .+ Float32[1.0f-8, 0])
     @test !GameTracing.within_reach(check, predicted .+ Float32[3.0f-6, 0])
 end

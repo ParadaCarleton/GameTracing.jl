@@ -170,7 +170,7 @@ function landed_at(game::LogitGame, gaps::AbstractVector{E}, settings::PathFollo
     problem = GameTracing.path_problem(game.pass!!, zero(gaps))
     tracer = unwrap(GameTracing.path_init(problem, settings, GameTracing.PositivePrecision(GameTracing.AcceptAll())))
     tracer.point .= [gaps; E(game.target_precision)]
-    return GameTracing.verified_landing(tracer, settings.endpoint_check, (; label = :landed))
+    return GameTracing.verified_landing(tracer, settings.endpoint_tolerance, settings.endpoint_ulps, (; label = :landed))
 end
 
 @testset "the PathFollowing endpoint passes one more pinned Newton correction, or the trace fails ($element)" for element in (Float32, widen(Float32))
@@ -181,21 +181,23 @@ end
     flat = LogitGame(NoisyFlatPass(element(1 // 2), element(1.0f-7), element(10), UInt(1)), one(element))
     settled = unwrap(landed_at(flat, element[1 // 2 + tolerance], settings))
     @test settled.logits == element[1 // 2 + tolerance]
-    @test isapprox(settled.logit_accuracy, tolerance; atol = 4 * eps(element))
+    # The accuracy is Gambit's norm of the correction, about 0.72 δ at logit 1/2.
+    gambit(δ) = GameTracing.log_probability_change(element[1 // 2 + δ, 1], element[1 // 2, 1], (1:1,))
+    @test isapprox(settled.logit_accuracy, gambit(tolerance); atol = 4 * eps(element))
     unsettled = unwrap_error(landed_at(flat, element[1 // 2 + 4 * tolerance], settings))
     @test (failed_as(unsettled, TraceCause.PrecisionExhausted), unsettled.cause.stage, unsettled.context.label) == (true, GameTracing.AtEndpoint, :landed)
     @test unsettled.cause.stall.precision == unsettled.cause.stall.pin == last(unsettled.cause.stall.iterate) == 1
     @test unsettled.cause.stall.iterate[1] ≈ 1 // 2
     @test unsettled.stop.gaps == element[1 // 2 + 4 * tolerance]
-    @test isapprox(unsettled.cause.stall.correction, 4 * tolerance; atol = 4 * eps(element))
+    @test isapprox(unsettled.cause.stall.correction, gambit(4 * tolerance); atol = 4 * eps(element))
     # A strategy off the support moves almost no Fisher–Rao distance for a large logit move. `G = 10` puts the root at
-    # `w = 10`, logit 100 at λ = 10, so a point at logit 90 corrects by 10: the logit test refuses what Fisher–Rao passes.
+    # `w = 10`, logit 100 at λ = 10, so a point at logit 90 corrects the reference's log probability by 10.
     saturated = LogitGame(LinearGainPass(zeros(element, 1, 1), element[10]), element(10))
     far = unwrap_error(landed_at(saturated, element[9], settings))
     @test (failed_as(far, TraceCause.PrecisionExhausted), far.cause.stage) == (true, GameTracing.AtEndpoint)
     @test isapprox(far.cause.stall.correction, 10; rtol = 4 * eps(element))
     loose = PathFollowingSettings{element}(; endpoint_tolerance = 20)
-    @test loose.endpoint_check == GameTracing.LogitSettled(element(20), 16 * eps(element))
+    @test (loose.endpoint_tolerance, loose.endpoint_ulps) == (element(20), 16)
     @test isapprox(unwrap(landed_at(saturated, element[9], loose)).logit_accuracy, 10; rtol = 4 * eps(element))
     # `G = logistic(z) + b` has Jacobian `1 - λ/4` at `w = 0`, singular at λ = 4. With `b = -1/2`, `w = 0` is an exact
     # root there and needs no correction; with `b = 0` it is no root, and Newton's method has no step.

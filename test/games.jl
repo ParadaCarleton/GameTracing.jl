@@ -405,11 +405,19 @@ function settled_strategies(gains::NormalFormGains, logits::AbstractVector, prec
 end
 
 """
-The largest last correction a settled corrector leaves at `logits`: `logit_tolerance` plus twice its `settle_ulps` ulps
-of the logits' Euclidean length, as a step may land on logits larger than the ones it left (`logit_corrections`).
+The largest last correction, in Gambit's norm, a settled corrector leaves at `logits`: `logit_tolerance` plus twice the
+root sum of squares of its allowances, as a step may land on logits larger than the ones it left. Each strategy's
+allowance is at most `settle_ulps` ulps of three times the largest logit, and the `n` logits have at most `2n` strategies.
 """
 function settle_bound(corrector::CorrectorSettings{E}, logits::AbstractVector)::E where {E <: Real}
-    return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * E(norm(logits))
+    largest = isempty(logits) ? zero(E) : E(maximum(abs, logits))
+    return corrector.logit_tolerance + 2 * corrector.settle_ulps * eps(E) * 3 * largest * sqrt(E(2 * length(logits)))
+end
+
+"""Gambit's norm of the move `step` from `logits` (`LogProbabilityChange`), over `pass`'s players."""
+function gambit_move(pass::Any, logits::AbstractVector, step::AbstractVector)::Float64
+    point = [Float64.(collect(logits)); 1.0]
+    return GameTracing.log_probability_change(point, point .- [step; 0.0], GameTracing.logit_ranges(pass))
 end
 
 """
@@ -434,14 +442,14 @@ function settle_bound(distance::StrategyDistance{E}, pass::Any, logits::Abstract
     return E(largest)
 end
 
-"""Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_correction` within `settle_bound`."""
+"""Whether `logits` solve `pass` at `precision` as the trace's corrector settles them: `newton_step` within `settle_bound` (`gambit_move`)."""
 function settled_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool
-    return newton_correction(pass, logits, precision) <= settle_bound(settings.corrector, logits)
+    return gambit_move(pass, logits, newton_step(pass, logits, precision)) <= settle_bound(settings.corrector, logits)
 end
 
-"""Whether branch point `logits` solve `pass` at `precision` as the trace's corrector settles them: `branch_step` within `settle_bound`."""
+"""Whether branch point `logits` solve `pass` at `precision` as the trace's corrector settles them: `branch_step` within `settle_bound` (`gambit_move`)."""
 function settled_branch_logits(pass::Any, logits::AbstractVector, precision::Real, settings::BifurcationKitSettings)::Bool
-    return maximum(abs, branch_step(pass, logits, precision)) <= settle_bound(settings.corrector, logits)
+    return gambit_move(pass, logits, branch_step(pass, logits, precision)) <= settle_bound(settings.corrector, logits)
 end
 
 """`(; residual, jacobian)` of the branch equations `z - T(z, λ) = 0` of `pass` at `point = [z; λ]`."""

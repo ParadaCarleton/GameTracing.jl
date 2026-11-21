@@ -45,6 +45,94 @@ function log_probability(point::AbstractVector{E}, index::Integer, normalizer::T
     return centered_logit(point, index, first(normalizer)) - last(normalizer)
 end
 
+"""The size `|λ| |wᵢ|` of strategy `index`'s logit (0 for the reference) at a point `[w; λ]` (`strategy_gap`)."""
+function logit_size(point::AbstractVector{E}, index::Integer)::E where {E <: Real}
+    return abs(last(point)) * abs(strategy_gap(point, index))
+end
+
+"""
+The rounding scale of strategy `index`'s centered logit at a point `[w; λ]` (`centered_logit`), its player's pivot
+`pivot`: `|zᵢ| + |z_pivot|` (`logit_size`), or zero for the pivot itself, whose centered logit is exactly zero.
+"""
+function centered_rounding(point::AbstractVector{E}, index::Integer, pivot::Integer)::E where {E <: Real}
+    return index == pivot ? zero(E) : logit_size(point, index) + logit_size(point, pivot)
+end
+
+"""
+The rounding scale of a player's log normalizer at a point `[w; λ]`, its logits in `range`, its `log_normalizer`
+`normalizer`: the probability-weighted mean of its strategies' `centered_rounding`, the normalizer's first-order error.
+"""
+function normalizer_rounding(point::AbstractVector{E}, range::UnitRange{Int}, normalizer::Tuple{Int, E})::E where {E <: Real}
+    pivot = first(normalizer)
+    total = exp(log_probability(point, 0, normalizer)) * centered_rounding(point, 0, pivot)
+    for index in range
+        total += exp(log_probability(point, index, normalizer)) * centered_rounding(point, index, pivot)
+    end
+    return total
+end
+
+"""
+Strategy `index`'s squared change in log probability from `from` to `to`, times `scale`, and the square of the part of
+it past `relative` times its rounding scale, at the larger end. That scale is its `centered_rounding` plus its player's
+`normalizer_rounding`. A NaN change or scale gives a NaN excess.
+"""
+@inline function strategy_correction(
+        from::AbstractVector{E}, to::AbstractVector{E}, index::Integer, normalizers::NTuple{2, Tuple{Int, E}},
+        roundings::NTuple{2, E}, relative::E, scale::E,
+    )::NTuple{2, E} where {E <: Real}
+    (from_normalizer, to_normalizer) = normalizers
+    change = log_probability(to, index, to_normalizer) - log_probability(from, index, from_normalizer)
+    size = max(
+        centered_rounding(from, index, first(from_normalizer)) + first(roundings),
+        centered_rounding(to, index, first(to_normalizer)) + last(roundings),
+    )
+    excess = scale * abs(change) - relative * size
+    # `max` keeps a NaN excess, so a NaN never settles.
+    return (change^2, max(excess, zero(E))^2)
+end
+
+"""
+`(change, excess)` of a move from `from` to `to`, two points `[w; λ]`, in Gambit's norm (path.cc). `change` is the
+root sum of squares of every strategy's change in log probability, over the players of `ranges` (`logit_ranges`).
+`excess` is the root sum of squares of each strategy's change times `scale`, past its own rounding allowance
+(`strategy_correction`). Each allowance is per strategy, so a large unchanged logit hides no other strategy's change.
+"""
+function log_probability_corrections(
+        from::AbstractVector{E}, to::AbstractVector{E}, ranges::Any, relative::E, scale::E,
+    )::NTuple{2, E} where {E <: Real}
+    squared_change, squared_excess = zero(E), zero(E)
+    for range in ranges
+        normalizers = (log_normalizer(from, range), log_normalizer(to, range))
+        roundings = (normalizer_rounding(from, range, first(normalizers)), normalizer_rounding(to, range, last(normalizers)))
+        (change, excess) = strategy_correction(from, to, 0, normalizers, roundings, relative, scale)
+        squared_change, squared_excess = squared_change + change, squared_excess + excess
+        for index in range
+            (change, excess) = strategy_correction(from, to, index, normalizers, roundings, relative, scale)
+            squared_change, squared_excess = squared_change + change, squared_excess + excess
+        end
+    end
+    return (sqrt(squared_change), sqrt(squared_excess))
+end
+
+"""Gambit's norm of the move from `from` to `to` over the players of `ranges`: `log_probability_corrections`' change."""
+function log_probability_change(from::AbstractVector{E}, to::AbstractVector{E}, ranges::Any)::E where {E <: Real}
+    return first(log_probability_corrections(from, to, ranges, zero(E), one(E)))
+end
+
+"""
+    LogProbabilityChange(ranges)
+
+Gambit's norm of a move between two points `[w; λ]` (path.cc): the root sum of squares of every strategy's change in
+log probability, over the players of `ranges` (`logit_ranges`, `log_probability_corrections`). Tuple ranges make it isbits.
+"""
+struct LogProbabilityChange{R} <: Function
+    ranges::R
+end
+
+function (change::LogProbabilityChange)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return log_probability_change(from, to, change.ranges)
+end
+
 """
 One strategy's share `π_from (eᵈ - 1 - d)` of a player's KL, `d = log π_to - log π_from`, from the log probabilities
 `from` and `to`. The shares sum to the KL as both distributions sum to one. Each share is second order in `d`, so the sum

@@ -21,7 +21,7 @@ that stopped it (`StoppedShort`).
 """
     StalledCorrection(precision, correction, iterate, pin, arclength)
 
-A Newton correction that stalled at rounding noise: its record's `precision`, its last `correction` in logits, its
+A Newton correction that stalled at rounding noise: its record's `precision`, its last `correction` in Gambit's norm, its
 iterate `[w; λ]`, and the `pin` and `arclength` of its step. The endpoint check's correction has its pin at the
 endpoint's precision and arclength zero.
 """
@@ -97,7 +97,7 @@ field of type `E` takes it explicitly: `EngineRecord.NoRecord{E}()`.
 - `BifurcationKitTrace(accepted_step, precision_min, precision_max, logit_tangent, gap_tangent, tangent_precision,
   logit_accuracy, message)`: the arclength step of the last accepted point (zero when none was accepted), the
   precision's range, the tangent there in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps
-  (`gap_tangent`, `tangent_precision`), the largest last correction in logits of an accepted point, and the caught
+  (`gap_tangent`, `tangent_precision`), the largest last correction in Gambit's norm of an accepted point, and the caught
   exception's `showerror` text (empty when none ended the trace).
 - `PathFollowingStep(failure)`: the `PathFollowing.StepFailure` that ended the trace.
 """
@@ -143,10 +143,11 @@ end
     Traced(logits, steps, logit_accuracy)
 
 The `logits` of a trace at its target precision, a root of the game in effect there, the continuation `steps` it took
-over every segment, and `logit_accuracy`. On BifurcationKit that is the largest last Newton logit move (`logit_change`) of any
-accepted point and of the endpoint's check (`verified_endpoint`), at most the corrector's `logit_tolerance` plus
-`settle_ulps` ulps of the logits it moved (`logit_corrections`). On PathFollowing it is the endpoint check's correction
-in logits (`verified_landing`), at most `endpoint_tolerance` plus `endpoint_ulps` ulps of those logits.
+over every segment, and `logit_accuracy`, a move in Gambit's norm of the log probabilities (`LogProbabilityChange`).
+On BifurcationKit that is the largest last Newton move of any accepted point and of the endpoint's check
+(`verified_endpoint`), at most the corrector's `logit_tolerance` past each strategy's `settle_ulps`
+(`log_probability_corrections`). On PathFollowing it is the endpoint check's correction (`verified_landing`), at most
+`endpoint_tolerance` past each strategy's `endpoint_ulps`.
 """
 struct Traced{E <: Real}
     logits::Vector{E}

@@ -1,4 +1,4 @@
-using GameTracing: FisherMetric, arclength_distance, corrected_accepted, logit_change, step_unresolved, largest_kl, max_regret, max_regret!, regret_workspace
+using GameTracing: FisherMetric, arclength_distance, corrected_accepted, log_probability_change, log_probability_corrections, step_unresolved, largest_kl, max_regret, max_regret!, regret_workspace
 using PathFollowing: PathFollowing
 
 """The bytes a second call of `call` on `arguments` allocates, after a first call compiles it."""
@@ -42,9 +42,9 @@ end
     @test warm_bytes(max_regret!, work, gains, logits) == 0
     @test max_regret!(work, gains, logits) == max_regret(gains, logits)
     from, to = randn(rng, element, 6), randn(rng, element, 6)
-    for measure in (logit_change, step_unresolved)
-        @test warm_bytes(measure, from, to) == 0
-    end
+    @test warm_bytes(step_unresolved, from, to) == 0
+    @test warm_bytes(log_probability_change, from, to, (1:2, 3:3, 4:5)) == 0
+    @test warm_bytes(log_probability_corrections, from, to, (1:2, 3:3, 4:5), eps(element), one(element)) == 0
     @test warm_bytes(largest_kl, (1:2, 3:3, 4:5), from, to) == 0
     @test warm_bytes(corrected_accepted, GameTracing.AcceptAll(), to, one(element), true) == 0
     for distance in instances(GameTracing.StepDistance)

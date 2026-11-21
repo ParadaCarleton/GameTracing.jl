@@ -128,7 +128,7 @@ scaled_limit(limit::Real, scale::Real)::typeof(limit * scale) = limit * scale
 """
 PALC's `step_control` for `control` over `width` gaps in `geometry`: `nothing` when it is off, else BifurcationKit's
 `CorrectorQuality`, its distance limit scaled from the gaps' Euclidean length into the norm. Its contraction rate,
-`corrector`'s limit and offset, slows growth only: `CorrectorReach` refuses on the rate in logits.
+`corrector`'s limit and offset, slows growth only: `CorrectorReach` refuses on the rate in Gambit's norm.
 """
 corrector_quality(
     ::Nothing,
@@ -423,7 +423,7 @@ shrinks the step. `redraw(logits, λ, shift)` swaps the game mid-trace; only `Bi
 A non-finite start fails `NotFinite` (`AtStart`), and a zero target returns the flat start with no step. A trace that
 stops short fails `NoConvergence` (`MaxSteps`) when it spends `settings.max_steps`, and `TraceStuck`, `Singular` or
 `PrecisionExhausted` otherwise (`TraceCause`). The point at the target passes one more Newton correction there,
-settled in logits, or fails.
+settled in Gambit's norm, or fails.
 """
 function trace_endpoint(
         game::LogitGame,
@@ -573,7 +573,7 @@ function guarded_trace(
         similar(start),
         similar(start),
         zero(E),
-        kl_ranges(settings.corrector.max_kl, finalise.slot[].game.pass!!, length(start) - 1),
+        checked_ranges(logit_ranges(finalise.slot[].game.pass!!), length(start) - 1),
     )
     return segment_outcome(
         segment_branch(
@@ -877,7 +877,7 @@ landed it checks it. BifurcationKit corrects a step past `p_max` by Newton's met
 corrector can stop on a lucky draw of evaluation noise, a correction under the tolerance by chance (issue #134).
 
 The correction is `pinned_correction`'s, which fails `NotFinite` or `Singular`. An unsettled correction (as `settled`:
-past `corrector.logit_tolerance` beyond `settle_ulps` ulps of the logits, `logit_corrections`) fails `PrecisionExhausted` (`AtEndpoint`).
+past `corrector.logit_tolerance` beyond each strategy's `settle_ulps`, `log_probability_corrections`) fails `PrecisionExhausted` (`AtEndpoint`).
 Its `StalledCorrection` runs from the endpoint (`gaps`, `precision`) to a plain Newton iterate pinned at the
 endpoint's precision, arclength zero. Else the point is `Ok(Traced)`, its `logit_accuracy` at least the correction.
 """
@@ -895,7 +895,8 @@ function verified_endpoint(
     is_error(pinned) && return Err(TraceFailure(unwrap_error(pinned), progress, outcome, context))
     (; corrected) = unwrap(pinned)
     (; logit_tolerance, settle_ulps) = corrector
-    correction, excess = logit_corrections(point, corrected, settle_ulps * eps(E), one(E))
+    ranges = checked_ranges(logit_ranges(game.pass!!), length(point) - 1)
+    correction, excess = log_probability_corrections(point, corrected, ranges, settle_ulps * eps(E), one(E))
     if !(excess <= logit_tolerance)
         stall = StalledCorrection(precision, correction, corrected, precision, zero(E))
         return Err(TraceFailure(TraceCause.PrecisionExhausted(AtEndpoint, stall), progress, outcome, context))

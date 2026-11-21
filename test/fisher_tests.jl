@@ -225,11 +225,10 @@ end
     @test abs(player_kl(from, to, 1:2) - exact) <= 8 * eps(element) * (sqrt(exact) + exact)
 end
 
-@testset "a Fisher trace or KL limit refuses a pass without logit ranges; a plain trace needs none" begin
+@testset "a trace refuses a pass without logit ranges, as its corrector measures every move per player" begin
     @test_throws MethodError GameTracing.palc_geometry(TraceGeometry{Float32}(), RangelessPass(), 1, 2.0f0)
-    @test_throws MethodError GameTracing.kl_ranges(1.0f-3, RangelessPass(), 1)
     plain = TraceGeometry{Float32}(; distance = SummedDistance, state_weight = 1 // 2)
-    @test !is_error(trace_endpoint(LogitGame(RangelessPass(), 2.0f0), 1, BifurcationKitSettings{Float32}(; step_metric = plain)))
+    @test_throws MethodError trace_endpoint(LogitGame(RangelessPass(), 2.0f0), 1, BifurcationKitSettings{Float32}(; step_metric = plain))
     for (ranges, width) in (((1:1, 3:3), 3), ((1:2,), 3), ((1:0, 2:3), 3), ((2:3, 1:1), 3), ((1:2, 2:3), 3))
         @test_throws ArgumentError checked_ranges(ranges, width)
     end

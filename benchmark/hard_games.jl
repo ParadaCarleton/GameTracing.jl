@@ -3,7 +3,7 @@
 # its game; one over 0.05 away in probability left its branch. Prints a summary per class and arm, and every miss.
 # Usage: julia --project=benchmark benchmark/hard_games.jl <out.csv>
 using GameTracing
-using GameTracing: NormalFormGains, PathFollowingSettings, StrategyDistance, logit_solve_branch
+using GameTracing: CorrectorDistance, NormalFormGains, PathFollowingSettings, logit_solve_branch
 using ErrorTypes: is_error, unwrap, unwrap_error
 using CSV: CSV
 using LinearAlgebra: dot, norm
@@ -22,7 +22,7 @@ const OFF_BRANCH = 0.05f0
 const ARMS = (
     ("default", (;)), ("growth 4", (; max_step_growth = 4)), ("turn 0.3", (; target_turn = 0.3f0)), ("turn off", (; target_turn = nothing)),
 )
-const REFERENCE = (; target_turn = 0.1f0, max_step_growth = 1.5f0, distance = StrategyDistance{WIDE}(; target_correction = 0.05f0))
+const REFERENCE = (; target_turn = 0.1f0, max_step_growth = 1.5f0, distance = CorrectorDistance{WIDE}(; target_correction = 7 // 100))
 
 """Standard normal payoffs over `counts` strategies, one table per player."""
 function random_game(counts::Tuple, seed::Integer)::Tuple

@@ -206,9 +206,9 @@ The accepted points of `logit_solve_branch`'s trace of `gains`, as precisions an
 function settled_points(
         gains::NormalFormGains;
         max_accel::Real = GAMBIT_MAX_ACCEL,
-        maximum_precision::Real = 1.0f6,
+        maximum_precision::Real = 1.0f7,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains)), max_accel),
-        maxregret::Real = sqrt(eps(element_type(settings))),
+        maxregret::Real = default_maxregret(element_type(settings)),
     )::Result{BranchPoints{E}, TraceFailure{E, RegretContext{E}}} where {E <: Real}
     if !(maxregret > 0)
         throw(ArgumentError("maxregret must be positive; got $maxregret"))
@@ -253,13 +253,23 @@ function TraceFailure(traced::Traced{E}, maximum_precision::E, context::C)::Trac
 end
 
 """
+    default_maxregret(E)
+
+`logit_solve`'s default `maxregret` in element type `E`: pygambit's 1e-8, or `eps(E)^(2/3)` where `E` cannot resolve
+it. That is 1e-8 in Float64 and 2.4e-5 in Float32.
+"""
+function default_maxregret(::Type{E})::E where {E <: AbstractFloat}
+    return max(E(1 // 10^8), cbrt(eps(E))^2)
+end
+
+"""
     logit_solve_branch(gains; maxregret, max_accel, maximum_precision, settings)
 
 pygambit's `logit_solve_branch`: every accepted point of the principal branch of the normal-form game `gains`, from
 the first step to the first point where no player's regret passes `maxregret` times the payoff range. The trace runs
 to `maximum_precision` at most, and fails `NoConvergence` (`MaximumPrecision`) if it ends there unsettled; any other
 failure of the trace is returned as is. A failure's context holds `maxregret` in the trace's element type `E`
-(`RegretContext`). `maxregret` defaults to `sqrt(eps(E))`. `max_accel` and `settings` are `logit_solve_lambda`'s.
+(`RegretContext`). `maxregret` defaults to `default_maxregret(E)`. `max_accel` and `settings` are `logit_solve_lambda`'s.
 """
 function logit_solve_branch(gains::NormalFormGains{N}; keywords...)::BranchResult{<:Real, N, <:RegretContext} where {N}
     return branch_profiles(gains, settled_points(gains; keywords...))

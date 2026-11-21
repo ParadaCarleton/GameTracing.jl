@@ -99,8 +99,8 @@ points = unwrap.(landing_result.(landings))
 ## Settings
 
 - `Newton`: the corrector's iterations, convergence test, contraction limit, error estimate and correction length.
-  `ContractionEstimate(; safety)` settles on the error left in the iterate, at most `safety` times the tolerance;
-  `LastCorrection()` settles on the last correction, often one iteration later.
+  `LastCorrection()` settles on the last correction. `ContractionEstimate(; safety)` also requires the error left
+  in the iterate to be at most `safety` times the tolerance.
 - `StepControl`: the target contraction, first correction and turn, the largest growth (and the largest after the
   first step) and the largest step. A converged point farther than `reach` predictor lengths from its predictor
   refuses the step (`FarFromPredictor`): the corrector can land on another branch there. A move within the

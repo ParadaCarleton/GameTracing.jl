@@ -13,7 +13,7 @@ and `Δλ²` by `1 / P²`:
   `Gₚ = diag(qₚ) - qₚqₚᵀ` spans its logits (`logit_ranges`); `FisherMetric` applies it.
 
 The Fisher distance freezes `G`, `w` and `λ` at each accepted point. The trace's plain products (`trace_dot`) measure it
-as `SummedDistance`. The corrector's reach check measures in logits under every distance (`within_reach`).
+as `SummedDistance`. The corrector's reach check measures in Gambit's norm under every distance (`within_reach`).
 """
 @enum StepDistance AveragedDistance SummedDistance FisherDistance
 

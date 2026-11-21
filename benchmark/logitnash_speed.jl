@@ -3,7 +3,7 @@
 # Usage: julia --project=benchmark benchmark/logitnash_speed.jl rows.csv [seeds per size] [seconds per timing]
 # Prints a row per run as it finishes and rewrites rows.csv after each game, then prints a summary per size.
 # Run it under `timeout`: a killed run keeps every finished game in rows.csv.
-using GameTracing: NormalFormGains, PathFollowingSettings, StrategyDistance, LogitDistance, logit_solve, logit_solve_branch
+using GameTracing: NormalFormGains, PathFollowingSettings, logit_solve, logit_solve_branch
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LogitNash: LogitNash
 using Moshi.Data: variant_name
@@ -22,8 +22,7 @@ const SIZES = ((2, 2), (3, 3), (5, 5), (10, 10), (20, 20), (2, 2, 2), (3, 3, 3),
 const SLOW_SECONDS = 0.5f0
 
 """
-GameTracing's `logit_solve` in element type `E` on `engine`: `:BifurcationKit`, or PathFollowing with its corrector
-distance, `:StrategyDistance` or `:LogitDistance`.
+GameTracing's `logit_solve` in element type `E` on `engine`: `:BifurcationKit` or `:PathFollowing`.
 """
 struct Tracing{E <: Real, engine} end
 
@@ -33,10 +32,8 @@ struct Nash end
 # Float32 rounds a probability near 1 to about 6e-8, which floors its regret near 1e-6; it runs at 1e-4 only.
 const RUNS = (
     (Tracing{WIDE, :BifurcationKit}(), 1.0f-4), (Tracing{Float32, :BifurcationKit}(), 1.0f-4),
-    (Tracing{WIDE, :StrategyDistance}(), 1.0f-4), (Tracing{Float32, :StrategyDistance}(), 1.0f-4),
-    (Tracing{WIDE, :LogitDistance}(), 1.0f-4), (Tracing{Float32, :LogitDistance}(), 1.0f-4), (Nash(), 1.0f-4),
-    (Tracing{WIDE, :BifurcationKit}(), 1.0f-6), (Tracing{WIDE, :StrategyDistance}(), 1.0f-6),
-    (Tracing{WIDE, :LogitDistance}(), 1.0f-6), (Nash(), 1.0f-6),
+    (Tracing{WIDE, :PathFollowing}(), 1.0f-4), (Tracing{Float32, :PathFollowing}(), 1.0f-4), (Nash(), 1.0f-4),
+    (Tracing{WIDE, :BifurcationKit}(), 1.0f-6), (Tracing{WIDE, :PathFollowing}(), 1.0f-6), (Nash(), 1.0f-6),
 )
 
 function solver_name(::Tracing{E, engine})::String where {E, engine}
@@ -48,12 +45,8 @@ function settings_keywords(::Tracing{E, :BifurcationKit})::NamedTuple where {E}
     return (;)
 end
 
-function settings_keywords(::Tracing{E, :StrategyDistance})::NamedTuple where {E}
-    return (; settings = PathFollowingSettings{E}(; distance = StrategyDistance{E}()))
-end
-
-function settings_keywords(::Tracing{E, :LogitDistance})::NamedTuple where {E}
-    return (; settings = PathFollowingSettings{E}(; distance = LogitDistance{E}()))
+function settings_keywords(::Tracing{E, :PathFollowing})::NamedTuple where {E}
+    return (; settings = PathFollowingSettings{E}())
 end
 
 solver_name(::Nash)::String = "LogitNash"

@@ -98,7 +98,9 @@ struct LargestMove end
 function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return mapreduce((later, earlier) -> abs(later - earlier), max, to, from)
 end
-PathFollowing.correction_bound(::LargestMove)::Real = Inf32
+function PathFollowing.correction_bound(::LargestMove, ::Type{E})::E where {E <: Real}
+    return E(Inf32)
+end
 
 """`LargestMove` capped at one, as a distance between probabilities is."""
 struct CappedMove end
@@ -106,7 +108,9 @@ struct CappedMove end
 function (::CappedMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return min(LargestMove()(from, to), one(E))
 end
-PathFollowing.correction_bound(::CappedMove)::Real = 1
+function PathFollowing.correction_bound(::CappedMove, ::Type{E})::E where {E <: Real}
+    return one(E)
+end
 
 """
 The unit circle with its Jacobian reported at a tenth of its size: Newton overshoots, and each correction outgrows the
@@ -144,10 +148,22 @@ function (::BandAvoidingMove)(from::AbstractVector{E}, to::AbstractVector{E})::E
     (in_band(from) || in_band(to)) && throw(DomainError((from, to), "a point in BandedLine's band"))
     return LargestMove()(from, to)
 end
-PathFollowing.correction_bound(::BandAvoidingMove)::Real = Inf32
+function PathFollowing.correction_bound(::BandAvoidingMove, ::Type{E})::E where {E <: Real}
+    return E(Inf32)
+end
 
-"""A `converged` that ignores its contract and settles where `scale` is infinite."""
-settles_at_infinite_scale(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool = isinf(scale)
+"""
+A `converged` that ignores its contract and settles where `scale` is infinite. It also passes the last-correction test
+(`scale = 1`) after its first call, so `ContractionEstimate` reaches the infinite scale (`settles`).
+"""
+struct SettlesAtInfiniteScale
+    calls::Base.RefValue{Int}
+end
+
+function (settled::SettlesAtInfiniteScale)(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool
+    settled.calls[] += 1
+    return settled.calls[] > 1 && (isone(scale) || isinf(scale))
+end
 
 """A `converged` that never holds."""
 never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
@@ -489,7 +505,7 @@ end
         @test tracer.step_length == E(2) / 1000
     end
 
-    @testset "ContractionEstimate settles on the error left in the iterate, in fewer iterations" begin
+    @testset "ContractionEstimate settles only where the last correction and the error left in the iterate both pass" begin
         halved = ContractionEstimate(; safety = one(E) / 2)
         @test PathFollowing.error_scale(LastCorrection(), E(1) / 4, one(E)) == 1
         @test PathFollowing.error_scale(halved, E(1) / 4, E(NaN32)) == 1
@@ -499,7 +515,7 @@ end
         @test_throws ArgumentError ContractionEstimate(; safety = E(2))
         @test_throws TypeError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = ContractionEstimate(; safety = big(1)))
         # A half step up the unit circle corrects by 0.125, 8.9e-3 and 4.6e-5. At tolerance 2e-3, θ/(1-θ) times the
-        # second correction, 6.9e-4, settles; over safety 1/10 it does not, nor does the second correction itself.
+        # second correction, 6.9e-4, passes at safety 1, but the second correction itself does not, so none settles there.
         settle = E(1) / 500
         control = StepControl(;
             target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2),
@@ -513,7 +529,15 @@ end
             @test abs(hypot(tracer.point...) - 1) <= settle
             step.iterations
         end
-        @test iterations == (3, 3, 2)
+        @test iterations == (3, 3, 3)
+        # The estimate passes and the last correction fails: no settle. Both pass: settle.
+        previous, iterate, residual = E[0], E[1], E[0]
+        estimate = ContractionEstimate(; safety = one(E))
+        @test !PathFollowing.settles(estimate, Settled(one(E) / 2), previous, iterate, residual, one(E) / 4)
+        @test PathFollowing.settles(LastCorrection(), Settled(one(E) / 2), previous, iterate, residual, one(E) / 4)
+        @test PathFollowing.settles(estimate, Settled(one(E)), previous, iterate, residual, one(E) / 4)
+        # The last correction passes and the estimate fails: no settle.
+        @test !PathFollowing.settles(estimate, Settled(one(E)), previous, iterate, residual, E(2))
     end
 
     @testset "a custom distance measures corrections" begin
@@ -552,7 +576,7 @@ end
     @testset "a converged that settles at an infinite scale throws, as its error bound would pass any move" begin
         # Without the check, the step was accepted 4.1 predictor lengths from its predictor, off the curve, with an error
         # bound of Inf for every later step.
-        corrector = Newton(; max_iterations = 8, converged = settles_at_infinite_scale, contraction_limit = E(100), error_estimate = ContractionEstimate(; safety = E(1) / 5))
+        corrector = Newton(; max_iterations = 8, converged = SettlesAtInfiniteScale(Ref(0)), contraction_limit = E(100), error_estimate = ContractionEstimate(; safety = E(1) / 5))
         step_control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
         tracer = unwrap(init(CurveProblem(Overshoot(), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control, orientation_check = nothing); first_step = E(1) / 10))
         @test_throws ArgumentError step!!(tracer)
@@ -627,7 +651,7 @@ end
         @test_throws ArgumentError capped(one(E) / 4)
         @test capped(one(E) / 5).step_control.target_correction == one(E) / 5
         @test capped(nothing).step_control.target_correction === nothing
-        @test correction_bound(MetricDistance()) == Inf32
+        @test correction_bound(MetricDistance(), E) === E(Inf32)
     end
 
     @testset "a predictor that reaches the bound is cut there and lands with the value exact" begin

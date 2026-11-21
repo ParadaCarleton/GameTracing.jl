@@ -206,7 +206,7 @@ The accepted points of `logit_solve_branch`'s trace of `gains`, as precisions an
 function settled_points(
         gains::NormalFormGains;
         max_accel::Real = GAMBIT_MAX_ACCEL,
-        maximum_precision::Real = 1.0f6,
+        maximum_precision::Real = 1.0f7,
         settings::EngineSettings{E} = gambit_settings(float(eltype(gains)), max_accel),
         maxregret::Real = default_maxregret(element_type(settings)),
     )::Result{BranchPoints{E}, TraceFailure{E, RegretContext{E}}} where {E <: Real}

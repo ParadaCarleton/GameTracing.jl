@@ -1,4 +1,4 @@
-using ErrorTypes: is_error, unwrap, unwrap_error
+using ErrorTypes: Ok, Result, is_error, unwrap, unwrap_error
 using LinearAlgebra: Diagonal
 using PathFollowing: PathFollowing
 using Random: AbstractRNG, Xoshiro
@@ -616,6 +616,7 @@ function filled_recorder(gains::NormalFormGains, window::Integer, precisions::Ve
     recorder = GameTracing.BranchRecorder(gains, zero(E), window)
     append!(recorder.precisions, precisions)
     append!(recorder.least, least)
+    append!(recorder.logits, [zeros(E, logit_count(gains)) for _ in precisions])
     return recorder
 end
 
@@ -628,6 +629,9 @@ end
     @test !GameTracing.regret_stalled(filled_recorder(gains, 2, rising, element[1 // 2, 1 // 4, 1 // 4, 1 // 8]))
     @test !GameTracing.regret_stalled(filled_recorder(gains, 2, element[1, 3, 2, 4], held))
     @test !GameTracing.regret_stalled(filled_recorder(gains, 2, element[1, 2, 2, 4], held))
+    # A set cap the last point reaches fails NoConvergence, though that point also completes a stall.
+    capped = GameTracing.branch_outcome(filled_recorder(gains, 2, rising, held), Result{Nothing, TraceFailure{element, @NamedTuple{}}}(Ok(nothing)), element(4), (;))
+    @test unwrap_error(capped).cause == TraceCause.NoConvergence{element}(GameTracing.MaximumPrecision)
     for window in (0, -1)
         @test_throws ArgumentError GameTracing.BranchRecorder(gains, zero(element), window)
         @test_throws ArgumentError logit_solve(gains; stall_window = window, settings = PathFollowingSettings{element}())
@@ -641,6 +645,8 @@ end
     @test failed_as(failure, TraceCause.PrecisionExhausted)
     @test failure.context.maxregret == eps(element)^2
     @test 0 < failure.stop.precision < GameTracing.precision_ceiling(element)
+    # BifurcationKit's corrector stalls first, mid-trace; PathFollowing runs on to the regret stall.
+    @test failure.cause.stage == (engine == "PathFollowing" ? GameTracing.AtEndpoint : GameTracing.MidTrace)
     if failure.cause.stage == GameTracing.AtEndpoint
         # The regret stall: the window's points past the last new least regret, then the endpoint check's correction there.
         @test failure.stop.steps > GameTracing.DEFAULT_STALL_WINDOW

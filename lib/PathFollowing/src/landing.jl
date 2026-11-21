@@ -66,10 +66,11 @@ function land_batch(
         workgroupsize::Integer,
     )::AbstractVector{Landing{V, E}} where {E <: Real, V <: SVector{<:Any, E}}
     check_batch(problems, algorithm, first_steps, bound, workgroupsize)
+    budget = checked_limit(:max_steps, max_steps)
     landings = similar(problems, Landing{V, E})
     isempty(problems) && return landings
     backend = KernelAbstractions.get_backend(problems)
-    land_kernel!(backend, Int(workgroupsize))(landings, problems, algorithm, first_steps, bound, checked_limit(:max_steps, max_steps); ndrange = length(problems))
+    land_kernel!(backend, Int(workgroupsize))(landings, problems, algorithm, first_steps, bound, budget; ndrange = length(problems))
     KernelAbstractions.synchronize(backend)
     return landings
 end

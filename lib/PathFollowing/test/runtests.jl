@@ -1060,6 +1060,7 @@ end
             fifteen_weights = FixedWeights(SVector{15, E}(ntuple(_ -> one(E), 15)))
             @test_throws "at most 14 × 14" checked(static_algorithm(E; metric = fifteen_weights), E[1 // 10, 1 // 10]; problems = storage([fifteen, fifteen]))
             @test isempty(land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, 20; workgroupsize = 1))
+            @test_throws ArgumentError land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, -1; workgroupsize = 1)
         end
         @test isnothing(PathFollowing.check_batch([circle, circle], static_algorithm(E), E[1 // 10, 1 // 5], bound, 1))
         @test_throws "defines no KernelAbstractions.synchronize" PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), JLArray(E[1 // 10]), bound, 1)

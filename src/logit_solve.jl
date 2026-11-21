@@ -254,7 +254,7 @@ function settled_points(
     target = trace_ceiling(settings, maximum_precision)
     recorder = BranchRecorder(gains, E(maxregret) * E(payoff_range(gains)), stall_window)
     context = (; maxregret = E(maxregret))
-    return branch_outcome(recorder, engine_points(gains, settings, target, recorder, context), !isnothing(maximum_precision), context)
+    return branch_outcome(recorder, engine_points(gains, settings, target, recorder, context), isnothing(maximum_precision) ? nothing : target, context)
 end
 
 """
@@ -317,22 +317,28 @@ end
 """
 The points of `recorder` once its trace `ended` (`engine_points`, `Ok(nothing)` or the engine's failure), with
 `context`, checked the same on both engines. A settled last point returns every point. A regret stall fails
-`PrecisionExhausted` (`regret_stall`); so does a trace that reached `precision_ceiling` unsettled. Else the engine's
-failure stands, and a trace that reached a set `maximum_precision` (`capped`) unsettled fails `NoConvergence`
-(`MaximumPrecision`).
+`PrecisionExhausted` (`regret_stall`); so does a trace that reached `precision_ceiling` unsettled. A trace that
+reached a set `maximum_precision` (`cap`) unsettled fails `NoConvergence` (`MaximumPrecision`), even where its last
+point also completes a stall. Else the engine's failure stands.
 """
 function branch_outcome(
         recorder::BranchRecorder{G, E},
         ended::Result{Nothing, TraceFailure{E, C}},
-        capped::Bool,
+        cap::Union{Nothing, E},
         context::C,
     )::Result{BranchPoints{E}, TraceFailure{E, C}} where {G, E <: Real, C <: NamedTuple}
     settled_regret(recorder) && return Ok((; recorder.precisions, recorder.logits))
-    if regret_stalled(recorder) || (!is_error(ended) && !capped)
-        return Err(TraceFailure(regret_stall(recorder), recorded_stop(recorder), EngineRecord.NoRecord{E}(), context))
+    if !is_error(ended) && reached_cap(recorder, cap)
+        return Err(TraceFailure(TraceCause.NoConvergence{E}(MaximumPrecision), recorded_stop(recorder), EngineRecord.NoRecord{E}(), context))
     end
-    is_error(ended) && return Err(unwrap_error(ended))
-    return Err(TraceFailure(TraceCause.NoConvergence{E}(MaximumPrecision), recorded_stop(recorder), EngineRecord.NoRecord{E}(), context))
+    is_error(ended) && !regret_stalled(recorder) && return Err(unwrap_error(ended))
+    return Err(TraceFailure(regret_stall(recorder), recorded_stop(recorder), EngineRecord.NoRecord{E}(), context))
+end
+
+"""Whether `recorder`'s last point lies at the set `maximum_precision` `cap`; never with no cap."""
+reached_cap(::BranchRecorder, ::Nothing)::Bool = false
+function reached_cap(recorder::BranchRecorder{G, E}, cap::E)::Bool where {G, E <: Real}
+    return !isempty(recorder.precisions) && last(recorder.precisions) >= cap
 end
 
 """The `TraceStop` at `recorder`'s last point, after one step per recorded point, holding no step."""

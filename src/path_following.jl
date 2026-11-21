@@ -16,11 +16,15 @@ abstract type CorrectorDistance{E <: Real} end
 """
     StrategyDistance{E}(; tolerance, settle_ulps, target_correction)
 
-Measure a move by the largest Fisher–Rao distance any player's mixed strategy travels (`FisherRaoChange`). A strategy
-counts by its probability, so one that has left the support stops counting. The corrector settles once a correction
-moves no strategy further than `tolerance` past the distance `settle_ulps` ulps of each logit move it
-(`FisherRaoSettled`). Step control's target first correction is `target_correction`, or `nothing` to drop the term.
-A set target must lie above `tolerance` (`settle_tolerance`).
+Measure a move by its Fisher–Rao distance on the product of the players' simplices: the root sum of squares of each
+player's distance (`FisherRaoChange`). A strategy counts by its probability, so one that has left the support stops
+counting. The corrector settles once a correction moves the profile no further than `tolerance` past the distance
+`settle_ulps` ulps of each logit move it (`FisherRaoSettled`). Step control's target first correction is
+`target_correction`, or `nothing` to drop the term. A set target must lie above `tolerance` (`settle_tolerance`).
+
+Gambit's tracer measures a correction by its Euclidean norm in log probabilities (path.cc). A player's Fisher–Rao move
+is at most that norm over √2, with equality for two strategies at even odds (Popoviciu's inequality). So the profile's
+distance is at most Gambit's norm over √2, for any number of players, and Gambit's limits divide by √2 here.
 """
 struct StrategyDistance{E <: Real} <: CorrectorDistance{E}
     tolerance::E
@@ -245,9 +249,9 @@ end
     FisherRaoSettled(ranges, tolerance, rounding)
 
 PathFollowing's `converged` under `StrategyDistance`, each player's logits in its range of `ranges` (`logit_ranges`). The
-last correction, times Newton's `scale`, moved no player's strategy further than `tolerance` plus `rounding` times its
-logits' spread (`fisher_rao_spread`). That product bounds the Fisher–Rao distance a relative rounding of `rounding` in
-each logit moves the strategy. Tuple ranges make it isbits.
+last correction, times Newton's `scale`, moved the profile (`FisherRaoChange`) no further than `tolerance` plus
+`rounding` times the root sum of squares of the players' logit spreads (`fisher_rao_spread`). That product bounds the
+distance a relative rounding of `rounding` in each logit moves the profile. Tuple ranges make it isbits.
 """
 struct FisherRaoSettled{R, E <: Real}
     ranges::R
@@ -256,31 +260,33 @@ struct FisherRaoSettled{R, E <: Real}
 end
 
 function (settled::FisherRaoSettled{R, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {R, E <: Real}
+    squared_distance, squared_spread = zero(E), zero(E)
     for range in settled.ranges
         (distance, spread) = fisher_rao_spread(previous, iterate, range)
-        # A NaN distance fails the comparison, so it never settles.
-        scale * distance <= settled.tolerance + settled.rounding * spread || return false
+        squared_distance += distance^2
+        squared_spread += spread^2
     end
-    return true
+    # A NaN distance fails the comparison, so it never settles.
+    return scale * sqrt(squared_distance) <= settled.tolerance + settled.rounding * sqrt(squared_spread)
 end
 
 """
     FisherRaoChange(ranges)
 
-The largest Fisher–Rao distance any player's mixed strategy moves between two points `[w; λ]`, each player's logits
-`z = λ w` in its range of `ranges` (`logit_ranges`), against its first strategy (`fisher_rao_spread`). Tuple ranges
-make it isbits.
+The Fisher–Rao distance a profile moves between two points `[w; λ]` on the product of the players' simplices: the root
+sum of squares of each player's distance (`fisher_rao_spread`). Each player's logits `z = λ w` lie in its range of
+`ranges` (`logit_ranges`), against its first strategy. Tuple ranges make it isbits.
 """
 struct FisherRaoChange{R} <: Function
     ranges::R
 end
 
 function (change::FisherRaoChange)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    largest = zero(E)
+    squared = zero(E)
     for range in change.ranges
-        largest = max(largest, first(fisher_rao_spread(from, to, range)))
+        squared += first(fisher_rao_spread(from, to, range))^2
     end
-    return largest
+    return sqrt(squared)
 end
 
 """The square root of strategy `index`'s probability at `point` (`log_probability`), its player's `log_normalizer` `normalizer`."""
@@ -319,8 +325,8 @@ function corrector_measure(::StrategyDistance, pass!!::Any, width::Integer)::Fun
     return FisherRaoChange(checked_ranges(logit_ranges(pass!!), width))
 end
 
-# A Fisher–Rao distance on the simplex is at most π; a logit move has no bound.
-PathFollowing.correction_bound(::FisherRaoChange)::Real = π
+# A Fisher–Rao distance on one simplex is at most π, so on the product of `N` it is at most π√N; a logit move has no bound.
+PathFollowing.correction_bound(change::FisherRaoChange)::Real = π * sqrt(length(change.ranges))
 PathFollowing.correction_bound(::typeof(logit_change))::Real = Inf32
 
 """The corrector's settle test under `distance`, whose moves `measure` measures: `LogitSettled` or `FisherRaoSettled`."""

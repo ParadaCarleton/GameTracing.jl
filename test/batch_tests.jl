@@ -107,8 +107,8 @@ end
 @testset "a batch's static system, metric and algorithm are isbits, and a warm static landing allocates nothing ($element)" for element in (Float32, widen(Float32))
     rng = fresh_rng()
     geometries = (GameTracing.default_step_metric(element), TraceGeometry{element}(; distance = SummedDistance))
-    for counts in BATCH_SHAPES, step_metric in geometries, distance in (StrategyDistance{element}(), LogitDistance{element}())
-        settings = batch_settings(element; step_metric, distance)
+    for counts in BATCH_SHAPES, step_metric in geometries
+        settings = batch_settings(element; step_metric)
         inputs = GameTracing.batch_inputs(static_game.(drawn_payoffs(rng, element, counts, 1)), element(4), settings)
         problem, algorithm = only(inputs.problems), inputs.algorithm
         @test isbits(problem.system!!) && isbits(problem) && isbits(algorithm)
@@ -122,7 +122,7 @@ end
     lam = element(4)
     drawn = drawn_payoffs(rng, element, (2, 2), 3)
     poisoned = [(element[NaN32 0; 0 0], element[0 0; 0 0])]
-    unsettled = (; newton_iterations = 1, distance = StrategyDistance{element}(; tolerance = eps(element), settle_ulps = 0), max_refusals = 2)
+    unsettled = (; newton_iterations = 1, distance = CorrectorDistance{element}(; tolerance = eps(element), settle_ulps = 0), max_refusals = 2)
     # As in logit_solve_tests.jl: 2^10 / eps ulps resolve only the move off precision zero.
     unresolved = (; min_step_ulps = round(Int, 2^10 / eps(element)))
     # A normal-form start has `∂F/∂w = I`, so PathFollowing's SingularStart cannot occur.

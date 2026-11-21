@@ -193,7 +193,7 @@ end
         zeros(Float32, 3),
         zeros(Float32, 3),
         zero(Float32),
-        nothing,
+        ((1:1), (2:2)),
     )
     # Gaps near 1 at half the far target: logits near 5e5, a pin offset of 4% and 25% of a target.
     point = Float32[1.0f0, -1.0f0, 0.5f0 * FAR_TARGET]
@@ -209,32 +209,61 @@ end
     @test !GameTracing.settled(check, (; x = point, res_f = zeros(Float32, 3)), nextfloat(tolerance))
 end
 
-@testset "a correction within a logit's settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
+@testset "a correction within a strategy's settle_ulps settles; one past it by the tolerance does not ($element)" for element in (Float32, widen(Float32))
     settings = CorrectorSettings{element}()
     tolerance, ulps = settings.logit_tolerance, settings.settle_ulps
-    # A logit whose rounding alone passes the tolerance: 4 ulps of it is 256 tolerances.
+    relative, binary, two_binary = ulps * eps(element), (1:1,), ((1:1), (2:2))
+    # A logit whose rounding alone passes the tolerance: 4 ulps of it is 256 tolerances. It moves the reference's log probability.
     large = 64 * tolerance / eps(element)
     rounded = large + 4 * eps(large)
-    @test GameTracing.logit_change(element[large, 1], element[rounded, 1]) > tolerance
-    @test last(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element), one(element))) <= 0
-    @test first(GameTracing.logit_corrections(element[large, 1], element[rounded, 1], ulps * eps(element), one(element))) == rounded - large
+    @test GameTracing.log_probability_change(element[large, 1], element[rounded, 1], binary) > tolerance
+    @test last(GameTracing.log_probability_corrections(element[large, 1], element[rounded, 1], binary, relative, one(element))) <= 0
+    @test first(GameTracing.log_probability_corrections(element[large, 1], element[rounded, 1], binary, relative, one(element))) == rounded - large
     # Twice the logit's allowance leaves an excess of about one allowance, 1024 tolerances.
-    beyond = large + 2 * ulps * eps(element) * large
-    @test last(GameTracing.logit_corrections(element[large, 1], element[beyond, 1], ulps * eps(element), one(element))) > tolerance
-    # A small logit has no allowance to speak of: twice the tolerance stays past it.
-    @test last(GameTracing.logit_corrections(element[0, 1], element[2 * tolerance, 1], ulps * eps(element), one(element))) > tolerance
+    beyond = large + 2 * relative * large
+    @test last(GameTracing.log_probability_corrections(element[large, 1], element[beyond, 1], binary, relative, one(element))) > tolerance
+    # A small logit has no allowance to speak of: at even odds twice the tolerance moves √2 tolerances.
+    @test last(GameTracing.log_probability_corrections(element[0, 1], element[2 * tolerance, 1], binary, relative, one(element))) > tolerance
+    # Two players that each move 4/5 of the tolerance move √2 · 4/5 of it together, past the tolerance, as Gambit's norm.
+    apart = sqrt(element(2)) * 4 * tolerance / 5
+    @test first(GameTracing.log_probability_corrections(element[0, 0, 1], element[apart, apart, 1], two_binary, relative, one(element))) ≈ sqrt(element(2)) * 4 * tolerance / 5
+    @test last(GameTracing.log_probability_corrections(element[0, 0, 1], element[apart, apart, 1], two_binary, relative, one(element))) > tolerance
+    # Two large players, each moved by its own allowance, settle.
+    allowance = relative * large
+    @test last(GameTracing.log_probability_corrections(element[large, large, 1], element[large + allowance, large + allowance, 1], two_binary, relative, one(element))) <= tolerance
     # The corrector settles the large logit's rounding at its first correction.
-    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element), nothing)
+    check = GameTracing.CorrectorReach(GameTracing.AcceptAll(), settings, TraceGeometry{element}(), one(element), element[large, 0, 1], element[large, 0, 1], one(element), two_binary)
     GameTracing.restate!(check; predictor_move = one(element))
     verdicts = [GameTracing.corrected!(check, (; x = element[first, 0, 1], res_f = zeros(element, 3), step), true) for (step, first) in ((0, large), (1, rounded))]
     @test last(verdicts) isa GameTracing.BifurcationKit.NewtonConverged
     @test check.state[].correction == rounded - large
 end
 
+@testset "a large unchanged logit leaves no allowance to another player's change ($element)" for element in (Float32, widen(Float32))
+    settings = CorrectorSettings{element}()
+    relative = settings.settle_ulps * eps(element)
+    # Player one's logit 10⁶ holds still; player two's moves by 1, about 0.73 in Gambit's norm.
+    (change, excess) = GameTracing.log_probability_corrections(element[10^6, 0, 1], element[10^6, 1, 1], ((1:1), (2:2)), relative, one(element))
+    @test change ≈ sqrt(log(2 / (1 + exp(-element(1))))^2 + log(2 / (1 + exp(element(1))))^2)
+    @test excess > settings.logit_tolerance
+    @test excess ≈ change rtol = 1.0f-4
+end
+
+@testset "a strategy near certainty moves every other log probability; Gambit's norm counts each ($element)" for element in (Float32, widen(Float32))
+    settings = CorrectorSettings{element}()
+    relative = settings.settle_ulps * eps(element)
+    # One player of four strategies: the second, at logit 10, is near certain. Its logit moves 9e-5, under the tolerance.
+    from, to = element[10, 0, 0, 1], element[10 + 9.0f-5, 0, 0, 1]
+    (change, excess) = GameTracing.log_probability_corrections(from, to, (1:3,), relative, one(element))
+    # The three others' log probabilities each fall by about 9e-5, so Gambit's norm is about √3 · 9e-5.
+    @test change ≈ sqrt(element(3)) * element(9.0f-5) rtol = 1.0f-2
+    @test excess > settings.logit_tolerance
+end
+
 """A fresh `CorrectorReach` whose current step's predictor moved the logits `predictor_move`."""
 function fresh_check(predictor_move::E)::GameTracing.CorrectorReach{GameTracing.AcceptAll, E} where {E <: Real}
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E), nothing,
+        GameTracing.AcceptAll(), CorrectorSettings{E}(), TraceGeometry{E}(), one(E), zeros(E, 3), zeros(E, 3), one(E), ((1:1), (2:2)),
     )
     GameTracing.restate!(check; predictor_move = predictor_move)
     return check
@@ -284,7 +313,8 @@ end
     @test solve_verdicts(noisy, stalled) == [true, true, true, false]
     @test GameTracing.noise_confirmed(noisy)
     @test noisy.state[].noise.suspect.precision == 1
-    @test noisy.state[].noise.suspect.correction ≈ 1.0f-2
+    # Near even odds Gambit's norm of a logit move of 0.01 is 0.01 / √2.
+    @test noisy.state[].noise.suspect.correction ≈ 1.0f-2 / sqrt(2.0f0) rtol = 1.0f-3
     # The record holds the iterate whose correction confirmed the stall; a corrector without one has no record.
     @test GameTracing.exhausted_record(noisy) == StalledCorrection(1.0f0, noisy.state[].correction, Float32[3.0f-2, 0, 1], 1.0f0, 0.25f0)
     @test_throws ArgumentError GameTracing.exhausted_record(poor)

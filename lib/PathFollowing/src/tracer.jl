@@ -410,7 +410,7 @@ function correct!!(tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Trace
         end
         scale = error_scale(corrector.error_estimate, correction, before)
         before = correction
-        if corrector.converged(tracer.work.previous, tracer.work.iterate, tracer.work.residual, scale)
+        if settles(corrector.error_estimate, corrector.converged, tracer.work.previous, tracer.work.iterate, tracer.work.residual, scale)
             return tracer, Attempt{E}(NoRefusal, iteration, contraction, first_correction, settled_scale(scale), E(NaN32), E(NaN32), Int8(0))
         end
     end

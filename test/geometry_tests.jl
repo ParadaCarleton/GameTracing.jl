@@ -50,9 +50,10 @@ end
 @testset "a converged corrector past the KL or reach limit is refused, in the default geometry" begin
     geometry = TraceGeometry{Float32}()
     start, predicted = Float32[0, 0, 0.5f0], Float32[1, 0, 0.5f0]
-    # The predictor moves the first logit by 0.5; this moves it 0.5 more, twice the reach of 0.5 times that move.
+    # The predictor moves the first logit by 0.5; this moves it 0.5 more, past the reach of 0.5 times that move.
     beyond_reach = predicted .+ Float32[1, 0, 0]
-    @test GameTracing.logit_change(predicted, beyond_reach) ≈ 2 * 0.5f0 * GameTracing.logit_change(start, predicted)
+    ranges = GameTracing.checked_ranges(GameTracing.logit_ranges(GAME), WIDTH)
+    @test GameTracing.log_probability_change(predicted, beyond_reach, ranges) > 0.5f0 * GameTracing.log_probability_change(start, predicted, ranges)
     for (corrector, corrected) in (
             (CorrectorSettings{Float32}(reach = nothing, max_kl = 1.0f-3), Float32[3, 0, 0.5f0]),
             (CorrectorSettings{Float32}(reach = 0.5f0), beyond_reach),
@@ -65,9 +66,9 @@ end
             start,
             predicted,
             1.0f0,
-            GameTracing.kl_ranges(corrector.max_kl, GAME, WIDTH),
+            ranges,
         )
-        GameTracing.restate!(check; predictor_move = GameTracing.logit_change(start, predicted))
+        GameTracing.restate!(check; predictor_move = GameTracing.log_probability_change(start, predicted, ranges))
         @test GameTracing.closing_accepted(check, predicted)
         @test !GameTracing.closing_accepted(check, corrected)
         # An exact root that never settled ends BifurcationKit's solve converged, so it meets the same tests.
@@ -82,7 +83,7 @@ end
     quarter, half = element(0.25f0), element(0.5f0)
     start, predicted = zero(element):quarter:half, one(element):(-quarter):half
     check = GameTracing.CorrectorReach(
-        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), nothing,
+        GameTracing.AcceptAll(), CorrectorSettings{element}(), TraceGeometry{element}(), element(TARGET_PRECISION), start, predicted, one(element), ((1:1), (2:2)),
     )
     @test check.predicted == predicted && check.iterate == start
     first_iterate = (; x = collect(predicted), res_f = zeros(element, 3), p = half, step = 0, residual = zero(element), z0 = (; u = collect(start), p = half))
@@ -96,9 +97,9 @@ end
     closing = (; x = predicted, res_f = zero(predicted), p = 0.5f0, step = 2, residual = 0.0f0, z0 = (; u = previous, p = 0.5f0), closing = true)
     for (settled, recorded) in ((false, 0.0f0), (true, 0.25f0))
         check = GameTracing.CorrectorReach(
-            GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), TARGET_PRECISION, previous, predicted, 1.0f0, nothing,
+            GameTracing.AcceptAll(), CorrectorSettings{Float32}(), TraceGeometry{Float32}(), TARGET_PRECISION, previous, predicted, 1.0f0, ((1:1), (2:2)),
         )
-        GameTracing.restate!(check; predictor_move = GameTracing.logit_change(previous, predicted))
+        GameTracing.restate!(check; predictor_move = GameTracing.log_probability_change(previous, predicted, check.ranges))
         GameTracing.restate!(check; correction = 0.25f0, settled_here = settled)
         @test check(closing; fromNewton = false) !== false
         @test check.state[].noise.accuracy == recorded

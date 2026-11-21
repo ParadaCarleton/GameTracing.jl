@@ -500,7 +500,10 @@ end
         end
         # Run to its regret-based end, the trace keeps the principal branch and meets Gambit at its own precision.
         element = GameTracing.element_type(settings)
-        solved = logit_solve(NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME)); maxregret = 1.0f-4, settings)
+        # A BifurcationKit trace whose steps scale with the target needs a cap (`require_target_free`).
+        target_scaled = settings isa BifurcationKitSettings && settings.step_metric.precision_term == TargetPrecisionTerm
+        maximum_precision = target_scaled ? 10^7 : nothing
+        solved = logit_solve(NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME)); maxregret = 1.0f-4, maximum_precision, settings)
         @test !is_error(solved)
         if !is_error(solved)
             checked = unwrap(solved)

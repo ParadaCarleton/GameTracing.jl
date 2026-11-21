@@ -68,6 +68,9 @@ end
 
 @derive TraceCause[Show, Eq, Hash]
 
+# Moshi declares each variant `public`, but not `Type`, the sum's own name.
+Core.eval(TraceCause, Expr(:public, :Type))
+
 """
     TraceStop(logits, gaps, precision, steps, step_length)
 
@@ -116,6 +119,9 @@ field of type `E` takes it explicitly: `EngineRecord.NoRecord{E}()`.
 end
 
 @derive EngineRecord[Show, Eq, Hash]
+
+# As for `TraceCause`.
+Core.eval(EngineRecord, Expr(:public, :Type))
 
 """
     TraceFailure(cause, stop, engine, context)

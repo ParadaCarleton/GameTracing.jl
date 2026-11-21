@@ -95,7 +95,7 @@ end
 
 # A probability this small at a Float32 stop marks a saturated strategy. The six new Float32 failures of the fold and
 # maxregret sweeps and one CI draw each stopped with a probability of at most 2.3e-24.
-const UNDERFLOWED_PROBABILITY = 1.0e-20
+const UNDERFLOWED_PROBABILITY = 1.0f-20
 
 """
 Whether the Float32 failure `failure` on `payoffs` is a declared one: `PrecisionExhausted` or an unresolved step, where
@@ -125,11 +125,14 @@ end
 
 @testset "a declared Float32 failure is an unresolved step or exhausted precision at an underflowed strategy" begin
     # The stop of a CI fresh (3, 3) draw on PathFollowing: its third logit of -73 leaves a probability near 1e-32.
-    payoffs = (
-        Float32[-4.2387643 1.4217767 -1.1962941; -4.5510254 -2.388023 -1.9435337; -4.2056694 -2.0468082 2.734892],
-        Float32[-0.22660792 -0.9483385 -2.6615784; -3.7655332 2.5611134 1.5807555; 3.9260883 3.1663141 3.9230294],
+    payoffs = map(
+        bits -> reinterpret.(Float32, bits),
+        (
+            UInt32[0xc087a3f5 0x3fb5fcc7 0xbf99202a; 0xc091a200 0xc018d55e 0xbff8c5b6; 0xc08694d8 0xc002fee8 0x402f0878],
+            UInt32[0xbe680be8 0xbf72c650 0xc02a574d; 0xc070fe7f 0x4023e948 0x3fca5632; 0x407b4508 0x404aa4e4 0x407b12ea],
+        ),
     )
-    stop = TraceStop(Float32[-30.195833, 3.2393425, -73.32123, -9.163015], Float32[-0.3123064, 0.033503544, -0.7583394, -0.09477031], 96.68656f0, 57, 7.483035f-8)
+    stop = TraceStop(Float32[-30.195833f0, 3.2393425f0, -73.32123f0, -9.163015f0], Float32[-0.3123064f0, 0.033503544f0, -0.7583394f0, -0.09477031f0], 96.68656f0, 57, 7.483035f-8)
     engine = EngineRecord.PathFollowingStep(PathFollowing.StepFailure.Unresolved{Float32}(PathFollowing.Diverging, 3))
     failure(cause, at) = TraceFailure(cause, at, engine, (;))
     @test declared_float32_failure(failure(TraceCause.TraceStuck{Float32}(GameTracing.UnresolvedStep), stop), payoffs)

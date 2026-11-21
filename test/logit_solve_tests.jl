@@ -346,9 +346,9 @@ end
     # The default targets take no such long step.
     @test gap_to_checked((; orientation_check = nothing)) < 1 // 1000
     @test gap_to_checked((; orientation_check = nothing, split_check = nothing)) > 1 // 2
-    # At growth 2 with the summed metric and trigger 1, the split check alone refuses the long step too; without either
-    # check the trace ends elsewhere there as well.
-    summed = (; max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1))
+    # At the loose targets, growth 2, the summed metric and trigger 1, the split check alone refuses the long step too;
+    # without either check the trace ends elsewhere there as well.
+    summed = (; loose_targets(element)..., max_step_growth = 2, step_metric = TraceGeometry{element}(; distance = SummedDistance, state_weight = 1))
     trigger_one = GameTracing.PathFollowing.HalfStepCheck{element}(; trigger = 1, tolerance = PathFollowingSettings{element}().split_check.tolerance)
     @test gap_to_checked((; summed..., orientation_check = nothing, split_check = trigger_one)) < 1 // 1000
     @test gap_to_checked((; summed..., orientation_check = nothing, split_check = nothing)) > 1 // 2

@@ -802,3 +802,11 @@ branches without the checks the tests isolate.
 function previous_targets(element::Type)::NamedTuple
     return (; target_turn = 1, distance = CorrectorDistance{element}(; target_correction = 7 // 20))
 end
+
+"""
+Step-control targets loose enough that every jump check fires: a turn of 1 rad and a first correction of 1 in
+Gambit's norm. At `previous_targets` under Gambit's norm, the pitchforks and the summed REVERSAL step keep their branch.
+"""
+function loose_targets(element::Type)::NamedTuple
+    return (; target_turn = 1, distance = CorrectorDistance{element}(; target_correction = 1))
+end

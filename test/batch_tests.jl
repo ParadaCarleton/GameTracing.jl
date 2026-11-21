@@ -37,7 +37,7 @@ function close_or_equal(left::Any, right::Any, ::Real)::Bool
 end
 
 function close_or_equal(left::T, right::T, tolerance::Real)::Bool where {T <: Union{AbstractFloat, AbstractVector{<:AbstractFloat}}}
-    return isapprox(left, right; rtol = tolerance)
+    return isapprox(left, right; rtol = tolerance, nans = true)
 end
 
 """The bytes a warm static `init` and `land!!` of `problem` toward `bound` allocate."""
@@ -127,7 +127,7 @@ end
     # A normal-form start has `∂F/∂w = I`, so PathFollowing's SingularStart cannot occur.
     for (options, payoffs, cause, reason) in (
             ((; max_steps = 1), drawn, GameTracing.NoConvergence, :max_steps),
-            ((;), poisoned, GameTracing.NotFinite, :NotFiniteStart),
+            ((;), poisoned, GameTracing.NotFinite, :not_finite_start),
             (unsettled, drawn, GameTracing.TraceStuck, :refusals),
             (unresolved, drawn, GameTracing.TraceStuck, :unresolved_step),
         )

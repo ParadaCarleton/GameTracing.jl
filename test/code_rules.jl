@@ -38,6 +38,10 @@ const GENERIC_RESULTS = (
     "trace.jl trace_endpoint",
     "trace.jl reached_state",
     "trace.jl redrawn_trace",
+    "trace.jl engine_endpoint",
+    "path_following.jl engine_endpoint",
+    "path_following.jl landed_endpoint",
+    "path_following.jl verified_landing",
     "logit_solve.jl gambit_settings",
     "logit_solve.jl logit_solve_lambda",
     "logit_solve.jl settled_points",
@@ -74,6 +78,7 @@ function package_signatures()::Vector{Type}
     game = LogitGame(GAME, TARGET_PRECISION)
     seeds = Type[
         entry_signature(trace_endpoint, game, WIDTH, BifurcationKitSettings{Float32}()),
+        entry_signature(trace_endpoint, game, WIDTH, PathFollowingSettings{Float32}()),
         (
             entry_signature(entry, gain)
                 for entry in (logit_solve, logit_solve_branch)

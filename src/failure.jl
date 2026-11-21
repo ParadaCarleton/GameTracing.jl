@@ -10,11 +10,13 @@ the float type's rounding noise, before the target (`CorrectorReach`); a wider f
     TraceFailure(cause, context)
 
 A trace that did not reach its target: `cause` names why and `context` carries the last accepted `logits`
-and precision. A `trace_endpoint` trace that left its start also carries that point's payoff `gaps` `w`, the tangent
-there in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps (`gap_tangent`, `tangent_precision`), and the
-step it held; a non-finite start has none of these. A `PrecisionExhausted` failure also carries the Newton iterate
-`stalled_iterate = [w; λ]` whose `correction` in logits stalled, at precision `lambda`, and the `stalled_pin` and
-`stalled_arclength` of its PALC step. The caller's own `context` fields sit beside these (`failure_context`).
+and precision. A `trace_endpoint` trace that left its start also carries that point's payoff `gaps` `w`, the `steps`
+and the step it held (`step_length`); a non-finite start has none of these. On BifurcationKit it also carries the tangent
+in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps (`gap_tangent`, `tangent_precision`). On
+PathFollowing it carries the `reason` and, for a refused step, its `last_refusal` and `refusals`. A `PrecisionExhausted`
+failure also carries the Newton iterate `stalled_iterate = [w; λ]` whose `correction` in logits stalled, at precision
+`lambda`, and the `stalled_pin` and `stalled_arclength` of its step. The caller's own `context` fields sit beside these
+(`failure_context`).
 """
 struct TraceFailure{C <: NamedTuple}
     cause::TraceCause
@@ -39,9 +41,10 @@ end
     Traced(logits, steps, logit_accuracy)
 
 The `logits` of a trace at its target precision, a root of the game in effect there, the continuation `steps` it took
-over every segment, and `logit_accuracy`: the largest last Newton correction in logits of any accepted point and of the
-endpoint's check (`verified_endpoint`), at most the corrector's `logit_tolerance` plus `settle_ulps` ulps of the largest
-logit it moved.
+over every segment, and `logit_accuracy`. On BifurcationKit that is the largest last Newton correction in logits of any
+accepted point and of the endpoint's check (`verified_endpoint`), at most the corrector's `logit_tolerance` plus
+`settle_ulps` ulps of the largest logit it moved. On PathFollowing it is the endpoint check's correction in logits
+(`verified_landing`), at most `endpoint_tolerance` plus `endpoint_ulps` ulps of that logit.
 """
 struct Traced{E <: Real}
     logits::Vector{E}

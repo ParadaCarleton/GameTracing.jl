@@ -1,3 +1,4 @@
+using ErrorTypes: unwrap
 using LinearAlgebra: Diagonal, I, det, dot, norm, opnorm, pinv
 using PathFollowing: PathFollowing
 using Random: AbstractRNG, RandomDevice, Xoshiro
@@ -200,9 +201,10 @@ function (pass::PoisonedPass)(
     return gain, gain_slope, gain_precision_slope
 end
 
-"""A pass that gives a NaN slope, so the Jacobian is non-finite where the residual is not."""
-struct NaNSlopePass{P}
+"""A pass that gives a NaN slope at precision `from` and above, so the Jacobian is non-finite where the residual is not."""
+struct NaNSlopePass{P, F <: Real}
     pass::P
+    from::F
 end
 
 GameTracing.logit_ranges(pass::NaNSlopePass)::Union{Tuple, AbstractVector} = GameTracing.logit_ranges(pass.pass)
@@ -216,7 +218,7 @@ function (pass::NaNSlopePass)(
         precision::Real,
     )::Tuple{G, S, P} where {G <: AbstractVector, S <: AbstractMatrix, P <: AbstractVector}
     gain, gain_slope, gain_precision_slope = pass.pass(gain, gain_slope, gain_precision_slope, logits, precision)
-    fill!(gain_slope, NaN32)
+    precision >= pass.from && fill!(gain_slope, NaN32)
     return gain, gain_slope, gain_precision_slope
 end
 
@@ -394,7 +396,7 @@ off the map in logit space while every strategy has settled.
 function settled_strategies(gains::NormalFormGains, logits::AbstractVector, precision::Real, distance::StrategyDistance)::Bool
     root, level = float.(collect(logits)) .* float(1), precision * float(1)
     corrected = root .- branch_step(gains, logits, precision)
-    measure = GameTracing.corrector_measure(distance, gains)
+    measure = GameTracing.corrector_measure(distance, gains, logit_count(gains))
     # The measure reads only the logits `z = λ w`, so `[z; 1]` serves at every precision, zero included.
     return measure([root; one(level)], [corrected; one(level)]) <= 2 * distance.tolerance
 end
@@ -409,15 +411,15 @@ end
 
 """
 The largest Newton correction, in logits, that PathFollowing's corrector leaves settled under `distance` at the logits
-`logits` of `gains`, to first order. A player settles once its strategy moves at most `tolerance` plus `settle_ulps` ulps
+`logits` of `pass`'s game, to first order. A player settles once its strategy moves at most `tolerance` plus `settle_ulps` ulps
 of its logits' spread (`FisherRaoSettled`), doubled as in `settled_strategies`. A Fisher–Rao move `d` with the first
 logit fixed moves logit `j` at most `d √(1/πⱼ + 1/π₀)`, the root of the inverse Fisher matrix's diagonal.
 """
-function settle_bound(distance::StrategyDistance{E}, gains::NormalFormGains, logits::AbstractVector)::E where {E <: Real}
+function settle_bound(distance::StrategyDistance{E}, pass::Any, logits::AbstractVector)::E where {E <: Real}
     # The probabilities read only the logits `z = λ w`, so `[z; 1]` serves at every precision.
     point = [float.(collect(logits)) .* float(1); float(1)]
     largest = zero(last(point))
-    for range in GameTracing.logit_ranges(gains)
+    for range in GameTracing.logit_ranges(pass)
         normalizer = GameTracing.log_normalizer(point, range)
         move = 2 * (distance.tolerance + distance.settle_ulps * eps(E) * last(GameTracing.fisher_rao_spread(point, point, range)))
         first_share = exp(-GameTracing.log_probability(point, 0, normalizer))
@@ -762,4 +764,10 @@ end
 """PathFollowing settings in `element` with the static solver a batch needs, and `options`."""
 function batch_settings(element::Type{<:Real}; options...)::PathFollowingSettings
     return PathFollowingSettings{element}(; linear_solver = PathFollowing.StaticLU(), options...)
+end
+
+"""PathFollowing's `Tracer` of `gains` at its flat start under `settings`, as `logit_solve` starts it (`path_init`)."""
+function started_tracer(gains::NormalFormGains, settings::PathFollowingSettings{E})::PathFollowing.Tracer{E} where {E <: Real}
+    problem = GameTracing.path_problem(gains, zeros(E, logit_count(gains)))
+    return unwrap(GameTracing.path_init(problem, settings, GameTracing.PositivePrecision(GameTracing.AcceptAll())))
 end

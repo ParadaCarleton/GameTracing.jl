@@ -405,7 +405,7 @@ end
     gains = NormalFormGains(map(table -> element.(table), payoffs))
     arms = ((PathFollowingSettings{element}(; growth_two(element)...), 1), (PathFollowingSettings{element}(; growth_two(element)..., split_check = nothing), 0))
     for (settings, refusals) in arms
-        tracer = unwrap(GameTracing.path_init(gains, settings))
+        tracer = started_tracer(gains, settings)
         tracer, _ = GameTracing.path_step!!(tracer, element(4), settings.max_steps, (;))
         _, second = GameTracing.path_step!!(tracer, element(4), settings.max_steps, (;))
         @test unwrap(second).refusals == refusals

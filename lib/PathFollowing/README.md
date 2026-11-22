@@ -20,13 +20,11 @@ function circle!!(residual, jacobian, point)
     return residual, jacobian
 end
 
-# `scale` turns the last correction into an estimate of the error left in `iterate`.
-settled(previous, iterate, residual, scale) = scale * maximum(abs.(iterate .- previous)) <= 1e-10
+# The last correction estimates the error left in `iterate`.
+settled(previous, iterate, residual) = maximum(abs.(iterate .- previous)) <= 1e-10
 
 algorithm = PseudoArclength(;
-    corrector = Newton(;
-        max_iterations = 8, converged = settled, contraction_limit = 0.5, error_estimate = ContractionEstimate(; safety = 0.1),
-    ),
+    corrector = Newton(; max_iterations = 8, converged = settled, contraction_limit = 0.5),
     step_control = StepControl(;
         target_contraction = 0.25, target_correction = 0.1, target_turn = 0.1, max_step_growth = 2.0,
         max_step = 0.5,
@@ -75,10 +73,10 @@ end
 struct Settled
     tolerance::Float32
 end
-(settled::Settled)(previous, iterate, residual, scale) = scale * maximum(abs.(iterate .- previous)) <= settled.tolerance
+(settled::Settled)(previous, iterate, residual) = maximum(abs.(iterate .- previous)) <= settled.tolerance
 
 static_algorithm = PseudoArclength(;
-    corrector = Newton(; max_iterations = 8, converged = Settled(1.0f-5), contraction_limit = 0.5f0, error_estimate = LastCorrection()),
+    corrector = Newton(; max_iterations = 8, converged = Settled(1.0f-5), contraction_limit = 0.5f0),
     step_control = StepControl(;
         target_contraction = 0.25f0, target_correction = 0.1f0, target_turn = 0.1f0, max_step_growth = 2.0f0, max_step = 0.5f0,
     ),
@@ -96,13 +94,13 @@ points = unwrap.(landing_result.(landings))
 
 ## Settings
 
-- `Newton`: the corrector's iterations, convergence test, contraction limit, error estimate and correction length.
-  `LastCorrection()` settles on the last correction. `ContractionEstimate(; safety)` also requires the error left
-  in the iterate to be at most `safety` times the tolerance.
+- `Newton`: the corrector's iterations, convergence test, contraction limit and correction length. It settles where
+  its convergence test passes the last correction. The contraction limit lies in `(0, 1/2]`: where later corrections
+  would contract as fast, the last correction bounds the error left in its iterate.
 - `StepControl`: the target contraction, first correction and turn, the largest growth (and the largest after the
   first step) and the largest step. A converged point farther than `reach` predictor lengths from its predictor
   refuses the step (`FarFromPredictor`): the corrector can land on another branch there. A move within the
-  corrector's own error bounds, in its `distance`, passes. A target first correction needs a distance that declares
+  corrector's own error estimates, in its `distance`, passes. A target first correction needs a distance that declares
   its largest length (`correction_bound`), and its refusal must lie under that length.
 - `metric`, `turn_metric`: the step metric and the turn metric, each a symmetric positive semidefinite operator
   frozen at every accepted point (`frozen_metric`). `FixedWeights` is the constant diagonal one.

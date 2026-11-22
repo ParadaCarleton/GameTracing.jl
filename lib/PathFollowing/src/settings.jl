@@ -33,89 +33,49 @@ function correction_bound(::MetricDistance, ::Type{E})::E where {E <: Real}
 end
 
 """
-    LastCorrection()
-
-`Newton`'s `error_estimate` that settles on the last correction itself: `converged` sees `scale = 1`. That correction
-bounds the error of the iterate before it, so the corrector runs one iteration past need.
-"""
-struct LastCorrection end
-
-"""
-    ContractionEstimate(; safety)
-
-`Newton`'s `error_estimate` that bounds the error left in the iterate: the last correction times `θ / (1 - θ)`, `θ`
-its ratio to the one before, over `safety` in `(0, 1]` (Hairer and Wanner, Solving Ordinary Differential Equations II,
-1996, §IV.8, take 0.01 to 0.1). The first correction has no ratio and gets `scale = 1`; a ratio of one or more gets
-`Inf`, which never settles. The corrector settles only when `converged` passes at `scale = 1` and at this scale
-(`settles`), so it is never looser than `LastCorrection()`. A slow contraction estimates its error poorly: alone, at
-`safety = 1`, the estimate let one corrector settle off the curve near a fold, which stopped the trace.
-"""
-struct ContractionEstimate{E <: Real}
-    safety::E
-    function ContractionEstimate(; safety::E)::ContractionEstimate{E} where {E <: Real}
-        0 < safety <= 1 || throw(ArgumentError(lazy"safety must be in (0, 1]; got $safety"))
-        return new{E}(safety)
-    end
-end
-
-"""
-    Newton(; max_iterations, converged, contraction_limit, error_estimate, distance = MetricDistance())
+    Newton(; max_iterations, converged, contraction_limit, distance = MetricDistance())
 
 The corrector: Newton's method on `[H(x); ⟨t, x - x̂⟩] = 0`, with `x̂` the predictor, `t` the tangent and `⟨⋅,⋅⟩` the
-step metric.
+step metric. It settles where `converged` passes its last correction, as Gambit's corrector does.
 
 - `max_iterations`: corrections before the corrector gives up and the step is refused.
-- `converged(previous, iterate, residual, scale)`: whether `iterate`, one correction from `previous`, has converged,
-  the correction times `scale` standing for the error left in `iterate`; `residual` is `H(previous)`. A `converged`
-  that settles at an infinite or NaN `scale` throws an `ArgumentError`.
-- `contraction_limit`: a correction longer than this times the one before it is refused as diverging.
-- `error_estimate`: `scale`'s source, `LastCorrection()` or `ContractionEstimate(; safety)` (`settles`).
+- `converged(previous, iterate, residual)`: whether `iterate`, one correction from `previous`, has converged;
+  `residual` is `H(previous)`.
+- `contraction_limit`: a correction longer than this times the one before it is refused as diverging. It must lie in
+  `(0, 1/2]` (`contraction_limit_in`). Where later corrections would contract as fast, the last correction then bounds
+  the error left in its iterate. Two corrections cannot show that, so the last correction only estimates that error.
 - `distance(from, to)`: a correction's length, for the contraction test, the error estimate and step control.
   `MetricDistance()` is the step metric's norm. A distance with a target first correction declares the largest length
   it measures (`correction_bound`).
+
+An estimate of the error left, `θ / (1 - θ)` times the last correction (Hairer and Wanner, Solving Ordinary
+Differential Equations II, 1996, §IV.8), settled with 6 to 18% fewer corrections. Over 2502 benchmark traces it failed
+16 times against 12. Its median Float64 branch error rose from 5e-14 to 4e-12. A guard on the estimate, a bound on `θ`
+or a falling `θ`, settled no more traces and added branch error.
 """
-struct Newton{C, E <: Real, R <: Union{LastCorrection, ContractionEstimate{E}}, D}
+struct Newton{C, E <: Real, D}
     max_iterations::Int
     converged::C
     contraction_limit::E
-    error_estimate::R
     distance::D
 end
 
 function Newton(;
-        max_iterations::Integer, converged::C, contraction_limit::E, error_estimate::R, distance::D = MetricDistance(),
-    )::Newton{C, E, R, D} where {C, E <: Real, R <: Union{LastCorrection, ContractionEstimate}, D}
-    # The bound ties `R`'s float type to `E` only on the struct: a keyword method's bound cannot name `E`.
+        max_iterations::Integer, converged::C, contraction_limit::E, distance::D = MetricDistance(),
+    )::Newton{C, E, D} where {C, E <: Real, D}
     max_iterations >= 1 || throw(ArgumentError(lazy"max_iterations must be at least 1; got $max_iterations"))
-    contraction_limit > 0 || throw(ArgumentError(lazy"contraction_limit must be positive; got $contraction_limit"))
-    return Newton{C, E, R, D}(Int(max_iterations), converged, contraction_limit, error_estimate, distance)
+    return Newton{C, E, D}(Int(max_iterations), converged, contraction_limit_in(E, contraction_limit), distance)
 end
 
 """
-Whether the corrector settles at `iterate`, one correction from `previous`, at error `scale` (`error_scale`).
-`LastCorrection` asks `converged` at `scale`. `ContractionEstimate` also asks at scale 1 first: the last correction
-must pass on its own, as in Gambit's tracer (path.cc), and the estimated error must pass too.
+`limit` in `E`, which must lie in `(0, 1/2]` there. Past 1/2, corrections that keep contracting by `θ` leave
+`θ / (1 - θ) > 1` times the last one in its iterate, so even then a settled last correction would not bound that error.
 """
-function settles(::LastCorrection, converged::Any, previous::V, iterate::V, residual::AbstractVector{E}, scale::E)::Bool where {E <: Real, V <: AbstractVector{E}}
-    return converged(previous, iterate, residual, scale)
+function contraction_limit_in(::Type{E}, limit::Real)::E where {E <: Real}
+    converted = E(limit)
+    zero(E) < converted <= one(E) / 2 || throw(ArgumentError(lazy"contraction_limit must lie in (0, 1/2] in $E; got $limit"))
+    return converted
 end
-
-function settles(::ContractionEstimate{E}, converged::Any, previous::V, iterate::V, residual::AbstractVector{E}, scale::E)::Bool where {E <: Real, V <: AbstractVector{E}}
-    return converged(previous, iterate, residual, one(E)) && converged(previous, iterate, residual, scale)
-end
-
-"""The `scale` `converged` sees after a correction of length `correction` that followed one of length `before`."""
-function error_scale(::LastCorrection, ::E, ::E)::E where {E <: Real}
-    return one(E)
-end
-
-function error_scale(estimate::ContractionEstimate{E}, correction::E, before::E)::E where {E <: Real}
-    # The first correction follows a NaN `before`.
-    isnan(before) && return one(E)
-    ratio = correction / before
-    return ratio < 1 ? ratio / ((1 - ratio) * estimate.safety) : E(Inf32)
-end
-
 """
     StepControl(; target_contraction, target_correction, target_turn, max_step_growth, max_step, refusal_factor = 2,
                 shrink = 1/2, reach = 3)
@@ -133,7 +93,7 @@ and `δ` when the corrector diverged or ran out of iterations, none (so `1 / shr
 A converged point farther than `reach` predictor lengths from its predictor, in the step metric, is refused
 (`FarFromPredictor`) and retried at `shrink` times the length. Such a corrector left the curve the predictor followed,
 and its point can lie on another branch. A move within the corrector's noise passes: in `Newton`'s `distance`, at most
-the error bounds of the start and of the point, each `scale` times its last correction. Each point settles only to its
+the last corrections of the start and of the point, which estimate their errors. Each point settles only to its
 tolerance, so at short steps the start's own error moves the corrector past the reach. On 300 unfolded pitchforks per
 scale (battle of the sexes plus `0.1 randn` payoffs), steps that kept the branch moved at most 1.86 lengths, and the 3
 that jumped moved 4.2 to 5.09. `reach = Inf`

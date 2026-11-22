@@ -63,9 +63,9 @@ end
     Tracer
 
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`, the
-accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the corrector's bound on the
-error left at `point` (`settle_error`; zero at the start), the step and turn metrics frozen at `point`, the work arrays
-(`Workspace`) and the linear solver's state. `init` builds one and `step!!` advances it.
+accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the corrector's estimate of
+the error left at `point` (`settle_error`; zero at the start), the step and turn metrics frozen at `point`, the work
+arrays (`Workspace`) and the linear solver's state. `init` builds one and `step!!` advances it.
 
 Its arrays take the start's array type: `similar` arrays on the start's device for a mutable start, static arrays for a
 static one. A step changes mutable arrays in place, so use only the tracer it returns. Read its fields; do not write
@@ -205,15 +205,14 @@ function step!!(
 end
 
 """
-One step attempt's verdict and, when accepted, its corrector's figures, the `scale` its convergence test saw, its
-turn, its step factor and the orientation sign at its point.
+One step attempt's verdict and, when accepted, its corrector's figures, its turn, its step factor and the orientation
+sign at its point.
 """
 struct Attempt{E <: Real}
     refusal::Refusal
     iterations::Int
     contraction::E
     first_correction::E
-    error_scale::E
     turn::E
     factor::E
     orientation::Int8
@@ -221,7 +220,7 @@ end
 
 """A refused `Attempt` for `refusal`, with the step `factor` its measurements gave (zero for none)."""
 function refused(::Type{E}, refusal::Refusal, factor::E = zero(E))::Attempt{E} where {E <: Real}
-    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), E(NaN32), factor, Int8(0))
+    return Attempt{E}(refusal, 0, E(NaN32), E(NaN32), E(NaN32), factor, Int8(0))
 end
 
 """Whether `point` lies on `bound`; never without one."""
@@ -282,7 +281,7 @@ function attempt_step!!(tracer::T, bound::Union{Nothing, Bound{E}}, lands::Bool,
     end
     tracer, corrected = correct!!(tracer)
     corrected.refusal == NoRefusal || return tracer, corrected
-    far_from_predictor(tracer, taken, corrected.error_scale) && return tracer, refused(E, FarFromPredictor)
+    far_from_predictor(tracer, taken) && return tracer, refused(E, FarFromPredictor)
     tracer, past = past_bound!!(tracer, bound, lands)
     past && return tracer, refused(E, PastBound)
     algorithm.accept(tracer.point, tracer.work.predicted, tracer.work.iterate) || return tracer, refused(E, AcceptRefused)
@@ -297,7 +296,7 @@ function attempt_step!!(tracer::T, bound::Union{Nothing, Bound{E}}, lands::Bool,
     flip_refused(algorithm.orientation_check, tracer.orientation, orientation) && return tracer, refused(E, OrientationFlip)
     tracer, split = split_refused!!(tracer, algorithm.split_check, factor, bound, lands, taken)
     split && return tracer, refused(E, SplitMismatch)
-    return tracer, Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, corrected.error_scale, turn, factor, orientation)
+    return tracer, Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
 end
 
 """
@@ -406,43 +405,32 @@ function correct!!(tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Trace
         if iteration > 1 && !(correction <= corrector.contraction_limit * before)
             return tracer, refused(E, Diverging, step_factor(step_control, contraction, first_correction, E(NaN32)))
         end
-        scale = error_scale(corrector.error_estimate, correction, before)
-        before = correction
-        if settles(corrector.error_estimate, corrector.converged, tracer.work.previous, tracer.work.iterate, tracer.work.residual, scale)
-            return tracer, Attempt{E}(NoRefusal, iteration, contraction, first_correction, settled_scale(scale), E(NaN32), E(NaN32), Int8(0))
+        if corrector.converged(tracer.work.previous, tracer.work.iterate, tracer.work.residual)
+            return tracer, Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32), Int8(0))
         end
+        before = correction
     end
     return tracer, refused(E, NotConverged, step_factor(step_control, contraction, first_correction, E(NaN32)))
 end
 
 """
-`scale` at a converged iterate. A `converged` that settles at a scale that is not finite and non-negative throws an
-`ArgumentError`: an infinite scale would bound the error by Inf, and the reach would pass any move.
+The corrector's estimate of the error left at `to`, one correction from `from`: that correction's length
+(`correction_length`), which its convergence test holds under its tolerance (`Newton`, `contraction_limit`).
 """
-function settled_scale(scale::E)::E where {E <: Real}
-    # A throw: the fault lies in `converged`, and a refusal would only shrink the step until `TooManyRefusals`.
-    isfinite(scale) && scale >= 0 || throw(ArgumentError(lazy"converged settled at scale $scale; it may settle only at a finite, non-negative scale"))
-    return scale
-end
-
-"""
-The corrector's bound on the error left at `to`, one correction from `from`: `scale` (Newton's, at convergence) times
-that correction's length (`correction_length`). Its convergence test holds that product under its tolerance.
-"""
-function settle_error(tracer::Tracer{E}, scale::E, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return scale * correction_length(tracer.algorithm.corrector.distance, tracer, from, to)
+function settle_error(tracer::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return correction_length(tracer.algorithm.corrector.distance, tracer, from, to)
 end
 
 """
 Whether the corrected point lies farther than step control's `reach` times `taken` from its predictor in the step
-metric, by more than the corrector's noise. The noise is the move, in Newton's `distance`, within the error bounds of
-the start and of the point (`settle_error`, the point's from its convergence `scale`). A NaN move is far.
+metric, by more than the corrector's noise. The noise is the move, in Newton's `distance`, within the error estimates of
+the start and of the point (`settle_error`). A NaN move is far.
 A move that `distance` measures as zero passes, by intent: in GameTracing such a move leaves every strategy unchanged.
 """
-function far_from_predictor(tracer::Tracer{E}, taken::E, scale::E)::Bool where {E <: Real}
+function far_from_predictor(tracer::Tracer{E}, taken::E)::Bool where {E <: Real}
     (; algorithm, work) = tracer
     metric_distance(tracer.metric, work.scratch, work.predicted, work.iterate) <= algorithm.step_control.reach * taken && return false
-    noise = tracer.settle_error + settle_error(tracer, scale, work.previous, work.iterate)
+    noise = tracer.settle_error + settle_error(tracer, work.previous, work.iterate)
     return !(correction_length(algorithm.corrector.distance, tracer, work.predicted, work.iterate) <= noise)
 end
 
@@ -517,7 +505,7 @@ function accept_point!!(tracer::T, attempt::Attempt{E}, taken::E)::T where {E <:
     @reset tracer.metric = freeze_metric!!(tracer.metric, tracer.point)
     @reset tracer.turn_metric = freeze_metric!!(tracer.turn_metric, tracer.point)
     # Measured after the freeze, as the next reach check measures. Only `correct!!` writes `previous`: the iterate before.
-    @reset tracer.settle_error = settle_error(tracer, attempt.error_scale, tracer.work.previous, tracer.point)
+    @reset tracer.settle_error = settle_error(tracer, tracer.work.previous, tracer.point)
     @reset tracer.tangent = Into(tracer.tangent) .= tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)
     @reset tracer.step_length = min(taken / max(attempt.factor, inv(max_step_growth)), max_step)
     @reset tracer.steps = tracer.steps + 1

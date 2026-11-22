@@ -26,12 +26,12 @@ using LinearSolve: LinearSolve
 using SciMLBase: SciMLBase
 using StaticArrays: StaticArrays, SArray, SMatrix, StaticArray, StaticVector, SVector, setindex
 
-export CurveProblem, PseudoArclength, Newton, LastCorrection, ContractionEstimate, StepControl, DeterminantSign, FixedWeights, StaticLU
+export CurveProblem, PseudoArclength, Newton, StepControl, DeterminantSign, FixedWeights, StaticLU
 export Metric, MetricDistance, HalfStepCheck, correction_bound, frozen_metric, freeze_metric!!, metric_inner, metric_apply!!
 export Tracer, Workspace, AcceptedStep, StepFailure, Refusal, Bound, Into, step!!, land!!, land_batch, Landing, landing_result
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor, SplitMismatch
-# For wrappers that convert their own `reach` before they build a `StepControl`.
-public reach_in
+# For wrappers that convert their own `reach` and contraction limit before they build a `StepControl` and a `Newton`.
+public reach_in, contraction_limit_in
 # For wrappers that share its optional budgets.
 public checked_limit, limit_reached
 

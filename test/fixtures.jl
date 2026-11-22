@@ -47,6 +47,16 @@ const FOLD_PAST_ONE_GAME = (
     [-2799332 3279993 -411480; -2686956 -3254749 1100361;;; -6313397 5003338 2269424; -1033173 -1135836 -1219361] .// 10^6,
 )
 
+# Three players, two actions each: game 13 of `two_action_games(Xoshiro(0xc587c80c0dfbd7af))` (CI run 45012096975),
+# rounded to 1e-12. Its branch peaks at precision 3.1218, folds back to 2.88 and rises again. Gambit's default
+# steps round the tip and land on a later crossing of LogitNash's stop, 3.0966; its finer rungs and every engine land
+# on the first.
+const FOLD_TIP_PAST_TARGET_GAME = (
+    [182713250041 2158063723311; -509985000343 -3554776817192;;; -1397360001646 1895880033789; -3736109443616 1652262021377] .// 10^12,
+    [613327156395 3606805556121; -5217522444019 1917558507195;;; 2528559833607 4379355512748; 1727740987577 -37862414127] .// 10^12,
+    [3658829584287 961636140413; -5888673011136 -3082119377831;;; -186330884657 1406494926128; 1832166766850 1031811671079] .// 10^12,
+)
+
 # Two players, three actions each (a random draw, rounded to 1e-6). Gambit's branch takes 926199 points and 172 s on
 # macdev to reach regret 1e-12, near λ 3.5e10; 41 points reach precision 4.
 const SLOW_REGRET_GAME = (

@@ -31,8 +31,8 @@ end
     LogProbabilitySettled(ranges, tolerance, rounding)
 
 PathFollowing's `converged` over points `[w; λ]`, each player's logits in its range of `ranges` (`logit_ranges`). The
-last correction, times Newton's `scale`, moves the profile at most `tolerance` in Gambit's norm, past `rounding` times
-each strategy's rounding scale (`log_probability_corrections`). Tuple ranges make it isbits.
+last correction moves the profile at most `tolerance` in Gambit's norm, past `rounding` times each strategy's rounding
+scale (`log_probability_corrections`). Tuple ranges make it isbits.
 """
 struct LogProbabilitySettled{R, E <: Real}
     ranges::R
@@ -40,8 +40,8 @@ struct LogProbabilitySettled{R, E <: Real}
     rounding::E
 end
 
-function (settled::LogProbabilitySettled{R, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {R, E <: Real}
-    return last(log_probability_corrections(previous, iterate, settled.ranges, settled.rounding, scale)) <= settled.tolerance
+function (settled::LogProbabilitySettled{R, E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {R, E <: Real}
+    return last(log_probability_corrections(previous, iterate, settled.ranges, settled.rounding, one(E))) <= settled.tolerance
 end
 
 """
@@ -64,9 +64,9 @@ function CorrectorDistance{E}(;
 end
 
 """
-    PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, error_estimate,
-                             target_contraction, target_turn, max_step_growth, reach, orientation_check, split_check,
-                             max_refusals, min_step_ulps, step_metric, linear_solver, endpoint_tolerance, endpoint_ulps)
+    PathFollowingSettings{E}(; max_step, max_steps, distance, newton_iterations, contraction_limit, target_contraction,
+                             target_turn, max_step_growth, reach, orientation_check, split_check, max_refusals,
+                             min_step_ulps, step_metric, linear_solver, endpoint_tolerance, endpoint_ulps)
 
 The controls of a trace on PathFollowing's pseudo-arclength continuation, an `EngineSettings` for `logit_solve` and
 `trace_endpoint`. The trace runs in `[w; λ]`, the payoff gaps `w = z / λ` and the precision `λ`.
@@ -78,9 +78,8 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
   no limit. Each accepted step moves the point past its rounding (`min_step_ulps`), and a step that cannot fails.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: Gambit's norm in log probabilities. It carries
   the corrector's settle tolerance and step control's target correction.
-- `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
-  `distance`. `LastCorrection()` settles on the last correction, as Gambit does. `ContractionEstimate(; safety)` also
-  needs the error left in the iterate to be at most `safety` times the settle tolerance. Its numbers convert to `E`.
+- `newton_iterations`, `contraction_limit`: PathFollowing's `Newton`, its corrections under `distance`. It settles
+  on the last correction, as Gambit does. The contraction limit must lie in `(0, 1/2]`.
 - `target_contraction`, `target_turn`, `max_step_growth`, `reach`: PathFollowing's `StepControl`; `nothing` drops a
   target. The turn target is in radians under `step_metric`. A converged point farther than `reach` step lengths from
   its predictor refuses the step, as one that jumped to another branch, unless `distance` puts the move within the
@@ -116,7 +115,6 @@ struct PathFollowingSettings{E <: Real, L} <: EngineSettings{E}
     distance::CorrectorDistance{E}
     newton_iterations::Int
     contraction_limit::E
-    error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate{E}}
     target_contraction::Union{Nothing, E}
     target_turn::Union{Nothing, E}
     max_step_growth::E
@@ -131,15 +129,13 @@ struct PathFollowingSettings{E <: Real, L} <: EngineSettings{E}
     endpoint_ulps::Int
 end
 
-# Without the orientation check, five of ten logitnash_speed.jl games ran back. ContractionEstimate alone at safety 1
-# lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error; it now also needs the last correction to pass.
+# Without the orientation check, five of ten logitnash_speed.jl games ran back.
 function PathFollowingSettings{E}(;
         max_step::Real = Inf32,
         max_steps::Union{Nothing, Integer} = nothing,
         distance::CorrectorDistance{E} = CorrectorDistance{E}(),
         newton_iterations::Integer = 8,
         contraction_limit::Real = 0.5f0,
-        error_estimate::Union{PathFollowing.LastCorrection, PathFollowing.ContractionEstimate} = PathFollowing.ContractionEstimate(; safety = 0.2f0),
         target_contraction::Union{Nothing, Real} = 0.25f0,
         # Step control refuses past twice the target: π/2, Gambit's refusal of a tangent that turns back (`t·newT < 0`).
         target_turn::Union{Nothing, Real} = π / 4,
@@ -159,8 +155,9 @@ function PathFollowingSettings{E}(;
         endpoint_ulps::Integer = 16,
     )::PathFollowingSettings{E, L} where {E <: Real, L}
     return PathFollowingSettings{E, L}(
-        E(max_step), PathFollowing.checked_limit(:max_steps, max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
-        optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
+        E(max_step), PathFollowing.checked_limit(:max_steps, max_steps), distance, Int(newton_iterations),
+        PathFollowing.contraction_limit_in(E, contraction_limit), optional_limit(E, target_contraction),
+        optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
         split_check, PathFollowing.checked_limit(:max_refusals, max_refusals), Int(min_step_ulps), step_metric, linear_solver,
         E(endpoint_tolerance), Int(endpoint_ulps),
     )
@@ -183,12 +180,6 @@ function default_split_check(distance::CorrectorDistance{E})::PathFollowing.Half
         ),
     )
     return PathFollowing.HalfStepCheck{E}(; trigger = 13 // 10, tolerance = 10 * distance.tolerance)
-end
-
-"""`estimate` with its numbers in `E`."""
-estimate_in(::Type{<:Real}, estimate::PathFollowing.LastCorrection)::PathFollowing.LastCorrection = estimate
-function estimate_in(::Type{E}, estimate::PathFollowing.ContractionEstimate)::PathFollowing.ContractionEstimate{E} where {E <: Real}
-    return PathFollowing.ContractionEstimate(; safety = E(estimate.safety))
 end
 
 """`limit` in `E`, or `nothing` where it is off."""
@@ -266,7 +257,6 @@ function path_algorithm(
             max_iterations = settings.newton_iterations,
             converged = settle_test(settings.distance, measure),
             settings.contraction_limit,
-            settings.error_estimate,
             distance = measure,
         ),
         step_control = PathFollowing.StepControl(;
@@ -567,7 +557,7 @@ function verified_landing(tracer::PathFollowing.Tracer{E}, tolerance::E, ulps::I
     precision = last(point)
     ranges = checked_ranges(logit_ranges(game.pass!!), length(point) - 1)
     correction, excess = log_probability_corrections(point, corrected, ranges, ulps * eps(E), one(E))
-    settled = tracer.algorithm.corrector.converged(point, corrected, residual, one(E))
+    settled = tracer.algorithm.corrector.converged(point, corrected, residual)
     if !(settled && excess <= tolerance)
         stall = StalledCorrection(precision, correction, corrected, precision, zero(E))
         return Err(TraceFailure(TraceCause.PrecisionExhausted(AtEndpoint, stall), tracer, context))

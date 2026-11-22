@@ -54,8 +54,8 @@ Each start must be static (an `SVector`), with `linear_solver = StaticLU()`, and
 
 An exception in a work item aborts the whole launch, so the host checks the inputs first (`check_batch`). A device
 cannot catch an exception, so a callback that throws in a work item still aborts the batch: `system!!`, `converged`,
-`distance`, `accept` or a metric. So do an invalid convergence scale (`Newton`) and a `system!!` that returns other
-array types at another point. The backend must define `KernelAbstractions.synchronize`; JLArrays 0.3 does not.
+`distance`, `accept` or a metric. So does a `system!!` that returns other array types at another point. The backend
+must define `KernelAbstractions.synchronize`; JLArrays 0.3 does not.
 """
 function land_batch(
         problems::AbstractVector{<:CurveProblem{<:Any, V}},

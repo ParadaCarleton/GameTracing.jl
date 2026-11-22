@@ -17,7 +17,7 @@ Owned files:
 
 Read first:
 - `lib/PathFollowing/README.md`
-- `lib/PathFollowing/src/settings.jl`: `Newton`, `ContractionEstimate`, `StepControl`
+- `lib/PathFollowing/src/settings.jl`: `Newton`, `StepControl`
 - memory: defaults-strictness-ruling, no-arbitrary-caps, engine-defaults-consistent, fold-stall-not-coordinates, opening-masked-by-halving
 
 You may read any file. Edit outside your slice only for a change your task needs, and name it in your report.

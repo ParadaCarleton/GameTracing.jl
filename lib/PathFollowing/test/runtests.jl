@@ -113,16 +113,6 @@ function PathFollowing.correction_bound(::CappedMove, ::Type{E})::E where {E <: 
 end
 
 """
-The unit circle with its Jacobian reported at a tenth of its size: Newton overshoots, and each correction outgrows the
-one before it.
-"""
-struct Overshoot end
-
-function (::Overshoot)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return one_row!!(residual, jacobian, point[1]^2 + point[2]^2 - 1, (point[1] / 5, point[2] / 5))
-end
-
-"""
 The parabola `x = y²/2` and the line `x = -1/5`: `H = (x - y²/2)(x + 1/5)`. Up from the origin, a step of 1 corrects
 onto the line at `(-1/5, 1)`. Its half steps keep the parabola and reach `(1/2, 1)`.
 """
@@ -152,21 +142,8 @@ function PathFollowing.correction_bound(::BandAvoidingMove, ::Type{E})::E where 
     return E(Inf32)
 end
 
-"""
-A `converged` that ignores its contract and settles where `scale` is infinite. It also passes the last-correction test
-(`scale = 1`) after its first call, so `ContractionEstimate` reaches the infinite scale (`settles`).
-"""
-struct SettlesAtInfiniteScale
-    calls::Base.RefValue{Int}
-end
-
-function (settled::SettlesAtInfiniteScale)(::AbstractVector, ::AbstractVector, ::AbstractVector, scale::Real)::Bool
-    settled.calls[] += 1
-    return settled.calls[] > 1 && (isone(scale) || isinf(scale))
-end
-
 """A `converged` that never holds."""
-never(::AbstractVector, ::AbstractVector, ::AbstractVector, ::Real)::Bool = false
+never(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = false
 
 """`tracer` after two steps toward `bound`, and the bytes the second, warm `step!!` allocates."""
 function warm_bytes(tracer::T, bound::Union{Nothing, Bound})::Tuple{T, Int} where {T <: Tracer}
@@ -207,15 +184,15 @@ function static_algorithm(::Type{E}; overrides...)::PseudoArclength where {E <: 
     return algorithm(E; metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU(), overrides...)
 end
 
-"""Converged when the correction, times `scale`, moved no coordinate more than `tolerance`."""
+"""Converged when the correction moved no coordinate more than `tolerance`."""
 struct Settled{E <: Real}
     tolerance::E
 end
 
-function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E}, scale::E)::Bool where {E <: Real}
+function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {E <: Real}
     # A lazy broadcast: one reduction on a GPU array, and no allocation on the CPU.
     moves = Broadcast.instantiate(Broadcast.broadcasted((from, to) -> abs(to - from), previous, iterate))
-    return scale * mapreduce(identity, max, moves; init = zero(E)) <= settled.tolerance
+    return mapreduce(identity, max, moves; init = zero(E)) <= settled.tolerance
 end
 
 """
@@ -249,10 +226,20 @@ function PathFollowing.metric_apply!!(out::V, frozen::CountingFrozen{E}, vector:
     return Into(out) .= frozen.weights .* vector
 end
 
+"""
+The tracer and its `AcceptedStep` after a half step up the unit circle from `(1, 0)`, with no step-control targets, its
+corrector settling at `settle`.
+"""
+function half_circle_step(settle::E)::Tuple{Tracer, AcceptedStep} where {E <: Real}
+    control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
+    corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2)
+    return accepted(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control = control); first_step = one(E) / 2)))
+end
+
 """A `PseudoArclength` in `E` with Euclidean metrics and the given overrides."""
 function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::PseudoArclength where {E <: Real}
     defaults = (;
-        corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2, error_estimate = LastCorrection()),
+        corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2),
         step_control = StepControl(;
             target_contraction = one(E) / 4, target_correction = one(E) / 10, target_turn = one(E) / 10,
             max_step_growth = E(2), max_step = one(E) / 2,
@@ -468,13 +455,13 @@ end
     end
 
     @testset "one Newton iteration is not enough on a curved branch" begin
-        settings = algorithm(E; corrector = Newton(; max_iterations = 1, converged = never, contraction_limit = one(E), error_estimate = LastCorrection()), max_refusals = 0)
+        settings = algorithm(E; corrector = Newton(; max_iterations = 1, converged = never, contraction_limit = one(E) / 2), max_refusals = 0)
         failure = unwrap_error(traced(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings, 1; first_step = E(1) / 10))
         @test failure.last_refusal == NotConverged
     end
 
     @testset "a tiny contraction limit refuses as diverging" begin
-        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = never, contraction_limit = eps(E), error_estimate = LastCorrection()), max_refusals = 0)
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = never, contraction_limit = eps(E)), max_refusals = 0)
         failure = unwrap_error(traced(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings, 1; first_step = E(1) / 10))
         @test failure.last_refusal == Diverging
     end
@@ -514,43 +501,35 @@ end
         @test tracer.step_length == E(2) / 1000
     end
 
-    @testset "ContractionEstimate settles only where the last correction and the error left in the iterate both pass" begin
-        halved = ContractionEstimate(; safety = one(E) / 2)
-        @test PathFollowing.error_scale(LastCorrection(), E(1) / 4, one(E)) == 1
-        @test PathFollowing.error_scale(halved, E(1) / 4, E(NaN32)) == 1
-        @test PathFollowing.error_scale(halved, E(1) / 4, one(E)) ≈ E(2) / 3
-        @test PathFollowing.error_scale(halved, one(E), one(E)) == Inf
-        @test_throws ArgumentError ContractionEstimate(; safety = zero(E))
-        @test_throws ArgumentError ContractionEstimate(; safety = E(2))
-        @test_throws TypeError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = ContractionEstimate(; safety = big(1)))
-        # A half step up the unit circle corrects by 0.125, 8.9e-3 and 4.6e-5. At tolerance 2e-3, θ/(1-θ) times the
-        # second correction, 6.9e-4, passes at safety 1, but the second correction itself does not, so none settles there.
-        settle = E(1) / 500
-        control = StepControl(;
-            target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2),
-            max_step = E(1),
-        )
-        estimates = (LastCorrection(), ContractionEstimate(; safety = one(E) / 10), ContractionEstimate(; safety = one(E)))
-        iterations = map(estimates) do error_estimate
-            corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2, error_estimate)
-            tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control = control); first_step = E(1) / 2))
-            tracer, step = accepted(tracer)
+    @testset "the corrector settles where its last correction passes, and that correction is the settle error" begin
+        # A half step up the unit circle corrects by 0.125, 8.9e-3, 4.6e-5 and about 1e-9.
+        for (settle, iterations) in ((one(E) / 500, 3), (one(E) / 50_000, 4))
+            tracer, step = half_circle_step(settle)
+            @test step.iterations == iterations
             @test abs(hypot(tracer.point...) - 1) <= settle
-            step.iterations
+            @test tracer.settle_error ≈ hypot((tracer.point .- tracer.work.previous)...)
+            @test tracer.settle_error <= settle
         end
-        @test iterations == (3, 3, 3)
-        # The estimate passes and the last correction fails: no settle. Both pass: settle.
-        previous, iterate, residual = E[0], E[1], E[0]
-        estimate = ContractionEstimate(; safety = one(E))
-        @test !PathFollowing.settles(estimate, Settled(one(E) / 2), previous, iterate, residual, one(E) / 4)
-        @test PathFollowing.settles(LastCorrection(), Settled(one(E) / 2), previous, iterate, residual, one(E) / 4)
-        @test PathFollowing.settles(estimate, Settled(one(E)), previous, iterate, residual, one(E) / 4)
-        # The last correction passes and the estimate fails: no settle.
-        @test !PathFollowing.settles(estimate, Settled(one(E)), previous, iterate, residual, E(2))
+    end
+
+    @testset "property: an accepted point's last correction passed the settle tolerance, and it is the settle error" begin
+        stretches = Data.Floats{E}(; minimum = E(1) / 4, maximum = E(4), nans = false, infs = false)
+        steps = Data.Floats{E}(; minimum = E(1) / 100, maximum = E(1) / 2, nans = false, infs = false)
+        exponents = Data.Integers(2, 6)
+        @check max_examples = 50 function settled_last(stretch = stretches, first_step = steps, exponent = exponents)
+            settle = max(one(E) / 10^exponent, 100 * eps(E))
+            ellipse!! = (residual, jacobian, point) -> one_row!!(residual, jacobian, point[1]^2 + (point[2] / stretch)^2 - 1, (2 * point[1], 2 * point[2] / stretch^2))
+            problem = CurveProblem(ellipse!!, E[1, 0], E[0, 1])
+            control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
+            corrector = Newton(; max_iterations = 8, converged = Settled(settle), contraction_limit = one(E) / 2)
+            tracer, _ = accepted(unwrap(init(problem, algorithm(E; corrector, step_control = control); first_step)))
+            moves = abs.(tracer.point .- tracer.work.previous)
+            maximum(moves) <= settle && isapprox(tracer.settle_error, hypot(moves...); rtol = sqrt(eps(E)))
+        end
     end
 
     @testset "a custom distance measures corrections" begin
-        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = LargestMove()))
+        settings = algorithm(E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, distance = LargestMove()))
         _, step = accepted(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), settings; first_step = E(1) / 10)))
         @test step.first_correction > 0
     end
@@ -568,29 +547,18 @@ end
         @test isa_variant(failure, StepFailure.TooManyRefusals) && failure.last_refusal == FarFromPredictor
     end
 
-    @testset "a start settled by a long correction allows no long move: the allowance is the corrector's error bound" begin
+    @testset "a start settled by a long correction allows no long move: the allowance is the corrector's error estimate" begin
         tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 100))
         # A step of 1/100 at reach 3, and a converged point 1/2 from its predictor (50 lengths), its last correction zero.
         tracer.work.predicted .= E[1, 1 // 100]
         tracer.work.iterate .= E[3 // 2, 1 // 100]
         copyto!(tracer.work.previous, tracer.work.iterate)
-        # The start settled by a correction of length 1, at a convergence scale that bounds its error by 1/1000.
-        @reset tracer.settle_error = PathFollowing.settle_error(tracer, E(1) / 1000, E[2, 0], E[1, 0])
-        @test PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
-        # An error bound of 1, as a tolerance of 1 allows, cannot tell that move from the corrector's noise.
-        @reset tracer.settle_error = PathFollowing.settle_error(tracer, one(E), E[2, 0], E[1, 0])
-        @test !PathFollowing.far_from_predictor(tracer, E(1) / 100, one(E))
-    end
-
-    @testset "a converged that settles at an infinite scale throws, as its error bound would pass any move" begin
-        # Without the check, the step was accepted 4.1 predictor lengths from its predictor, off the curve, with an error
-        # bound of Inf for every later step.
-        corrector = Newton(; max_iterations = 8, converged = SettlesAtInfiniteScale(Ref(0)), contraction_limit = E(100), error_estimate = ContractionEstimate(; safety = E(1) / 5))
-        step_control = StepControl(; target_contraction = nothing, target_correction = nothing, target_turn = nothing, max_step_growth = E(2), max_step = one(E))
-        tracer = unwrap(init(CurveProblem(Overshoot(), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control, orientation_check = nothing); first_step = E(1) / 10))
-        @test_throws ArgumentError step!!(tracer)
-        @test_throws ArgumentError PathFollowing.settled_scale(E(NaN32))
-        @test PathFollowing.settled_scale(zero(E)) == 0
+        # The start settled by a last correction of length 1/1000, which bounds its error.
+        @reset tracer.settle_error = PathFollowing.settle_error(tracer, E[1 + 1 // 1000, 0], E[1, 0])
+        @test PathFollowing.far_from_predictor(tracer, E(1) / 100)
+        # A last correction of length 1, as a tolerance of 1 allows, cannot tell that move from the corrector's noise.
+        @reset tracer.settle_error = PathFollowing.settle_error(tracer, E[2, 0], E[1, 0])
+        @test !PathFollowing.far_from_predictor(tracer, E(1) / 100)
     end
 
     @testset "a step that corrects onto another branch is refused by its half steps, and its retry keeps the branch" begin
@@ -613,7 +581,7 @@ end
 
     @testset "a failed half step refuses before the distance sees its rejected point, and the buffers come back" begin
         check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
-        corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = BandAvoidingMove())
+        corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, distance = BandAvoidingMove())
         banded(max_refusals) = untargeted(BandedLine(), E[0, 0], E[0, 1]; first_step = 1, corrector, split_check = check, max_refusals)
         failure = failed_step(banded(0))
         @test isa_variant(failure, StepFailure.TooManyRefusals) && failure.last_refusal == SplitMismatch
@@ -653,7 +621,7 @@ end
 
     @testset "a first-correction refusal past the distance's largest length cannot fire, and throws" begin
         capped(target) = algorithm(
-            E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, error_estimate = LastCorrection(), distance = CappedMove()),
+            E; corrector = Newton(; max_iterations = 8, converged = Settled(tolerance), contraction_limit = one(E) / 2, distance = CappedMove()),
             step_control = StepControl(; target_contraction = nothing, target_correction = target, target_turn = nothing, max_step_growth = E(2), max_step = one(E)),
         )
         # The refusal factor 2 refuses a first correction past 4 times the target.
@@ -798,8 +766,15 @@ end
     end
 
     @testset "argument checks" begin
-        @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E), error_estimate = LastCorrection())
-        @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = zero(E), error_estimate = LastCorrection())
+        @test_throws ArgumentError Newton(; max_iterations = 0, converged = Settled(tolerance), contraction_limit = one(E) / 2)
+        # Past 1/2, a correction that passes the tolerance can leave more than its own length in its iterate.
+        for limit in (zero(E), nextfloat(one(E) / 2), E(NaN32))
+            @test_throws ArgumentError Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = limit)
+        end
+        @test Newton(; max_iterations = 1, converged = Settled(tolerance), contraction_limit = one(E) / 2).contraction_limit === one(E) / 2
+        # Checked in `E`: a wider limit an ulp past 1/2 rounds to 1/2 there.
+        @test PathFollowing.contraction_limit_in(E, nextfloat(one(widen(E)) / 2)) === one(E) / 2
+        @test_throws ArgumentError PathFollowing.contraction_limit_in(E, nextfloat(zero(widen(E))))
         targets = (; target_contraction = nothing, target_correction = nothing, target_turn = nothing)
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E) / 2, max_step = one(E))
         @test_throws ArgumentError StepControl(; targets..., max_step_growth = one(E), max_step = zero(E))

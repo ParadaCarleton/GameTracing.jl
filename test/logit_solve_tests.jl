@@ -629,6 +629,16 @@ end
     end
 end
 
+@testset "a regret trace at its target unsettled fails PrecisionExhausted there ($engine, $element)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
+    gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
+    # A zero tolerance never settles, and a target of 2 comes long before a stall.
+    recorder = GameTracing.BranchRecorder(gains, zero(element), GameTracing.DEFAULT_STALL_WINDOW)
+    ended = GameTracing.engine_points(gains, settings, element(2), recorder, (;))
+    @test !is_error(ended) && last(recorder.precisions) == 2
+    failure = unwrap_error(GameTracing.branch_outcome(recorder, ended, (;)))
+    @test failed_as(failure, TraceCause.PrecisionExhausted) && failure.cause.stage == GameTracing.AtEndpoint && failure.stop.precision == 2
+end
+
 @testset "a trace past its regret floor fails PrecisionExhausted at its stall, with no cap ($engine, $element)" for element in (Float32, widen(Float32)), (engine, settings) in engine_settings(element)
     gains = NormalFormGains(map(table -> element.(table), SLOW_REGRET_GAME))
     # Far under the regret either float type reaches on this game; with no stall check a trace creeps at its floor.

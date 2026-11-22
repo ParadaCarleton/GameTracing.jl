@@ -353,10 +353,10 @@ end
 
 pygambit's `logit_solve_branch`: every accepted point of the principal branch of the normal-form game `gains`, from
 the first step to the first point where no player's regret passes `maxregret` times the payoff range. As in Gambit, no
-λ cap ends the trace. Its target, `precision_ceiling`, only makes the target finite. For a set precision, use
-`logit_solve_lambda`. The trace fails `PrecisionExhausted` (`AtEndpoint`) where the regret stalls at its rounding
-floor for `stall_window` points (`regret_stalled`, `DEFAULT_STALL_WINDOW`). It fails so at its target unsettled too.
-Any other failure of the trace is returned as is. A failure's context holds `maxregret` in the trace's element type `E`
+set λ cap ends the trace. Its target is `precision_ceiling`, which only makes the target finite. For a set precision,
+use `logit_solve_lambda`. The trace fails `PrecisionExhausted` (`AtEndpoint`) where the regret stalls at its rounding
+floor for `stall_window` points (`regret_stalled`, `DEFAULT_STALL_WINDOW`), or at its target unsettled. There, a
+failed endpoint correction gives its own cause instead (`regret_stall`). Any other failure of the trace is returned as is. A failure's context holds `maxregret` in the trace's element type `E`
 (`RegretContext`). `maxregret` defaults to `default_maxregret(E)`. `max_accel` and `settings` are `logit_solve_lambda`'s.
 """
 function logit_solve_branch(gains::NormalFormGains{N}; keywords...)::BranchResult{<:Real, N, <:RegretContext} where {N}

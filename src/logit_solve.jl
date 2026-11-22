@@ -251,20 +251,24 @@ function settled_points(
     end
     require_payoff_type(gains, settings)
     require_target_free(settings)
+    target = precision_ceiling(E)
     recorder = BranchRecorder(gains, E(maxregret) * E(payoff_range(gains)), stall_window)
     context = (; maxregret = E(maxregret))
-    return branch_outcome(recorder, engine_points(gains, settings, precision_ceiling(E), recorder, context), context)
+    return branch_outcome(recorder, engine_points(gains, settings, target, recorder, context), context)
 end
 
 """
     precision_ceiling(E)
 
-The target precision of every `logit_solve` trace: `eps(E)^-2`, 2^46 in Float32 and 2^104 in Float64. It only makes
-the target finite; the regret stalls long before it (`regret_stalled`). Its square stays finite, so a pass that
-squares the precision stays finite too. `logit_solve_lambda` runs to its own targets and never meets it.
+The target precision of every `logit_solve` trace: `eps(E)^-2`, 2^46 in Float32 and 2^104 in Float64. It makes the
+target finite. On every measured game the regret stalls before it (`regret_stalled`). Its square must be finite, so
+a pass that squares the precision stays finite (`ArgumentError` otherwise, as in Float16). `logit_solve_lambda` has
+its own targets.
 """
 function precision_ceiling(::Type{E})::E where {E <: AbstractFloat}
-    return inv(eps(E))^2
+    ceiling = inv(eps(E))^2
+    isfinite(ceiling^2) || throw(ArgumentError("$E cannot hold the square of a regret trace's target, eps($E)^-2"))
+    return ceiling
 end
 
 """
@@ -275,7 +279,7 @@ PathFollowing measures at target one and runs to any.
 function require_target_free(settings::BifurcationKitSettings)::Nothing
     (; distance, precision_term) = settings.step_metric
     if !(distance == FisherDistance && precision_term == LogPrecisionTerm)
-        throw(ArgumentError("$distance with $precision_term scales its steps by the target precision, which a regret trace lacks; use FisherDistance with LogPrecisionTerm, or logit_solve_lambda"))
+        throw(ArgumentError("$distance with $precision_term scales its steps by the target precision; a regret trace needs FisherDistance with LogPrecisionTerm, or use logit_solve_lambda"))
     end
     return nothing
 end
@@ -348,10 +352,11 @@ end
     logit_solve_branch(gains; maxregret, max_accel, stall_window, settings)
 
 pygambit's `logit_solve_branch`: every accepted point of the principal branch of the normal-form game `gains`, from
-the first step to the first point where no player's regret passes `maxregret` times the payoff range. The trace has no
-cap on the precision, as Gambit's has none; `logit_solve_lambda` stops at set precisions instead. It ends where the
-regret stalls at its rounding floor for `stall_window` points (`regret_stalled`, `DEFAULT_STALL_WINDOW`), and fails
-`PrecisionExhausted` (`AtEndpoint`) there. Any other failure of the trace is returned as is. A failure's context holds `maxregret` in the trace's element type `E`
+the first step to the first point where no player's regret passes `maxregret` times the payoff range. As in Gambit, no
+λ cap ends the trace. Its target, `precision_ceiling`, only makes the target finite. For a set precision, use
+`logit_solve_lambda`. The trace fails `PrecisionExhausted` (`AtEndpoint`) where the regret stalls at its rounding
+floor for `stall_window` points (`regret_stalled`, `DEFAULT_STALL_WINDOW`). It fails so at its target unsettled too.
+Any other failure of the trace is returned as is. A failure's context holds `maxregret` in the trace's element type `E`
 (`RegretContext`). `maxregret` defaults to `default_maxregret(E)`. `max_accel` and `settings` are `logit_solve_lambda`'s.
 """
 function logit_solve_branch(gains::NormalFormGains{N}; keywords...)::BranchResult{<:Real, N, <:RegretContext} where {N}

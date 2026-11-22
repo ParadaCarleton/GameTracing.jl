@@ -649,9 +649,12 @@ end
     end
 end
 
-@testset "a regret trace runs to eps^-2, whose square is finite, in a norm free of the target ($element)" for element in (Float32, widen(Float32))
+@testset "precision_ceiling is eps^-2, whose square is finite, and a regret trace needs a norm free of the target ($element)" for element in (Float32, widen(Float32))
     ceiling = GameTracing.precision_ceiling(element)
     @test isfinite(ceiling^2) && ceiling == exp2(2 * (precision(element) - 1))
+    # Float16's eps^-2 squared overflows, so a Float16 regret trace throws before it starts.
+    @test_throws ArgumentError GameTracing.precision_ceiling(Float16)
+    @test_throws "cannot hold the square" logit_solve(NormalFormGains(map(table -> Float16.(table), LOGITNASH_GAMES.prisoners_dilemma)); settings = PathFollowingSettings{Float16}())
     gains = NormalFormGains(map(table -> element.(table), LOGITNASH_GAMES.prisoners_dilemma))
     # A plain norm scales its steps by the target, so it traces only to a set precision.
     plain = BifurcationKitSettings{element}(; step_metric = TraceGeometry{element}(; precision_term = TargetPrecisionTerm))

@@ -27,13 +27,13 @@ end
     @test length(unwrap(logit_solve_lambda(NormalFormGains(map(table -> Float32.(table), ROCK_PAPER_SCISSORS)), 2; settings))) == 1
 end
 
-@testset "Gambit's default steps round the fold of FOLD_PAST_ONE_GAME onto a later crossing; a finer rung shows the first" begin
-    @test gambit_folds_before(FOLD_PAST_ONE_GAME, 1.0f0)
-    @test first_crossing_steps(FOLD_PAST_ONE_GAME, 1.0f0) == GAMBIT_STEP_LADDER[2]
-    # The fold peaks below precision 4, so every rung folds before it and the finest stands.
-    @test first_crossing_steps(FOLD_PAST_ONE_GAME, 4.0f0) == last(GAMBIT_STEP_LADDER)
-    later = gambit_branch(FOLD_PAST_ONE_GAME, 1.0f0).first_choices
-    @test maximum(abs, later .- first.(gambit_strategies(FOLD_PAST_ONE_GAME, 1.0f0).strategies)) > 1.0f-1
+@testset "Gambit's default steps round the fold of FOLD_PAST_ONE_GAME onto a later crossing; the step ladder converges on the first" begin
+    (coarse, fine, finest) = [gambit_profile(FOLD_PAST_ONE_GAME, 1.0f0, steps) for steps in GAMBIT_STEP_LADDER]
+    @test !same_crossing(coarse, fine) && same_crossing(fine, finest)
+    @test gambit_strategies(FOLD_PAST_ONE_GAME, 1.0f0) == finest
+    @test maximum(abs, first.(coarse.strategies) .- first.(fine.strategies)) > 1.0f-1
+    # Past the fold every rung lands on the one crossing.
+    @test same_crossing(gambit_profile(FOLD_PAST_ONE_GAME, 4.0f0, first(GAMBIT_STEP_LADDER)), gambit_strategies(FOLD_PAST_ONE_GAME, 4.0f0))
 end
 
 @testset "logit_solve ends at the Nash equilibrium of games whose equilibrium is known ($engine)" for (engine, settings) in engine_settings(Float32)

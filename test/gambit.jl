@@ -9,49 +9,8 @@ CondaPkg.add_pip("pygambit"; version = "==$PYGAMBIT_VERSION")
 using PythonCall: pyconvert, pyimport
 
 """
-    gambit_branch(payoffs, precision; first_step = 3 // 100, max_accel = 11 // 10)
-
-`(; precision, first_choices)` of Gambit's logit QRE branch of the two-action game `payoffs` (one table per player, axis
-`k` player `k`'s action, first action first), from `pygambit.qre.logit_solve_lambda` at `precision`. Gambit's
-`π ∝ exp(λ u)` on the raw payoffs is the logit map `z = λ G` with `G` the first action's payoff gain, so Gambit's `λ` is
-the trace's precision (the test "Gambit's λ is the trace's precision"). `precision` is the `λ` Gambit reports reaching; both come back in `precision`'s type, the compared trace's.
-`first_step` and `max_accel` are Gambit's first step length and largest step growth, its defaults by default.
-"""
-function gambit_branch(
-        payoffs::Tuple,
-        precision::E;
-        first_step::Real = 3 // 100,
-        max_accel::Real = 11 // 10,
-    )::NamedTuple{(:precision, :first_choices), Tuple{E, Vector{E}}} where {E <: Real}
-    gambit, numpy = pyimport("pygambit"), pyimport("numpy")
-    game = gambit.Game.from_arrays((numpy.asarray(float.(table)) for table in payoffs)...)
-    profile = first(
-        gambit.qre.logit_solve_lambda(
-            game;
-            lam = [float(precision)],
-            first_step = float(first_step),
-            max_accel = float(max_accel),
-        )
-    )
-    first_choices = [pyconvert(E, profile.profile[first(player.strategies)]) for player in game.players]
-    return (; precision = pyconvert(E, profile.lam), first_choices)
-end
-
-"""Gambit's default `max_accel` in `Float32`, read from `pygambit.qre.logit_solve_lambda`'s signature."""
-function gambit_max_accel()::Float32
-    parameters = pyimport("inspect").signature(pyimport("pygambit").qre.logit_solve_lambda).parameters
-    return pyconvert(Float32, parameters["max_accel"].default)
-end
-
-"""Whether the branch points' precisions `lambdas` decrease anywhere before they first reach `target`."""
-function folds_before(lambdas::AbstractVector{E}, target::Real)::Bool where {E <: Real}
-    rising = collect(Iterators.takewhile(<(target), lambdas))
-    return any(splat(>), zip(rising, Iterators.drop(rising, 1)))
-end
-
-"""
-Gambit's step settings, coarse to fine (`first_crossing_steps`): its defaults, then each a tenth of the first step and
-of the growth past one. Near a fold, each rung's steps are about a tenth of the last one's.
+Gambit's step settings, coarse to fine (`gambit_strategies`): its defaults, then each a tenth of the first step and of
+the growth past one. Near a fold, each rung's steps are about a tenth of the last one's.
 """
 const GAMBIT_STEP_LADDER = (
     (; first_step = 3 / float(100), max_accel = 11 / float(10)),
@@ -60,73 +19,73 @@ const GAMBIT_STEP_LADDER = (
 )
 
 """
-The `λ` of each point of `pygambit.qre.logit_solve_branch` on `payoffs` at `steps` (a `GAMBIT_STEP_LADDER` rung) to
-regret `maxregret` of the payoff range, in order, as Gambit's doubles.
+    gambit_profile(payoffs, precision, steps)
+
+`(; precision, strategies)` from `pygambit.qre.logit_solve_lambda` on the normal-form game `payoffs` (one table per
+player, axis `k` player `k`'s action) at `precision`, with Gambit's `steps` `(; first_step, max_accel)`. `strategies`
+holds each player's mixed strategy and `precision` the `λ` Gambit reports, both in `precision`'s type. Gambit's
+`π ∝ exp(λ u)` on the raw payoffs is the logit map `z = λ G`, so its `λ` is the trace's precision.
 """
-function gambit_regret_lambdas(payoffs::Tuple, steps::NamedTuple, maxregret::Real)::Vector{<:Real}
+function gambit_profile(payoffs::Tuple, precision::E, steps::NamedTuple)::NamedTuple where {E <: Real}
     gambit, numpy = pyimport("pygambit"), pyimport("numpy")
     game = gambit.Game.from_arrays((numpy.asarray(float.(table)) for table in payoffs)...)
-    return [pyconvert(widen(Float32), point.lam) for point in gambit.qre.logit_solve_branch(game; maxregret = float(maxregret), steps...)]
-end
-
-"""
-The `λ` of each point of Gambit's branch of `payoffs` at `steps` (`gambit_regret_lambdas`), through the first point at
-or past `target`. They stay Gambit's doubles: rounding to a narrower target's type could lift a point onto `target`. The
-regret bound falls from `1e-3` by factors of `1000` until the branch reaches `target`: a far bound can take a million
-points. A branch that ends before `target` at `1e-12` has settled at a Nash equilibrium to that bound, and all its
-points come back. Past a strict equilibrium the branch converges without folding; past a degenerate one it is taken to
-stay. A single point is a branch Gambit ended at its start, where the uniform profile has no regret.
-"""
-function gambit_branch_lambdas(payoffs::Tuple, steps::NamedTuple, target::Real)::Vector{<:Real}
-    lambdas = widen(Float32)[]
-    for exponent in 3:3:12
-        lambdas = gambit_regret_lambdas(payoffs, steps, inv(float(10^exponent)))
-        reached = findfirst(>=(target), lambdas)
-        if !isnothing(reached)
-            return lambdas[1:reached]
-        end
-    end
-    return lambdas
-end
-
-"""
-Whether Gambit's logit branch of `payoffs` at its default steps folds back in `λ` before it first reaches `precision`
-(`folds_before`). `logit_solve_lambda` takes the same steps and finds a crossing only between consecutive points, so a
-step that rounds such a fold can hide the first crossing.
-"""
-function gambit_folds_before(payoffs::Tuple, precision::Real)::Bool
-    return folds_before(gambit_branch_lambdas(payoffs, first(GAMBIT_STEP_LADDER), precision), precision)
-end
-
-"""
-The coarsest rung of `GAMBIT_STEP_LADDER` whose branch of `payoffs` reaches `precision` before it folds back
-(`folds_before`). That rung's `logit_solve_lambda` returns the first crossing, except past a fold too sharp to show
-between two points. Where every rung folds before `precision`, the fold peaks below it, and the finest rung stands.
-The finest rung can still round a fold that peaks just past `precision`; near a fold its steps are a hundredth of
-Gambit's defaults.
-"""
-function first_crossing_steps(payoffs::Tuple, precision::Real)::NamedTuple
-    for steps in GAMBIT_STEP_LADDER
-        if !folds_before(gambit_branch_lambdas(payoffs, steps, precision), precision)
-            return steps
-        end
-    end
-    return last(GAMBIT_STEP_LADDER)
-end
-
-"""
-Gambit's logit QRE of the normal-form game `payoffs` at the first crossing of `precision`, from
-`pygambit.qre.logit_solve_lambda`: `(; precision, strategies)`, each player's mixed strategy in `precision`'s type.
-Gambit finds a crossing only between consecutive points, so a step that rounds a fold peaking past `precision` hides the
-first crossing (`FOLD_PAST_ONE_GAME`). The steps come from `first_crossing_steps`.
-"""
-function gambit_strategies(payoffs::Tuple, precision::E)::NamedTuple where {E <: Real}
-    gambit, numpy = pyimport("pygambit"), pyimport("numpy")
-    game = gambit.Game.from_arrays((numpy.asarray(float.(table)) for table in payoffs)...)
-    steps = first_crossing_steps(payoffs, precision)
-    profile = first(gambit.qre.logit_solve_lambda(game; lam = [float(precision)], steps...))
+    lam = [float(precision)]
+    profile = first(gambit.qre.logit_solve_lambda(game; lam, first_step = float(steps.first_step), max_accel = float(steps.max_accel)))
     strategies = Tuple([pyconvert(E, profile.profile[strategy]) for strategy in player.strategies] for player in game.players)
     return (; precision = pyconvert(E, profile.lam), strategies)
+end
+
+"""
+Whether two of Gambit's profiles at one precision lie on one crossing: each lies within `GAMBIT_PROBABILITY_TOLERANCE` of
+the branch, so two on one crossing differ by at most twice that in any probability.
+"""
+function same_crossing(left::NamedTuple, right::NamedTuple)::Bool
+    return largest_gap(left.strategies, right.strategies) <= 2 * GAMBIT_PROBABILITY_TOLERANCE
+end
+
+"""
+    gambit_strategies(payoffs, precision)
+
+Gambit's logit QRE of `payoffs` at the first crossing of `precision` (`gambit_profile`): the finest
+`GAMBIT_STEP_LADDER` rung's profile, where the rung before it lands on the same crossing (`same_crossing`). Else the
+step size has not converged, no rung is a sound oracle, and it throws an `ErrorException`.
+
+Gambit finds a crossing only between consecutive points, so a step that rounds a fold lands on a later crossing
+(`FOLD_PAST_ONE_GAME`, `FOLDED_GAMBIT_GAME`, `FOLD_TIP_PAST_TARGET_GAME`). Two coarse rungs can round one tip alike, so
+only the finest pair decides. Over 200 random two-action games the last two rungs agreed on all, each within 3e-8 of
+`branch_reference`. A fourth rung, a tenth of the third, took 0.3 to 2.8 s a game, so the ladder stops at three.
+"""
+function gambit_strategies(payoffs::Tuple, precision::E)::NamedTuple where {E <: Real}
+    (finer, finest) = [gambit_profile(payoffs, precision, steps) for steps in GAMBIT_STEP_LADDER[(end - 1):end]]
+    same_crossing(finer, finest) || error("Gambit's two finest steps land on different crossings of precision $precision: $finer, $finest")
+    return finest
+end
+
+"""
+    gambit_branch(payoffs, precision)
+    gambit_branch(payoffs, precision, steps)
+
+`(; precision, first_choices)` of Gambit's logit QRE of the two-action game `payoffs` at `precision`: each player's
+probability of its first action. Without `steps` it is the first crossing (`gambit_strategies`); with them, Gambit's
+answer at those steps alone (`gambit_profile`).
+"""
+function gambit_branch(payoffs::Tuple, precision::E)::NamedTuple{(:precision, :first_choices), Tuple{E, Vector{E}}} where {E <: Real}
+    return first_choice_profile(gambit_strategies(payoffs, precision))
+end
+
+function gambit_branch(payoffs::Tuple, precision::E, steps::NamedTuple)::NamedTuple{(:precision, :first_choices), Tuple{E, Vector{E}}} where {E <: Real}
+    return first_choice_profile(gambit_profile(payoffs, precision, steps))
+end
+
+"""Gambit's default `max_accel` in `Float32`, read from `pygambit.qre.logit_solve_lambda`'s signature."""
+function gambit_max_accel()::Float32
+    parameters = pyimport("inspect").signature(pyimport("pygambit").qre.logit_solve_lambda).parameters
+    return pyconvert(Float32, parameters["max_accel"].default)
+end
+
+"""`profile`'s precision and each player's probability of its first action."""
+function first_choice_profile(profile::NamedTuple)::NamedTuple
+    return (; profile.precision, first_choices = first.(collect(profile.strategies)))
 end
 
 """The largest difference in any probability between two profiles of mixed strategies."""

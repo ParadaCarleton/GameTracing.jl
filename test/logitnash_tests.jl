@@ -107,27 +107,23 @@ Trace `payoffs` to LogitNash's stopping precision past `precision` and test the 
 the oracle, and against `branch_reference`, the Julia cross-check. LogitNash is a cross-check too: a disagreement with it
 fails only when Gambit sides with LogitNash. Near an
 unfolded pitchfork LogitNash can cross onto the middle arm, as on `UNFOLDED_PITCHFORK_GAME`. A reference that does not
-reach the target skips the comparison; every endpoint must also solve the map to the corrector's tolerance. Where
-Gambit's branch folds before the target (`gambit_folds_before`), Gambit's answer may be a later crossing, so the Gambit
-comparisons are skipped and the reference decides. Returns whether they were skipped.
+reach the target skips the comparison; every endpoint must also solve the map to the corrector's tolerance. Gambit's
+answer is the first crossing on its converged step ladder (`gambit_branch`).
 """
-function cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSettings{E})::Bool where {E <: Real}
+function cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSettings{E})::Nothing where {E <: Real}
     cross = logitnash_equilibrium(payoffs, precision)
     result = traced_result(payoffs, E(cross.precision), settings)
     @test !is_error(result)
     if is_error(result)
         @info "trace failed" payoffs unwrap_error(result).cause
-        return false
+        return nothing
     end
     logits = unwrap(result).logits
     traced = first_choices(logits)
-    folded = gambit_folds_before(payoffs, cross.precision)
-    if !folded
-        oracle = gambit_branch(payoffs, cross.precision)
-        @test agreeing(traced, oracle.first_choices)
-        if !agreeing(traced, cross.first_choices)
-            @test !agreeing(oracle.first_choices, cross.first_choices)
-        end
+    oracle = gambit_branch(payoffs, cross.precision)
+    @test agreeing(traced, oracle.first_choices)
+    if !agreeing(traced, cross.first_choices)
+        @test !agreeing(oracle.first_choices, cross.first_choices)
     end
     reference = branch_reference(NormalFormPass(map(float, payoffs)), length(payoffs), cross.precision)
     # A generic game's branch crosses no singular point.
@@ -136,7 +132,7 @@ function cross_checked!(payoffs::Tuple, precision::Real, settings::EngineSetting
         @test agreeing(traced, reference.first_choices)
     end
     @test settled_endpoint(payoffs, logits, cross.precision, settings)
-    return folded
+    return nothing
 end
 
 @testset "Gambit's λ is the trace's precision: its profile solves z = λ G on the raw payoffs" begin
@@ -151,12 +147,9 @@ end
         crossing = log.(oracle.first_choices) .- log1p.(-oracle.first_choices)
         response = evaluated(NormalFormPass(payoffs), crossing, oracle.precision).response
         @test maximum(abs, inv.(1 .+ exp.(-response)) .- oracle.first_choices) < inv(float(10^6))
-        # Gambit does not normalize payoffs: doubling them doubles λ. A branch that folds first may land on a later crossing.
-        doubled_payoffs = map(table -> 2 .* table, payoffs)
-        if !gambit_folds_before(payoffs, precision) && !gambit_folds_before(doubled_payoffs, precision / 2)
-            doubled = gambit_branch(doubled_payoffs, precision / 2)
-            @test maximum(abs, doubled.first_choices .- oracle.first_choices) < inv(float(10^5))
-        end
+        # Gambit does not normalize payoffs: doubling them doubles λ.
+        doubled = gambit_branch(map(table -> 2 .* table, payoffs), precision / 2)
+        @test maximum(abs, doubled.first_choices .- oracle.first_choices) < inv(float(10^5))
     end
     # Halving λ alone moves the profile, so the doubling check above can fail. A random game near a pure profile barely
     # moves, so this uses a fixed game: matching pennies, with the row player's payoffs made asymmetric.
@@ -557,7 +550,7 @@ end
 
 @testset "where Gambit's default steps leave the branch, the trace meets Gambit at fine steps ($engine)" for (engine, settings) in default_settings()
     # The oracle is Gambit at a 1e-3 first step that never grows; its default steps end elsewhere (`GAMBIT_LEAVES_GAME`).
-    oracle = gambit_branch(GAMBIT_LEAVES_GAME, 3.0f0; first_step = 1 // 1000, max_accel = 1)
+    oracle = gambit_branch(GAMBIT_LEAVES_GAME, 3.0f0, (; first_step = 1 // 1000, max_accel = 1))
     traced = traced_result(GAMBIT_LEAVES_GAME, GameTracing.element_type(settings)(oracle.precision), settings)
     @test !is_error(traced)
     @test agreeing(first_choices(unwrap(traced).logits), oracle.first_choices)
@@ -573,8 +566,7 @@ function two_action_games(rng::AbstractRNG)::Vector{Tuple}
 end
 
 @testset "random games with two actions each: the trace follows the principal branch ($engine)" for (engine, settings) in default_settings()
-    skipped = sum(payoffs -> cross_checked!(payoffs, 3, settings), two_action_games(fresh_rng()))
-    @info "Gambit comparisons skipped where its branch folds before the target" skipped
+    foreach(payoffs -> cross_checked!(payoffs, 3, settings), two_action_games(fresh_rng()))
 end
 
 # Random games where PathFollowing's corrector jumped branches at growth 2 without its split check: draws of four suite
@@ -634,27 +626,19 @@ const PREVIOUS_TARGET_JUMPS = [
     end
 end
 
-@testset "a branch folds before the target only where its precisions decrease before first reaching it" begin
-    @test !folds_before(Float32[0, 1, 2, 3.5f0], 3)
-    @test folds_before(Float32[0, 1, 2.9f0, 2.5f0, 3.5f0], 3)
-    @test !folds_before(Float32[0, 1, 3.5f0, 3.2f0, 4], 3)
+@testset "Gambit's step ladder converges quickly on a game whose regret falls slowly" begin
+    # 0.44 s on macdev at Gambit's default steps alone.
+    @test (@elapsed gambit_strategies(SLOW_REGRET_GAME, 4.0f0)) < 20
 end
 
-@testset "Gambit's branch points stop at the first at or past the target, or where the branch settles" begin
-    steps = first(GAMBIT_STEP_LADDER)
-    lambdas = gambit_branch_lambdas(FOLD_PAST_ONE_GAME, steps, 4)
-    @test last(lambdas) >= 4 > maximum(lambdas[1:(end - 1)])
-    # Gambit's doubles, which no rounding lifts onto a Float32 target.
-    @test eltype(lambdas) == widen(Float32)
-    # Matching pennies' uniform profile has no regret, so Gambit ends its branch at the start.
-    @test gambit_branch_lambdas(LOGITNASH_GAMES.matching_pennies, steps, 4) == [0]
-    # The prisoners' dilemma settles to regret 1e-12 far below precision 1e6, past where regret 1e-3 ends.
-    settled = gambit_branch_lambdas(LOGITNASH_GAMES.prisoners_dilemma, steps, 10^6)
-    @test settled == gambit_regret_lambdas(LOGITNASH_GAMES.prisoners_dilemma, steps, inv(float(10^12)))
-    @test last(gambit_regret_lambdas(LOGITNASH_GAMES.prisoners_dilemma, steps, inv(float(10^3)))) < last(settled) < 10^6
-    gambit_strategies(FOLD_PAST_ONE_GAME, 4.0f0)
-    # 0.44 s on macdev; the branch to regret 1e-12 took 172 s.
-    @test (@elapsed gambit_strategies(SLOW_REGRET_GAME, 4.0f0)) < 20
+@testset "on a game whose branch tip lies just past LogitNash's stop, the trace and Gambit's ladder meet the first crossing ($engine)" for (engine, settings) in default_settings()
+    precision = logitnash_equilibrium(FOLD_TIP_PAST_TARGET_GAME, 3).precision
+    # Gambit's default steps round the tip onto a later crossing, so the oracle takes its next rung.
+    coarse = gambit_branch(FOLD_TIP_PAST_TARGET_GAME, precision, first(GAMBIT_STEP_LADDER))
+    @test !agreeing(coarse.first_choices, gambit_branch(FOLD_TIP_PAST_TARGET_GAME, precision).first_choices)
+    cross_checked!(FOLD_TIP_PAST_TARGET_GAME, 3, settings)
+    # 3e-4 under the tip, rungs 1 and 2 round it alike and rung 3 lands on the first crossing: the ladder has not converged.
+    @test_throws ErrorException gambit_strategies(FOLD_TIP_PAST_TARGET_GAME, 3.1215f0)
 end
 
 @testset "on a game whose principal branch folds just past the target, the trace meets the reference ($engine)" for (engine, settings) in default_settings()
@@ -663,6 +647,5 @@ end
     @test reference.reached
     traced = first_choices(unwrap(traced_result(FOLDED_GAMBIT_GAME, GameTracing.element_type(settings)(precision), settings)).logits)
     @test agreeing(traced, reference.first_choices)
-    # Whether Gambit's comparison runs here depends on pygambit's step sizes, so only the checks it runs are asserted.
     cross_checked!(FOLDED_GAMBIT_GAME, 3, settings)
 end

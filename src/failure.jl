@@ -5,11 +5,10 @@ using Moshi.Derive: @derive
 using PathFollowing: PathFollowing
 
 """
-Which opt-in budget a trace that did not converge spent: its `max_steps` (`MaxSteps`), a PathFollowing step's
-`max_refusals` (`MaxRefusals`), or `logit_solve`'s `maximum_precision`, unsettled (`MaximumPrecision`). Each budget
-defaults to `nothing`, no limit, and then never ends a trace.
+Which opt-in budget a trace that did not converge spent: its `max_steps` (`MaxSteps`) or a PathFollowing step's
+`max_refusals` (`MaxRefusals`). Each budget defaults to `nothing`, no limit, and then never ends a trace.
 """
-@enum StopLimit MaxSteps MaxRefusals MaximumPrecision
+@enum StopLimit MaxSteps MaxRefusals
 
 """
 Why a trace stuck short of its target: a predictor below the float type's resolution (`UnresolvedStep`), a
@@ -98,7 +97,7 @@ The trace engine's own record where a trace failed, a Moshi sum in the trace's e
 field of type `E` takes it explicitly: `EngineRecord.NoRecord{E}()`.
 
 - `NoRecord()`: no engine record, as no engine ran (a non-finite start), or GameTracing's own check ended the trace:
-  a `logit_solve` cap reached unsettled, a regret stall, or a check of a PathFollowing trace.
+  a regret stall, a `logit_solve` trace at `precision_ceiling` unsettled, or a check of a PathFollowing trace.
 - `BifurcationKitTrace(accepted_step, precision_min, precision_max, logit_tangent, gap_tangent, tangent_precision,
   logit_accuracy, message)`: the arclength step of the last accepted point (zero when none was accepted), the
   precision's range, the tangent there in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps

@@ -285,10 +285,9 @@ end
     @test PathFollowingSettings{element}(; reach = Inf32).reach == Inf32
     # A distance in another element type is refused.
     @test_throws TypeError PathFollowingSettings{element}(; distance = CorrectorDistance{BigFloat}())
-    # The error estimate's safety converts to the element type.
-    halved = PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.ContractionEstimate(; safety = 1 // 2))
-    @test halved.error_estimate.safety === element(1 // 2)
-    @test PathFollowingSettings{element}(; error_estimate = GameTracing.PathFollowing.LastCorrection()).error_estimate === GameTracing.PathFollowing.LastCorrection()
+    # A contraction limit past 1/2 in the element type throws as the settings are built.
+    @test_throws ArgumentError PathFollowingSettings{element}(; contraction_limit = 3 // 5)
+    @test PathFollowingSettings{element}(; contraction_limit = 1 // 2).contraction_limit === element(1 // 2)
     # 2^10 / eps ulps resolve only the move off precision zero, so the second step is unresolved.
     unresolved = unwrap_error(logit_solve(gains; maxregret = 1.0f-6, settings = PathFollowingSettings{element}(; min_step_ulps = round(Int, 2^10 / eps(element)))))
     @test (unresolved.cause, unresolved.stop.steps) == (TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep), 1)
@@ -415,22 +414,22 @@ end
     @test GameTracing.LogProbabilityChange((1:2, 3:3), zero(element))(element[-1000, 0, 0, 1], element[-500, 0, 0, 1]) ≈ 500
     # A binary player at logit -30 whose logit moves by 1: its first strategy's log probability moves by about 1.
     settled = GameTracing.settle_test(distance, GameTracing.LogProbabilityChange((1:1,), distance.settle_ulps * eps(element)))
-    @test !settled(element[-30, 1], element[-29, 1], element[], one(element))
+    @test !settled(element[-30, 1], element[-29, 1], element[])
     # Four strategies, the second near certain at logit 10, its logit up 9e-5: Gambit's norm is about √3 · 9e-5.
     four = GameTracing.settle_test(distance, GameTracing.LogProbabilityChange((1:3,), distance.settle_ulps * eps(element)))
-    @test !four(element[10, 0, 0, 1], element[10 + 9.0f-5, 0, 0, 1], element[], one(element))
+    @test !four(element[10, 0, 0, 1], element[10 + 9.0f-5, 0, 0, 1], element[])
     # A large logit's rounding counts zero in the measure, as in the settle test; four allowances do not.
     large = 64 * distance.tolerance / eps(element)
     rounded, beyond = large + 4 * eps(large), large + 4 * distance.settle_ulps * eps(element) * large
     within = GameTracing.LogProbabilityChange((1:1,), distance.settle_ulps * eps(element))
     @test within(element[large, 1], element[rounded, 1]) == 0
-    @test settled(element[large, 1], element[rounded, 1], element[], one(element))
+    @test settled(element[large, 1], element[rounded, 1], element[])
     @test within(element[large, 1], element[beyond, 1]) > distance.tolerance
-    @test !settled(element[large, 1], element[beyond, 1], element[], one(element))
-    # Newton's error estimate scales the move: a tenth of a small one settles.
-    @test settled(element[0, 1], element[4 * distance.tolerance, 1], element[], element(1 // 10))
-    @test !settled(element[0, 1], element[4 * distance.tolerance, 1], element[], one(element))
-    @test !settled(element[NaN32, 1], element[0, 1], element[], one(element))
+    @test !settled(element[large, 1], element[beyond, 1], element[])
+    # A move of four tolerances does not settle; one of half a tolerance does.
+    @test settled(element[0, 1], element[distance.tolerance / 2, 1], element[])
+    @test !settled(element[0, 1], element[4 * distance.tolerance, 1], element[])
+    @test !settled(element[NaN32, 1], element[0, 1], element[])
     # Step control refuses past 4 targets, at Gambit's 0.4.
     @test 4 * distance.target_correction == element(2 // 5)
 end

@@ -4,16 +4,18 @@ using Moshi.Data: @data
 using Moshi.Derive: @derive
 using PathFollowing: PathFollowing
 
-"""Which limit a trace that did not converge spent: its `max_steps`, or `logit_solve`'s `maximum_precision`, unsettled."""
-@enum StopLimit MaxSteps MaximumPrecision
+"""
+Which opt-in budget a trace that did not converge spent: its `max_steps` (`MaxSteps`) or a PathFollowing step's
+`max_refusals` (`MaxRefusals`). Each budget defaults to `nothing`, no limit, and then never ends a trace.
+"""
+@enum StopLimit MaxSteps MaxRefusals
 
 """
-Why a trace stuck short of its target: a predictor below the float type's resolution (`UnresolvedStep`), more refusals
-in one PathFollowing step than `max_refusals` (`StepRefusals`), a BifurcationKit point equal to the last
-(`UnmovedPoint`), a BifurcationKit start that would not correct (`UncorrectedStart`), or a `keep_going` or a refusal
-that stopped it (`StoppedShort`).
+Why a trace stuck short of its target: a predictor below the float type's resolution (`UnresolvedStep`), a
+BifurcationKit point equal to the last (`UnmovedPoint`), a BifurcationKit start that would not correct
+(`UncorrectedStart`), or a `keep_going` or a refusal that stopped it (`StoppedShort`).
 """
-@enum StuckReason UnresolvedStep StepRefusals UnmovedPoint UncorrectedStart StoppedShort
+@enum StuckReason UnresolvedStep UnmovedPoint UncorrectedStart StoppedShort
 
 """Where a trace failed: at its flat start (`AtStart`), on its way to the target (`MidTrace`) or at the endpoint check (`AtEndpoint`)."""
 @enum TraceStage AtStart MidTrace AtEndpoint
@@ -40,12 +42,14 @@ end
 Why a trace stopped short of its target precision, a Moshi sum in the trace's element type `E`, one variant per cause.
 A variant with no field of type `E` takes it explicitly: `TraceCause.NotFinite{E}(AtStart)`.
 
-- `NoConvergence(limit)`: the trace spent its `StopLimit`.
+- `NoConvergence(limit)`: the trace spent an opt-in budget, its `StopLimit`.
 - `TraceStuck(reason)`: the trace stuck for its `StuckReason`.
 - `NotFinite(stage)`: the game was not finite `AtStart` or `AtEndpoint` (`TraceStage`).
 - `Singular(stage)`: a linear solve broke `AtStart`, `MidTrace` or `AtEndpoint`.
 - `PrecisionExhausted(stage, stall)`: Newton's corrections stopped contracting at the float type's rounding noise
   (`StalledCorrection`), `MidTrace` (`CorrectorReach`) or `AtEndpoint`; a wider float type goes further.
+  `logit_solve` also fails `AtEndpoint` where the regret stops falling at its rounding floor (`regret_stalled`). Its
+  stall holds the endpoint check's correction at the last point (`regret_stall`).
 """
 @data TraceCause{E <: Real} begin
     struct NoConvergence
@@ -92,8 +96,8 @@ end
 The trace engine's own record where a trace failed, a Moshi sum in the trace's element type `E`. A variant with no
 field of type `E` takes it explicitly: `EngineRecord.NoRecord{E}()`.
 
-- `NoRecord()`: no engine record, as no engine ran (a non-finite start), the engine ran to its end (a `logit_solve`
-  cap reached unsettled), or GameTracing's own check failed a PathFollowing trace.
+- `NoRecord()`: no engine record, as no engine ran (a non-finite start), or GameTracing's own check ended the trace:
+  a regret stall, a `logit_solve` trace at `precision_ceiling` unsettled, or a check of a PathFollowing trace.
 - `BifurcationKitTrace(accepted_step, precision_min, precision_max, logit_tangent, gap_tangent, tangent_precision,
   logit_accuracy, message)`: the arclength step of the last accepted point (zero when none was accepted), the
   precision's range, the tangent there in logits (`logit_tangent`, `dz = λ dw + w dλ`) and in payoff gaps

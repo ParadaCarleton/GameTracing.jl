@@ -14,11 +14,11 @@ A trace's end short of its caller's goal, a Moshi sum in the step's element type
 
 - `Unresolved(last_refusal, refusals)`: a predictor below the float type's resolution. The returned tracer holds the
   step it judged: the controller's step, or the retry that did not shrink below the predictor it refuses.
-- `TooManyRefusals(last_refusal, step_length, refusals)`: more refusals in one step than `max_refusals`. `step_length`
+- `TooManyRefusals(last_refusal, step_length, refusals)`: more refusals in one step than a set `max_refusals`. `step_length`
   is the last refused predictor, cut at a `Bound`.
 - `NotFiniteStart()`: `H` or its Jacobian is not finite at the start.
 - `SingularStart()`: no tangent at the start along `direction`.
-- `TooManySteps()`: a `land!!` past its step budget.
+- `TooManySteps()`: a `land!!` past a set step budget.
 
 A variant with no field of type `E` takes it explicitly: `StepFailure.TooManySteps{E}()`.
 """
@@ -177,7 +177,8 @@ function step!!(
     refusals = 0
     last_refusal = NoRefusal
     taken = tracer.step_length
-    while true
+    shorter = true
+    while shorter
         @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ tracer.step_length .* tracer.tangent
         # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
         if unresolved(tracer.point, tracer.work.predicted, algorithm.min_step_ulps)
@@ -190,20 +191,17 @@ function step!!(
             tracer = accept_point!!(tracer, attempt, taken)
             return tracer, Ok(AcceptedStep(taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn))
         end
-        refusals += 1
         last_refusal = attempt.refusal
-        if refusals > algorithm.max_refusals
-            break
-        end
+        # This refusal is one past a budget the earlier refusals reached.
+        limit_reached(algorithm.max_refusals, refusals) && return tracer, Err(StepFailure.TooManyRefusals(last_refusal, taken, refusals + 1))
+        refusals += 1
         # The retry shrinks the predictor taken, cut or not; an infinite factor shrinks like an unmeasured one.
         shrink = inv(algorithm.step_control.shrink)
         @reset tracer.step_length = taken / ifelse(isfinite(attempt.factor), max(attempt.factor, shrink), shrink)
         # A retry that rounds back to the refused length would repeat it: the step is below resolution.
-        if !(tracer.step_length < taken)
-            return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
-        end
+        shorter = tracer.step_length < taken
     end
-    return tracer, Err(StepFailure.TooManyRefusals(last_refusal, taken, refusals))
+    return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
 end
 
 """

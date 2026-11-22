@@ -256,7 +256,7 @@ struct StaticLU end
 
 """
     PseudoArclength(; corrector, step_control, metric, turn_metric = metric, orientation_check, split_check,
-                    linear_solver, accept = AcceptAll(), min_step_ulps = 4, max_refusals)
+                    linear_solver, accept = AcceptAll(), min_step_ulps = 4, max_refusals = nothing)
 
 Pseudo-arclength continuation with an Euler predictor along the bordered tangent.
 
@@ -274,9 +274,11 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
 - `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
   as `Unresolved`; smaller steps cannot add a point. The check judges the step before a `Bound` cuts it.
-- `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`.
+- `max_refusals`: refusals in one step before the trace ends as `TooManyRefusals`, or `nothing` for no limit. Each
+  refusal shrinks the step (`StepControl`'s `shrink`), and a retry that rounds back to its length fails `Unresolved`,
+  so a step ends at the float type's resolution without a limit.
 """
-struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, K <: Union{Nothing, HalfStepCheck}, L, A}
+struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, K <: Union{Nothing, HalfStepCheck}, L, A, R <: Union{Nothing, Int}}
     corrector::C
     step_control::S
     metric::M
@@ -286,7 +288,8 @@ struct PseudoArclength{C <: Newton, S <: StepControl, M <: Metric, T <: Metric, 
     linear_solver::L
     accept::A
     min_step_ulps::Int
-    max_refusals::Int
+    # A type parameter, not a `Union` field, so a batch algorithm stays isbits.
+    max_refusals::R
 end
 
 """
@@ -310,17 +313,33 @@ struct AcceptAll end
 
 function PseudoArclength(;
         corrector::C, step_control::S, metric::M, turn_metric::T = metric, orientation_check::O, split_check::K,
-        linear_solver::L, accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Integer,
+        linear_solver::L, accept::A = AcceptAll(), min_step_ulps::Integer = 4, max_refusals::Union{Nothing, Integer} = nothing,
     )::PseudoArclength{C, S, M, T, O, K, L, A} where {C <: Newton, S <: StepControl, M <: Metric, T <: Metric, O <: Union{Nothing, DeterminantSign}, K <: Union{Nothing, HalfStepCheck}, L, A}
     min_step_ulps >= 0 || throw(ArgumentError(lazy"min_step_ulps must be non-negative; got $min_step_ulps"))
     refusable_correction(step_control, corrector.distance)
     reachable_trigger(step_control, split_check)
-    max_refusals >= 0 || throw(ArgumentError(lazy"max_refusals must be non-negative; got $max_refusals"))
-    return PseudoArclength{C, S, M, T, O, K, L, A}(
+    limit = checked_limit(:max_refusals, max_refusals)
+    return PseudoArclength{C, S, M, T, O, K, L, A, typeof(limit)}(
         corrector, step_control, metric, turn_metric, orientation_check, split_check, linear_solver, accept,
-        Int(min_step_ulps), Int(max_refusals),
+        Int(min_step_ulps), limit,
     )
 end
+
+"""
+`limit` as an `Int`, or `nothing` for no limit; a negative limit throws an `ArgumentError` that names the keyword `name`.
+"""
+checked_limit(::Symbol, ::Nothing)::Nothing = nothing
+function checked_limit(name::Symbol, limit::Integer)::Int
+    limit >= 0 || throw(ArgumentError(lazy"$name must be non-negative or nothing; got $limit"))
+    return Int(limit)
+end
+
+"""
+Whether `count` has reached `limit`, a step or refusal budget; `nothing` is no limit, which no count reaches. Both
+trace engines of GameTracing count their steps with it.
+"""
+limit_reached(::Nothing, ::Integer)::Bool = false
+limit_reached(limit::Integer, count::Integer)::Bool = count >= limit
 
 """Throw unless `check` can fire: its trigger must not pass `control`'s `refusal_factor`, past which steps are refused."""
 reachable_trigger(::StepControl, ::Nothing)::Nothing = nothing

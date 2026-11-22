@@ -47,7 +47,7 @@ function landing_bytes(
         algorithm::PathFollowing.PseudoArclength,
         first_step::Real,
         bound::PathFollowing.Bound,
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer},
     )::Integer
     PathFollowing.land!!(unwrap(init(problem, algorithm; first_step)), bound, max_steps)
     return @allocated PathFollowing.land!!(unwrap(init(problem, algorithm; first_step)), bound, max_steps)
@@ -129,7 +129,7 @@ end
     for (options, payoffs, cause) in (
             ((; max_steps = 1), drawn, TraceCause.NoConvergence{element}(GameTracing.MaxSteps)),
             ((;), poisoned, TraceCause.NotFinite{element}(GameTracing.AtStart)),
-            (unsettled, drawn, TraceCause.TraceStuck{element}(GameTracing.StepRefusals)),
+            (unsettled, drawn, TraceCause.NoConvergence{element}(GameTracing.MaxRefusals)),
             (unresolved, drawn, TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep)),
         )
         results = cpu_batch(static_game.(payoffs), lam, batch_settings(element; options...))

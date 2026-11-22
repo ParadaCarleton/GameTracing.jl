@@ -433,6 +433,15 @@ end
         @test failure.refusals == 4
     end
 
+    @testset "with no refusal budget, a step refused at every length halves until it is unresolved" begin
+        settings = algorithm(E; accept = (start, predicted, corrected) -> false, max_refusals = nothing)
+        @test isnothing(settings.max_refusals)
+        failure = unwrap_error(traced(CurveProblem(Fold(), E[-1, 1], E[1, -1]), settings, 1; first_step = E(1) / 10))
+        @test isa_variant(failure, StepFailure.Unresolved) && failure.last_refusal == AcceptRefused
+        # Each refusal at least halves the step: the subnormals bound the count.
+        @test 1 < failure.refusals <= exponent(floatmax(E)) - exponent(floatmin(E)) + precision(E)
+    end
+
     @testset "a NaN residual refuses the step until the trace is unresolved" begin
         failure = unwrap_error(traced(CurveProblem(Edge(one(E), false), E[0, 0], E[1, 1]), algorithm(E), 200; first_step = E(1) / 4))
         @test isa_variant(failure, StepFailure.Unresolved)
@@ -982,6 +991,12 @@ end
         edge = unwrap(init(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 4))
         _, landed = land!!(edge, Bound(2, E(2)), 200)
         @test unwrap_error(landed).last_refusal == SingularSystem
+        # No budget by default: the trace ends on the bound or on a failed step.
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10))
+        tracer, landed = land!!(tracer, bound)
+        @test unwrap(landed)[2] == bound.value && tracer.steps > 2
+        _, landed = land!!(unwrap(init(CurveProblem(Edge(one(E), true), E[0, 0], E[1, 1]), algorithm(E); first_step = E(1) / 4)), Bound(2, E(2)))
+        @test unwrap_error(landed).last_refusal == SingularSystem
     end
 
     @testset "land_batch traces each problem as land!! does, one work item each, on Vector and JLArray storage" begin
@@ -1045,6 +1060,7 @@ end
             fifteen_weights = FixedWeights(SVector{15, E}(ntuple(_ -> one(E), 15)))
             @test_throws "at most 14 × 14" checked(static_algorithm(E; metric = fifteen_weights), E[1 // 10, 1 // 10]; problems = storage([fifteen, fifteen]))
             @test isempty(land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, 20; workgroupsize = 1))
+            @test_throws ArgumentError land_batch(storage(typeof(circle)[]), static_algorithm(E), storage(E[]), bound, -1; workgroupsize = 1)
         end
         @test isnothing(PathFollowing.check_batch([circle, circle], static_algorithm(E), E[1 // 10, 1 // 5], bound, 1))
         @test_throws "defines no KernelAbstractions.synchronize" PathFollowing.check_batch(JLArray([circle]), static_algorithm(E), JLArray(E[1 // 10]), bound, 1)

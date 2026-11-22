@@ -74,7 +74,8 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 - `step_metric`: a `TraceGeometry`, the norm of steps and turns in `[w; λ]` (`trace_metric`) at target precision
   one, frozen at each accepted point. The default, `default_step_metric`, is `gambit_settings`' too.
 - `max_step`: the largest step in that norm; `Inf` sets none. The first step comes from the game (`opening_step`).
-- `max_steps`: accepted steps before the trace fails as `NoConvergence` (`MaxSteps`).
+- `max_steps`: accepted steps before the trace fails as `NoConvergence` (`MaxSteps`), or `nothing` (the default) for
+  no limit. Each accepted step moves the point past its rounding (`min_step_ulps`), and a step that cannot fails.
 - `distance`: a `CorrectorDistance`, how the corrector measures a move: Gambit's norm in log probabilities. It carries
   the corrector's settle tolerance and step control's target correction.
 - `newton_iterations`, `contraction_limit`, `error_estimate`: PathFollowing's `Newton`, its corrections under
@@ -98,7 +99,9 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
   Kept steps reached their point within 2.5e-5 at the 99.99th percentile. Each jump failed or landed at least 0.27
   away. So that distance's 5e-4 tolerance lay 20 times above that percentile and 550 times under the nearest jump. At the default
   step control, trigger 1.3 refused 21 of 565,078 kept steps in the hunt (0.004%).
-- `max_refusals`: refused attempts in one step before the trace fails as `TraceStuck` (`StepRefusals`).
+- `max_refusals`: refused attempts in one step before the trace fails as `NoConvergence` (`MaxRefusals`), or
+  `nothing` (the default) for no limit. Each refusal shrinks the step, so a step that never converges fails
+  `TraceStuck` (`UnresolvedStep`) at the float type's resolution.
 - `min_step_ulps`: a predictor that moves no coordinate more than this many ulps fails the trace as `TraceStuck`
   (`UnresolvedStep`).
 - `linear_solver`: the LinearSolve.jl algorithm for the bordered systems.
@@ -109,7 +112,7 @@ The controls of a trace on PathFollowing's pseudo-arclength continuation, an `En
 """
 struct PathFollowingSettings{E <: Real, L} <: EngineSettings{E}
     max_step::E
-    max_steps::Int
+    max_steps::Union{Nothing, Int}
     distance::CorrectorDistance{E}
     newton_iterations::Int
     contraction_limit::E
@@ -120,7 +123,7 @@ struct PathFollowingSettings{E <: Real, L} <: EngineSettings{E}
     reach::E
     orientation_check::Union{Nothing, PathFollowing.DeterminantSign}
     split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}}
-    max_refusals::Int
+    max_refusals::Union{Nothing, Int}
     min_step_ulps::Int
     step_metric::TraceGeometry{E}
     linear_solver::L
@@ -132,7 +135,7 @@ end
 # lost the 20x20 seed-6 fold, and 0.5 left ten times the branch error; it now also needs the last correction to pass.
 function PathFollowingSettings{E}(;
         max_step::Real = Inf32,
-        max_steps::Integer = 2_000,
+        max_steps::Union{Nothing, Integer} = nothing,
         distance::CorrectorDistance{E} = CorrectorDistance{E}(),
         newton_iterations::Integer = 8,
         contraction_limit::Real = 0.5f0,
@@ -147,7 +150,7 @@ function PathFollowingSettings{E}(;
         reach::Real = 3,
         orientation_check::Union{Nothing, PathFollowing.DeterminantSign} = PathFollowing.DeterminantSign(),
         split_check::Union{Nothing, PathFollowing.HalfStepCheck{E}} = default_split_check(distance),
-        max_refusals::Integer = 80,
+        max_refusals::Union{Nothing, Integer} = nothing,
         min_step_ulps::Integer = 4,
         # Both engines' default. At growth 1.1 it took 35-68% fewer hard_games steps than the summed metric.
         step_metric::TraceGeometry{E} = default_step_metric(E),
@@ -156,9 +159,9 @@ function PathFollowingSettings{E}(;
         endpoint_ulps::Integer = 16,
     )::PathFollowingSettings{E, L} where {E <: Real, L}
     return PathFollowingSettings{E, L}(
-        E(max_step), Int(max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
+        E(max_step), PathFollowing.checked_limit(:max_steps, max_steps), distance, Int(newton_iterations), E(contraction_limit), estimate_in(E, error_estimate),
         optional_limit(E, target_contraction), optional_limit(E, target_turn), E(max_step_growth), PathFollowing.reach_in(E, reach), orientation_check,
-        split_check, Int(max_refusals), Int(min_step_ulps), step_metric, linear_solver,
+        split_check, PathFollowing.checked_limit(:max_refusals, max_refusals), Int(min_step_ulps), step_metric, linear_solver,
         E(endpoint_tolerance), Int(endpoint_ulps),
     )
 end
@@ -331,13 +334,14 @@ function TraceStop(point::AbstractVector{E}, steps::Integer, step_length::E)::Tr
 end
 
 """
-The `TraceCause` of a trace that PathFollowing's `failure` ended: `TooManySteps` spent `MaxSteps`, an `Unresolved` step
-or `TooManyRefusals` stuck it, and a start that is not finite or has no tangent fails `AtStart`.
+The `TraceCause` of a trace that PathFollowing's `failure` ended: `TooManySteps` and `TooManyRefusals` spent their
+opt-in budgets (`MaxSteps`, `MaxRefusals`), an `Unresolved` step stuck it, and a start that is not finite or has no
+tangent fails `AtStart`.
 """
 function path_cause(failure::PathFollowing.StepFailure.Type{E})::TraceCause.Type{E} where {E <: Real}
     isa_variant(failure, PathFollowing.StepFailure.TooManySteps) && return TraceCause.NoConvergence{E}(MaxSteps)
     isa_variant(failure, PathFollowing.StepFailure.Unresolved) && return TraceCause.TraceStuck{E}(UnresolvedStep)
-    isa_variant(failure, PathFollowing.StepFailure.TooManyRefusals) && return TraceCause.TraceStuck{E}(StepRefusals)
+    isa_variant(failure, PathFollowing.StepFailure.TooManyRefusals) && return TraceCause.NoConvergence{E}(MaxRefusals)
     isa_variant(failure, PathFollowing.StepFailure.NotFiniteStart) && return TraceCause.NotFinite{E}(AtStart)
     isa_variant(failure, PathFollowing.StepFailure.SingularStart) || throw(ArgumentError(lazy"no trace cause for $failure"))
     return TraceCause.Singular{E}(AtStart)
@@ -375,16 +379,16 @@ end
 """
 `tracer` advanced by one accepted step that stops at precision `precision` (PathFollowing's `step!!` toward a `Bound`),
 and the step (PathFollowing's `AcceptedStep`), or the `TraceFailure` that ends the trace: `NoConvergence` once it has
-taken `max_steps` (as PathFollowing's `TooManySteps`), else the `path_cause` of PathFollowing's `Unresolved` or
+taken a set `max_steps` (as PathFollowing's `TooManySteps`), else the `path_cause` of PathFollowing's `Unresolved` or
 `TooManyRefusals`. `context` rides on the failure. Use only the returned tracer.
 """
 function path_step!!(
         tracer::T,
         precision::E,
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer},
         context::C,
     )::Tuple{T, Result{PathFollowing.AcceptedStep{E}, TraceFailure{E, C}}} where {E <: Real, C <: NamedTuple, T <: PathFollowing.Tracer{E}}
-    if tracer.steps >= max_steps
+    if PathFollowing.limit_reached(max_steps, tracer.steps)
         return tracer, Err(TraceFailure(PathFollowing.StepFailure.TooManySteps{E}(), tracer.point, tracer.steps, tracer.step_length, context))
     end
     tracer, stepped = PathFollowing.step!!(tracer, PathFollowing.Bound(length(tracer.point), precision))
@@ -395,44 +399,43 @@ function path_step!!(
     return tracer, Ok(unwrap(stepped))
 end
 
+"""PathFollowing measures its steps at target one, so it runs to any target (`require_target_free`)."""
+require_target_free(::PathFollowingSettings)::Nothing = nothing
+
 """
-`settled_points` on PathFollowing: the accepted points of `gains`' principal branch, to the first whose largest regret is
-at most `tolerance`. The steps stop at `maximum_precision` (`path_step!!`), where the trace settles or fails
-`NoConvergence` (`MaximumPrecision`).
+`settled_points` on PathFollowing: a trace of `gains`' principal branch whose steps stop at `target` (`path_step!!`),
+each accepted point into `recorder`, which stops it once it settles or stalls. `Ok(nothing)` when it ended so or at the
+target, else its failure with `context` (`branch_outcome`).
 """
 function engine_points(
         gains::NormalFormGains,
         settings::PathFollowingSettings{E},
-        maximum_precision::E,
-        tolerance::E,
+        target::E,
+        recorder::BranchRecorder,
         context::C,
-    )::Result{BranchPoints{E}, TraceFailure{E, C}} where {E <: Real, C <: NamedTuple}
+    )::Result{Nothing, TraceFailure{E, C}} where {E <: Real, C <: NamedTuple}
     problem = path_problem(gains, zeros(E, logit_count(gains)))
     started = path_init(problem, settings, PositivePrecision(AcceptAll()))
     is_error(started) && return Err(TraceFailure(unwrap_error(started), problem.start, 0, zero(E), context))
-    return recorded_points(unwrap(started), BranchRecorder(gains, tolerance), maximum_precision, settings.max_steps, context)
+    return recorded_points(unwrap(started), recorder, target, settings.max_steps, context)
 end
 
 """`engine_points` on a started `tracer`, each accepted point into `recorder`."""
 function recorded_points(
         tracer::PathFollowing.Tracer{E},
         recorder::BranchRecorder,
-        maximum_precision::E,
-        max_steps::Integer,
+        target::E,
+        max_steps::Union{Nothing, Integer},
         context::C,
-    )::Result{BranchPoints{E}, TraceFailure{E, C}} where {E <: Real, C <: NamedTuple}
-    tracer, stepped = path_step!!(tracer, maximum_precision, max_steps, context)
-    while !is_error(stepped)
+    )::Result{Nothing, TraceFailure{E, C}} where {E <: Real, C <: NamedTuple}
+    going = true
+    while going
+        tracer, stepped = path_step!!(tracer, target, max_steps, context)
+        is_error(stepped) && return Err(unwrap_error(stepped))
         point = tracer.point
-        if !recorder(logits_at(point), last(point))
-            return Ok((; recorder.precisions, recorder.logits))
-        end
-        if last(point) >= maximum_precision
-            return Err(TraceFailure(TraceCause.NoConvergence{E}(MaximumPrecision), tracer, context))
-        end
-        tracer, stepped = path_step!!(tracer, maximum_precision, max_steps, context)
+        going = recorder(logits_at(point), last(point)) && last(point) < target
     end
-    return Err(unwrap_error(stepped))
+    return Ok(nothing)
 end
 
 """
@@ -456,7 +459,7 @@ end
 function landed_lambdas(
         tracer::PathFollowing.Tracer{E},
         precisions::AbstractVector{E},
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer},
     )::Result{Vector{Vector{E}}, TraceFailure{E, LambdaContext{E}}} where {E <: Real}
     points = Vector{Vector{E}}(undef, length(precisions))
     for index in sortperm(precisions)
@@ -478,7 +481,7 @@ tracer.
 function stepped_landing!!(
         tracer::T,
         precision::E,
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer},
         keep_going::Any,
         context::C,
     )::Tuple{T, Result{Vector{E}, TraceFailure{E, C}}} where {E <: Real, C <: NamedTuple, T <: PathFollowing.Tracer{E}}
@@ -510,7 +513,7 @@ end
 to a nonzero target: one trace whose steps stop there (`stepped_landing!!`), with `callbacks = (; keep_going,
 accept_corrected, redraw)`. `accept_corrected` sees converged points only (`converged` is `true`), and its `false`
 refuses the point, which shrinks the step (`PositivePrecision`). A stop short of the target fails `TraceStuck` for
-PathFollowing's `Unresolved` or `TooManyRefusals`, and a start PathFollowing refuses fails `NotFinite` or `Singular`
+PathFollowing's `Unresolved`, `NoConvergence` for a spent budget, and a start PathFollowing refuses fails `NotFinite` or `Singular`
 (`path_cause`); the engine record holds PathFollowing's `StepFailure`. The endpoint passes `verified_landing`.
 """
 function engine_endpoint(
@@ -628,12 +631,12 @@ end
 
 """
 Each of `games`' `ProfileResult` on the host, from `land_batch` of its `inputs` (`batch_inputs`) on `backend` in groups
-of `workgroupsize`, at most `max_steps` steps each.
+of `workgroupsize`, at most `max_steps` steps each (`nothing`: no limit).
 """
 function batch_profiles(
         games::AbstractVector{<:NormalFormGains},
         inputs::NamedTuple,
-        max_steps::Integer;
+        max_steps::Union{Nothing, Integer};
         backend::KernelAbstractions.Backend,
         workgroupsize::Integer,
     )::AbstractVector{<:ProfileResult}

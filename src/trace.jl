@@ -1,6 +1,7 @@
 using BifurcationKit: BifurcationKit
 using ErrorTypes: Err, Ok
 using LinearAlgebra: LU, issuccess, lu!
+using PathFollowing: PathFollowing
 """
     EngineSettings{E}
 
@@ -51,7 +52,9 @@ precision. Step sizes are arclength in `step_metric`'s norm (`StepDistance`). Th
 - `corrector`: a `CorrectorSettings`.
 - `step_metric`: a `TraceGeometry`, the norm a trace steps in and its state weight. The default is
   `default_step_metric`, both engines' default. The first tangent is the exact tangent at the flat start (`opening_tangent`).
-- `max_steps`: continuation steps before the trace fails as `NoConvergence`.
+- `max_steps`: continuation steps before the trace fails as `NoConvergence` (`MaxSteps`), or `nothing` (the default)
+  for no limit. A trace then ends at its target or where it cannot go on: an unresolved step, an unmoved point, a stall
+  at rounding noise or a broken solve.
 - `tangent`: BifurcationKit's tangent algorithm, passed to PALC as is. `Bordered()` (the default) solves the bordered
   Jacobian system. `Secant()` extrapolates the last two points and saves that solve. Do not use it where a small payoff
   perturbation unfolds a pitchfork: there it crosses onto another arm (the test "a pitchfork unfolded by a payoff
@@ -80,7 +83,7 @@ struct BifurcationKitSettings{
     aggressiveness::E
     step_metric::TraceGeometry{E}
     corrector::CorrectorSettings{E}
-    max_steps::Int
+    max_steps::Union{Nothing, Int}
     tangent::T
     bordered_solver::BorderedSolver
     step_control::Union{Nothing, StepControl{E}}
@@ -96,7 +99,7 @@ function BifurcationKitSettings{E}(;
         aggressiveness::Real = E(GAMBIT_MAX_ACCEL) - one(E),
         step_metric::TraceGeometry{E} = default_step_metric(E),
         corrector::CorrectorSettings{E} = CorrectorSettings{E}(),
-        max_steps::Integer = 2_000,
+        max_steps::Union{Nothing, Integer} = nothing,
         tangent::T = BifurcationKit.Bordered(),
         bordered_solver::BorderedSolver = MatrixSolve,
         step_control::Union{Nothing, StepControl{E}} = StepControl{E}(),
@@ -108,7 +111,7 @@ function BifurcationKitSettings{E}(;
         E <: Real, T <: BifurcationKit.AbstractTangentComputation, C, P <: NamedTuple, O <: NamedTuple,
     }
     return BifurcationKitSettings{E, T, C, P, O}(
-        E(max_step), E(aggressiveness), step_metric, corrector, Int(max_steps), tangent, bordered_solver,
+        E(max_step), E(aggressiveness), step_metric, corrector, PathFollowing.checked_limit(:max_steps, max_steps), tangent, bordered_solver,
         step_control, checked_orientation(orientation_check, bordered_solver), palc_corrector, palc_options,
         continuation_options,
     )
@@ -231,13 +234,13 @@ end
 
 """
 BifurcationKit's continuation parameters for `settings`, from precision zero to `target_precision`, with first step
-`step_length` and at most `max_steps` steps. Eigenvalues, fold and bifurcation detection serve bifurcation diagrams; the trace reads
+`step_length` and at most `max_steps` steps, all of `Int` for `nothing` (`steps_left`). Eigenvalues, fold and bifurcation detection serve bifurcation diagrams; the trace reads
 only its endpoint.
 """
 function continuation_options(
         settings::BifurcationKitSettings{E},
         step_length::E,
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer},
         target_precision::Real,
     )::BifurcationKit.ContinuationPar where {E <: Real}
     own = (;
@@ -247,7 +250,7 @@ function continuation_options(
         a = settings.aggressiveness,
         p_min = zero(E),
         p_max = E(target_precision),
-        max_steps,
+        max_steps = something(max_steps, typemax(Int)),
         newton_options = BifurcationKit.NewtonPar(;
             # Only `CorrectorReach` converges a corrector (`settled`), and an exact root.
             tol = zero(E),
@@ -265,6 +268,10 @@ function continuation_options(
     )
     return BifurcationKit.ContinuationPar(; added_options(own, settings.continuation_options)...)
 end
+
+"""The steps a trace under the step budget `limit` has left after `steps`: `nothing` for no limit."""
+steps_left(::Nothing, ::Integer)::Nothing = nothing
+steps_left(limit::Integer, steps::Integer)::Integer = limit - steps
 
 """`merge(own, options)`, or an `ArgumentError` where `options` names a keyword of `own`, which the trace sets itself."""
 function added_options(own::NamedTuple, options::NamedTuple)::NamedTuple
@@ -291,7 +298,7 @@ function trace_iterator(
         finalise::TraceFinalise,
         corrector::CorrectorReach,
         step_length::E,
-        max_steps::Integer,
+        max_steps::Union{Nothing, Integer},
     )::BifurcationKit.ContIterable where {E <: Real}
     return continuation_iterator(
         branch_problem(game, start, last(start), pass_work; record_from_solution = trace_record_point),
@@ -421,7 +428,7 @@ shrinks the step. `redraw(logits, λ, shift)` swaps the game mid-trace; only `Bi
 (`check_redraw`). `context`, a `NamedTuple`, rides on every failure as its own field (`TraceFailure`).
 
 A non-finite start fails `NotFinite` (`AtStart`), and a zero target returns the flat start with no step. A trace that
-stops short fails `NoConvergence` (`MaxSteps`) when it spends `settings.max_steps`, and `TraceStuck`, `Singular` or
+stops short fails `NoConvergence` (`MaxSteps`) when it spends a set `settings.max_steps`, and `TraceStuck`, `Singular` or
 `PrecisionExhausted` otherwise (`TraceCause`). The point at the target passes one more Newton correction there,
 settled in Gambit's norm, or fails.
 """
@@ -516,7 +523,7 @@ function redrawn_trace(
         return reached_state(progress, outcome, slot.game, slot.pass_work, settings, context)
     end
     finalise.slot[] = restated(slot; pending = false)
-    if progress.steps >= settings.max_steps
+    if PathFollowing.limit_reached(settings.max_steps, progress.steps)
         return reached_state(progress, outcome, slot.game, slot.pass_work, settings, context)
     end
     return redrawn_trace(
@@ -585,7 +592,7 @@ function guarded_trace(
                 finalise,
                 corrector,
                 finalise.slot[].step_length,
-                settings.max_steps - opening.steps,
+                steps_left(settings.max_steps, opening.steps),
             ),
             start,
             finalise.slot[].factorization,
@@ -838,12 +845,12 @@ that would not correct (`UncorrectedStart`), a broken linear solve (`Singular`, 
 (`UnresolvedStep`), a point that did not move (`UnmovedPoint`), `max_steps` spent (`MaxSteps`), or else `keep_going` or
 a refusal (`StoppedShort`).
 """
-function stop_cause(progress::TraceProgress{E}, outcome::NamedTuple, max_steps::Integer)::TraceCause.Type{E} where {E <: Real}
+function stop_cause(progress::TraceProgress{E}, outcome::NamedTuple, max_steps::Union{Nothing, Integer})::TraceCause.Type{E} where {E <: Real}
     uncorrected_start(outcome.exception) && return TraceCause.TraceStuck{E}(UncorrectedStart)
     isnothing(outcome.exception) || return TraceCause.Singular{E}(MidTrace)
     outcome.unresolved && return TraceCause.TraceStuck{E}(UnresolvedStep)
     progress.unmoved && return TraceCause.TraceStuck{E}(UnmovedPoint)
-    progress.steps >= max_steps && return TraceCause.NoConvergence{E}(MaxSteps)
+    PathFollowing.limit_reached(max_steps, progress.steps) && return TraceCause.NoConvergence{E}(MaxSteps)
     return TraceCause.TraceStuck{E}(StoppedShort)
 end
 

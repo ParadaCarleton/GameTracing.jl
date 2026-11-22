@@ -119,12 +119,12 @@ end
     traced = unwrap(trace_endpoint(LogitGame(linear, target), 2, settings; keep_going = stop))
     @test length(stop.precisions) == traced.steps
     @test issorted(stop.precisions) && last(stop.precisions) == target && first(stop.precisions) > 0
-    # Only converged points reach `accept_corrected`, and a refusal past a level fails as a refused step.
+    # Only converged points reach `accept_corrected`, and a refusal past a level shrinks the step to its resolution.
     refusal = RecordedRefusal(target / 4, Bool[])
     refused = unwrap_error(trace_endpoint(LogitGame(linear, target), 2, settings; accept_corrected = refusal))
     @test all(refusal.flags) && !isempty(refusal.flags)
     @test refused.engine.failure.last_refusal == PathFollowing.AcceptRefused
-    @test refused.cause in (TraceCause.TraceStuck{element}(GameTracing.StepRefusals), TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep))
+    @test refused.cause == TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep)
     # A non-finite Jacobian at a finite start fails there as `NotFinite`; BifurcationKit's fails `Singular` or `TraceStuck`.
     nan_slope = unwrap_error(trace_endpoint(LogitGame(NaNSlopePass(linear, 0), target), 2, settings; context = (; label = :slope)))
     @test (nan_slope.cause, nan_slope.context.label) == (TraceCause.NotFinite{element}(GameTracing.AtStart), :slope)

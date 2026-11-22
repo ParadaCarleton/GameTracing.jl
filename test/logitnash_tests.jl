@@ -56,14 +56,14 @@ end
 
 """
 Whether a `TraceStuck` `failure` of `settings`' engine stalled where it says: BifurcationKit at a point that did not move
-or a step it could not resolve, PathFollowing at an unresolved step or its refusals.
+or a step it could not resolve, PathFollowing at an unresolved step.
 """
 function declared_stall(failure::TraceFailure, ::BifurcationKitSettings)::Bool
     return failure.cause.reason in (GameTracing.UnmovedPoint, GameTracing.UnresolvedStep)
 end
 
 function declared_stall(failure::TraceFailure, ::PathFollowingSettings)::Bool
-    return failure.cause.reason in (GameTracing.UnresolvedStep, GameTracing.StepRefusals)
+    return failure.cause.reason == GameTracing.UnresolvedStep
 end
 
 """The last accepted logits of a failed trace of `settings`' engine, in `NormalFormPass`' logits."""
@@ -500,14 +500,20 @@ end
         end
         # Run to its regret-based end, the trace keeps the principal branch and meets Gambit at its own precision.
         element = GameTracing.element_type(settings)
-        solved = logit_solve(NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME)); maxregret = 1.0f-4, settings)
-        @test !is_error(solved)
-        if !is_error(solved)
-            checked = unwrap(solved)
-            # The branch ends near the pure equilibrium (1, 1); the middle arm it passes ends mixed.
-            @test all(strategy -> first(strategy) > 99 // 100, checked.profile)
-            regret_oracle = gambit_strategies(UNFOLDED_PITCHFORK_GAME, checked.lam)
-            @test largest_gap(checked.profile, regret_oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
+        gains = NormalFormGains(map(table -> element.(table), UNFOLDED_PITCHFORK_GAME))
+        # A BifurcationKit trace whose steps scale with the target has no regret trace (`require_target_free`).
+        if settings isa BifurcationKitSettings && settings.step_metric.precision_term == TargetPrecisionTerm
+            @test_throws ArgumentError logit_solve(gains; maxregret = 1.0f-4, settings)
+        else
+            solved = logit_solve(gains; maxregret = 1.0f-4, settings)
+            @test !is_error(solved)
+            if !is_error(solved)
+                checked = unwrap(solved)
+                # The branch ends near the pure equilibrium (1, 1); the middle arm it passes ends mixed.
+                @test all(strategy -> first(strategy) > 99 // 100, checked.profile)
+                regret_oracle = gambit_strategies(UNFOLDED_PITCHFORK_GAME, checked.lam)
+                @test largest_gap(checked.profile, regret_oracle.strategies) < profile_bound(checked) + GAMBIT_PROBABILITY_TOLERANCE
+            end
         end
     end
     @test length(stalls) <= 2

@@ -32,6 +32,8 @@ export Tracer, Workspace, AcceptedStep, StepFailure, Refusal, Bound, Into, step!
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor, SplitMismatch
 # For wrappers that convert their own `reach` before they build a `StepControl`.
 public reach_in
+# For wrappers that share its optional budgets.
+public checked_limit, limit_reached
 
 include("device.jl")
 include("metric.jl")

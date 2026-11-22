@@ -200,7 +200,7 @@ end
     @test Set(variant_type.(failures)) == Set(variants(PathFollowing.StepFailure.Type{element}))
     @test GameTracing.path_cause.(failures) == [
         TraceCause.TraceStuck{element}(GameTracing.UnresolvedStep),
-        TraceCause.TraceStuck{element}(GameTracing.StepRefusals),
+        TraceCause.NoConvergence{element}(GameTracing.MaxRefusals),
         TraceCause.NotFinite{element}(GameTracing.AtStart),
         TraceCause.Singular{element}(GameTracing.AtStart),
         TraceCause.NoConvergence{element}(GameTracing.MaxSteps),

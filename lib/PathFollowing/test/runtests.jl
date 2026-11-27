@@ -5,6 +5,7 @@ using CommonSolve: init
 using ErrorTypes: is_error, unwrap, unwrap_error
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray, JLBackend
+using KernelAbstractions: KernelAbstractions, @groupsize, @index, @kernel, @localmem
 using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
 using Moshi.Data: isa_variant
@@ -15,135 +16,7 @@ using Test: @inferred, @test, @testset, @test_throws
 # A GPU array that indexes one element at a time throws, so the JLArrays tests catch every scalar access.
 allowscalar(false)
 
-"""
-A circle of `radius` about the origin in `(x, y)`: `H = x² + y² - radius²`. Broadcasts and reductions only, so it
-also runs on GPU arrays, which refuse scalar indexing, and on static arrays.
-"""
-struct Circle{E <: Real}
-    radius::E
-end
-
-function (circle::Circle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return (Into(residual) .= sum(abs2, point) - circle.radius^2, Into(jacobian) .= 2 .* transpose(point))
-end
-
-"""`residual` and `jacobian`, one row of two, set to `entry` and `row` (`Into`): a test system's return on any storage."""
-function one_row!!(residual::R, jacobian::J, entry::E, row::NTuple{2, E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return (Into(residual) .= SVector(entry), Into(jacobian) .= SMatrix{1, 2, E}(row...))
-end
-
-"""The line `x = y`: `H = x - y`."""
-struct Line end
-
-function (::Line)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return one_row!!(residual, jacobian, point[1] - point[2], (one(E), -one(E)))
-end
-
-"""The curve `λ = u - u³` in `(u, λ)`: λ turns at a minimum, `u = -1/√3`, then at a maximum, `u = 1/√3`."""
-struct Wiggle end
-
-function (::Wiggle)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return one_row!!(residual, jacobian, point[2] - point[1] + point[1]^3, (3 * point[1]^2 - 1, one(E)))
-end
-
-"""The fold `H = u² - λ` in `(u, λ)`: λ turns back at `u = 0`."""
-struct Fold end
-
-function (::Fold)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return one_row!!(residual, jacobian, point[1]^2 - point[2], (2 * point[1], -one(E)))
-end
-
-"""
-A pitchfork `H = u³ - λ u - tilt` in `(u, λ)`. Untilted, the branch `u = 0` crosses a simple bifurcation point at the
-origin; tilted, its upper branch passes close to the lower ones near `λ = 0`.
-"""
-struct Pitchfork{E <: Real}
-    tilt::E
-end
-
-function (pitchfork::Pitchfork{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    (u, lambda) = (point[1], point[2])
-    return one_row!!(residual, jacobian, u^3 - lambda * u - pitchfork.tilt, (3 * u^2 - lambda, -u))
-end
-
-"""`H = u - λ` up to `λ = edge`; past it a NaN residual, or a zero Jacobian when `singular`."""
-struct Edge{E <: Real}
-    edge::E
-    singular::Bool
-end
-
-function (edge::Edge{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    past = point[2] > edge.edge
-    row = past && edge.singular ? (zero(E), zero(E)) : (one(E), -one(E))
-    return one_row!!(residual, jacobian, past && !edge.singular ? E(NaN32) : point[1] - point[2], row)
-end
-
-"""`H = u - λ`, whose `bad_call`-th evaluation is NaN, or has a zero Jacobian when `singular`."""
-mutable struct Flaky
-    calls::Int
-    const bad_call::Int
-    const singular::Bool
-end
-
-function (flaky::Flaky)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    flaky.calls += 1
-    bad = flaky.calls == flaky.bad_call
-    row = bad && flaky.singular ? (zero(E), zero(E)) : (one(E), -one(E))
-    return one_row!!(residual, jacobian, bad && !flaky.singular ? E(NaN32) : point[1] - point[2], row)
-end
-
-"""A correction's length as the largest move of any coordinate, unbounded."""
-struct LargestMove end
-
-function (::LargestMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return mapreduce((later, earlier) -> abs(later - earlier), max, to, from)
-end
-function PathFollowing.correction_bound(::LargestMove, ::Type{E})::E where {E <: Real}
-    return E(Inf32)
-end
-
-"""`LargestMove` capped at one, as a distance between probabilities is."""
-struct CappedMove end
-
-function (::CappedMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return min(LargestMove()(from, to), one(E))
-end
-function PathFollowing.correction_bound(::CappedMove, ::Type{E})::E where {E <: Real}
-    return one(E)
-end
-
-"""
-The parabola `x = y²/2` and the line `x = -1/5`: `H = (x - y²/2)(x + 1/5)`. Up from the origin, a step of 1 corrects
-onto the line at `(-1/5, 1)`. Its half steps keep the parabola and reach `(1/2, 1)`.
-"""
-struct ParabolaAndLine end
-
-function (::ParabolaAndLine)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    parabola, line = point[1] - point[2]^2 / 2, point[1] + one(E) / 5
-    return one_row!!(residual, jacobian, parabola * line, (parabola + line, -point[2] * line))
-end
-
-"""The line `x = 0`, its residual NaN for `y` in `(1/4, 3/4)`: a step of 1 up from the origin sees only `y = 1`."""
-struct BandedLine end
-
-function (::BandedLine)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return one_row!!(residual, jacobian, one(E) / 4 < point[2] < 3 * one(E) / 4 ? E(NaN32) : point[1], (one(E), zero(E)))
-end
-
-"""`LargestMove` that throws a `DomainError` on a point in `BandedLine`'s band, where that line has no residual."""
-struct BandAvoidingMove end
-
-function (::BandAvoidingMove)(from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    in_band = point -> one(E) / 4 < point[2] < 3 * one(E) / 4
-    (in_band(from) || in_band(to)) && throw(DomainError((from, to), "a point in BandedLine's band"))
-    return LargestMove()(from, to)
-end
-function PathFollowing.correction_bound(::BandAvoidingMove, ::Type{E})::E where {E <: Real}
-    return E(Inf32)
-end
-
-"""A `converged` that never holds."""
-never(::AbstractVector, ::AbstractVector, ::AbstractVector)::Bool = false
+include("common.jl")
 
 """`tracer` after two steps toward `bound`, and the bytes the second, warm `step!!` allocates."""
 function warm_bytes(tracer::T, bound::Union{Nothing, Bound})::Tuple{T, Int} where {T <: Tracer}
@@ -184,15 +57,23 @@ function static_algorithm(::Type{E}; overrides...)::PseudoArclength where {E <: 
     return algorithm(E; metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = StaticLU(), overrides...)
 end
 
-"""Converged when the correction moved no coordinate more than `tolerance`."""
-struct Settled{E <: Real}
-    tolerance::E
+"""A workgroup memory of one lane on the host, with room for `floats` floats of `E`: a lone lane needs no barrier."""
+function host_memory(::Type{E}; floats::Integer = 512)::GroupMemory where {E <: Real}
+    return GroupMemory(zeros(E, floats), zeros(Int, 16), zeros(Int, 2), 1, 1, LoneLane())
 end
 
-function (settled::Settled{E})(previous::AbstractVector{E}, iterate::AbstractVector{E}, ::AbstractVector{E})::Bool where {E <: Real}
-    # A lazy broadcast: one reduction on a GPU array, and no allocation on the CPU.
-    moves = Broadcast.instantiate(Broadcast.broadcasted((from, to) -> abs(to - from), previous, iterate))
-    return mapreduce(identity, max, moves; init = zero(E)) <= settled.tolerance
+# One trace per workgroup, every lane of the group running it on the group's `@localmem`.
+# KernelAbstractions hoists `@localmem` above the body, so the element type comes from the `where` clause.
+@kernel function group_trace_kernel!(points::AbstractArray{E}, refusals, starts, directions, system, settings, first_step, bound, limit, barrier) where {E}
+    floats = @localmem E (512,)
+    integers = @localmem Int (16,)
+    cursor = @localmem Int (2,)
+    memory = GroupMemory(floats, integers, cursor, @index(Local, Linear), prod(@groupsize()), barrier)
+    trace = @index(Group, Linear)
+    record_group_trace!(
+        view(points, :, :, trace), view(refusals, :, trace), memory, system, view(starts, :, trace), view(directions, :, trace),
+        settings, first_step, bound, limit,
+    )
 end
 
 """
@@ -236,23 +117,6 @@ function half_circle_step(settle::E)::Tuple{Tracer, AcceptedStep} where {E <: Re
     return accepted(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; corrector, step_control = control); first_step = one(E) / 2)))
 end
 
-"""A `PseudoArclength` in `E` with Euclidean metrics and the given overrides."""
-function algorithm(::Type{E}; tolerance::Real = sqrt(eps(E)), overrides...)::PseudoArclength where {E <: Real}
-    defaults = (;
-        corrector = Newton(; max_iterations = 8, converged = Settled(E(tolerance)), contraction_limit = one(E) / 2),
-        step_control = StepControl(;
-            target_contraction = one(E) / 4, target_correction = one(E) / 10, target_turn = one(E) / 10,
-            max_step_growth = E(2), max_step = one(E) / 2,
-        ),
-        metric = FixedWeights(ones(E, 2)),
-        orientation_check = DeterminantSign(),
-        split_check = nothing,
-        linear_solver = LUFactorization(),
-        max_refusals = 60,
-    )
-    return PseudoArclength(; merge(defaults, overrides)...)
-end
-
 """Accepted points of `steps` steps of `problem` under `settings`, or the failure."""
 function traced(problem::CurveProblem, settings::PseudoArclength, steps::Integer; first_step::Real)::Any
     started = init(problem, settings; first_step)
@@ -286,7 +150,11 @@ function bounded_steps(tracer::T, bound::Bound{E}, limit::Integer)::Tuple{T, Vec
     return tracer, steps
 end
 
-@testset "PathFollowing $E" for E in (Float32, Float64)
+"""Whether `Pkg.test`'s `test_args` choose `element_type`. They split the suite over processes; none choose all."""
+chosen(element_type::Type{<:Real})::Bool = isempty(ARGS) || string(element_type) in ARGS
+all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name Float32, Float64 or BigFloat; got $ARGS")
+
+@testset "PathFollowing $E" for E in filter(chosen, (Float32, Float64))
     tolerance = sqrt(eps(E))
 
     @testset "circle: every point on it, the angle rising around a full turn" begin
@@ -880,42 +748,171 @@ end
         end
     end
 
-    @testset "a static start traces as a mutable one, step for step, through refusals and failures" begin
-        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+    @testset "static and group starts trace as a mutable one, step for step, through refusals and failures" begin
+        # A point metric, beside the parity cases. Each case's last entry checks its refusals and failure, if any.
         point_metric = (; metric = CountingMetric(Ref(0)), turn_metric = FixedWeights(ones(E, 2)))
-        # A split check; a landing; orientation flips at a bifurcation point; zero pivots past an edge; a point metric.
-        # Each case's last entry checks that its trace took that path: its refusals and its failure, if any.
-        cases = (
-            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), nothing, 12, (_, failure) -> isnothing(failure)),
-            (Circle(one(E)), E[1, 0], E[0, 1], (; split_check = check), Bound(2, E(3) / 4), 20, (_, failure) -> isnothing(failure)),
-            (Pitchfork(zero(E)), E[0, -1], E[0, 1], (;), nothing, 12, (refusals, _) -> refusals > 0),
-            (Edge(one(E), true), E[0, 0], E[1, 1], (;), nothing, 200, (_, failure) -> failure.last_refusal == SingularSystem),
-            (Fold(), E[-1, 1], E[1, -1], point_metric, nothing, 12, (_, failure) -> isnothing(failure)),
-        )
+        cases = (parity_cases(E)..., (Fold(), E[-1, 1], E[1, -1], point_metric, nothing, 12, (_, failure) -> isnothing(failure)))
         for (system, start, direction, overrides, bound, limit, took_its_path) in cases
             in_place = unwrap(init(CurveProblem(system, start, direction), algorithm(E; overrides...); first_step = E(1) / 4))
-            static_problem = CurveProblem(system, SVector{2, E}(start), SVector{2, E}(direction))
+            N = length(start)
+            static_problem = CurveProblem(system, SVector{N, E}(start), SVector{N, E}(direction))
             static = unwrap(init(static_problem, algorithm(E; linear_solver = StaticLU(), overrides...); first_step = E(1) / 4))
-            @test static.point isa SVector{2, E} && static.work.bordered isa SMatrix{2, 2, E}
-            @test static.linear isa PathFollowing.StaticSolve && static.orientation == in_place.orientation
+            memory = host_memory(E)
+            group_problem = CurveProblem(system, group_vector(memory, start), group_vector(memory, direction))
+            group = unwrap(init(group_problem, algorithm(E; linear_solver = GroupLU(), overrides...); first_step = E(1) / 4))
+            @test static.point isa SVector{N, E} && static.work.bordered isa SMatrix{N, N, E} && static.linear isa PathFollowing.StaticSolve
+            @test group.point isa GroupVector{E} && group.work.bordered isa GroupMatrix{E} && group.linear isa PathFollowing.GroupSolve
+            @test static.orientation == group.orientation == in_place.orientation
             refusals, failure = 0, nothing
             for _ in 1:limit
                 in_place, expected = step!!(in_place, bound)
                 static, outcome = step!!(static, bound)
-                @test is_error(outcome) == is_error(expected)
+                group, grouped = step!!(group, bound)
+                @test is_error(outcome) == is_error(grouped) == is_error(expected)
                 if is_error(expected)
                     failure = unwrap_error(outcome)
-                    @test failure == unwrap_error(expected)
+                    @test failure == unwrap_error(grouped) == unwrap_error(expected)
                     break
                 end
                 refusals += unwrap(outcome).refusals
-                @test unwrap(outcome).refusals == unwrap(expected).refusals
+                @test unwrap(outcome).refusals == unwrap(grouped).refusals == unwrap(expected).refusals
                 @test static.point ≈ in_place.point atol = 10 * tolerance
-                @test static.orientation == in_place.orientation
+                @test collect(group.point) ≈ in_place.point atol = 10 * tolerance
+                @test static.orientation == group.orientation == in_place.orientation
                 isnothing(bound) || static.point[bound.coordinate] != bound.value || break
             end
             @test took_its_path(refusals, failure)
-            @test isnothing(bound) || static.point[bound.coordinate] == in_place.point[bound.coordinate] == bound.value
+            @test isnothing(bound) || static.point[bound.coordinate] == group.point[bound.coordinate] == in_place.point[bound.coordinate] == bound.value
+        end
+    end
+
+    @testset "a warm step in group memory allocates nothing, nor does one that lands on a bound" begin
+        check = HalfStepCheck{E}(; trigger = 0, tolerance = one(E) / 100)
+        for bound in (nothing, Bound(2, E(3) / 20)), split_check in (nothing, check)
+            memory = host_memory(E)
+            problem = CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(memory, E[0, 1]))
+            settings = algorithm(E; split_check, metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = GroupLU())
+            # A fresh tracer each: tracers in one group memory share their arrays, and the warm one ends on the bound.
+            @inferred step!!(unwrap(init(problem, settings; first_step = E(1) / 10)), bound)
+            @test last(warm_bytes(unwrap(init(problem, settings; first_step = E(1) / 10)), bound)) == 0
+        end
+    end
+
+    @testset "a trace's steps take no group memory past its start's, and 16 coordinates fit the CUDA tests' 2048 floats" begin
+        chain, chain_direction = chain_start(E, 16, 3 // 10)
+        chain_case = (TanhChain(), chain, chain_direction, (; metric = FixedWeights(ones(E, 16))), nothing, 50, nothing)
+        for (system, start, direction, overrides, bound, limit, _) in (parity_cases(E)..., chain_case)
+            settings = algorithm(E; overrides..., linear_solver = GroupLU())
+            first_step = system isa TanhChain ? E(1) / 20 : E(1) / 4
+            started = host_memory(E; floats = 2048)
+            init(CurveProblem(system, group_vector(started, start), group_vector(started, direction)), settings; first_step)
+            traced, refusals = host_memory(E; floats = 2048), fill(-2, limit)
+            record_group_trace!(fill(E(NaN), length(start), limit), refusals, traced, system, start, direction, settings, first_step, bound, limit)
+            @test traced.cursor == started.cursor
+            system isa TanhChain && length(start) == 16 && @test all(>=(0), refusals)
+        end
+    end
+
+    @testset "GroupLU solves as LAPACK's LU and gives the sign of the determinant, its row swaps counted" begin
+        entry = Data.Floats{E}(; minimum = -E(4), maximum = E(4), nans = false, infs = false)
+        @check max_examples = 60 function as_lapack(order = Data.Integers(1, 6), entries = Data.Vectors(entry; min_size = 49, max_size = 49))
+            matrix, rhs = reshape(entries[1:(order^2)], order, order), entries[43:(42 + order)]
+            memory = host_memory(E)
+            bordered, column = copyto!(group_array(memory, E, (order, order)), matrix), group_vector(memory, rhs)
+            state = PathFollowing.GroupSolve(Int8(0), similar(column))
+            state, solution, solved = PathFollowing.linear_solve!!(state, bordered, column, similar(column))
+            # A failed solve has a zero sign. Rounding decides a near-singular system, so only a well-conditioned one must pass.
+            solved || return iszero(state.sign)
+            wide = Float64.(matrix)
+            LinearAlgebra.cond(wide) < 100 || return all(isfinite, solution)
+            return state.sign == sign(det(wide)) && isapprox(collect(solution), wide \ Float64.(rhs); rtol = 1000 * eps(E))
+        end
+        # Two row swaps cancel in the sign; a zero column fails the solve.
+        memory = host_memory(E)
+        cycle = copyto!(group_array(memory, E, (3, 3)), E[0 1 0; 0 0 1; 1 0 0])
+        rhs = group_vector(memory, E[1, 2, 3])
+        state, solution, solved = PathFollowing.linear_solve!!(PathFollowing.GroupSolve(Int8(0), similar(rhs)), cycle, rhs, similar(rhs))
+        @test solved && state.sign == 1 && collect(solution) == E[3, 1, 2]
+        singular = copyto!(group_array(memory, E, (2, 2)), E[1 0; 1 0])
+        state, _, solved = PathFollowing.linear_solve!!(state, singular, group_vector(memory, E[1, 1]), group_vector(memory, E[0, 0]))
+        @test !solved && state.sign == 0
+    end
+
+    @testset "group memory hands out its entries once, refuses a foreign type and a full buffer, and needs GroupLU" begin
+        memory = host_memory(E; floats = 8)
+        floats_taken, integers_taken = group_array(memory, E, (3,)), group_array(memory, Int, (2, 2))
+        @test (floats_taken.offset, integers_taken.offset, memory.cursor) == (0, 0, [3, 4])
+        @test group_array(memory, E, (5,)).offset == 3
+        @test_throws "the group memory is full" group_array(memory, E, (1,))
+        other = E === Float32 ? Float64 : Float32
+        @test_throws "its own float type and Int" group_array(memory, other, (1,))
+        @test reset_memory!(memory).cursor == [0, 0] && group_array(memory, E, (8,)).offset == 0
+        memory = host_memory(E)
+        problem = CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(memory, E[0, 1]))
+        @test_throws "needs linear_solver = GroupLU()" init(problem, algorithm(E); first_step = E(1) / 10)
+        @test_throws "GroupLU needs a start in a workgroup's memory" init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; linear_solver = GroupLU()); first_step = E(1) / 10)
+        vector = group_vector(memory, E[1, 2, 3])
+        @test PathFollowing.set_element!!(vector, 2, E(7)) === vector && collect(vector) == E[1, 7, 3]
+        @test (Into(vector) .= 2 .* vector) === vector && collect(vector) == E[2, 14, 6]
+        @test collect(fill!(vector, E(5))) == E[5, 5, 5] && collect(PathFollowing.unit!!(vector, 3)) == E[0, 0, 1]
+    end
+
+    @testset "a group array checks its own bounds, has no setindex!, and refuses a broadcast from entries it overlaps" begin
+        memory = host_memory(E)
+        first_array, second_array = group_vector(memory, E[1, 2]), group_vector(memory, E[3, 4])
+        @test_throws BoundsError first_array[3]
+        @test_throws BoundsError PathFollowing.store!(first_array, E(9), 3)
+        @test collect(second_array) == E[3, 4]
+        @test_throws "setindex!" (first_array[1] = E(9))
+        vector = group_vector(memory, E[1, 2, 3])
+        @test_throws "reads an array that overlaps it" Into(vector) .= view(vector, 3:-1:1)
+        @test_throws "reads an array that overlaps it" Into(vector) .= view(memory.floats, (vector.offset + 3):-1:(vector.offset + 1))
+        floats = zeros(E, 8)
+        viewed = GroupMemory(view(floats, 1:8), zeros(Int, 2), zeros(Int, 2), 1, 1, LoneLane())
+        @test_throws "reads an array that overlaps it" Into(group_vector(viewed, E[1, 2, 3])) .= view(floats, 3:-1:1)
+        @test_throws "reads an array that overlaps it" Into(group_vector(viewed, E[1, 2])) .= group_vector(GroupMemory(view(floats, 5:8), zeros(Int, 2), zeros(Int, 2), 1, 1, LoneLane()), E[1, 2])
+        @test collect(vector) == E[1, 2, 3]
+        @test_throws "not negative" group_array(memory, E, (-1,))
+        @test_throws OverflowError group_array(memory, E, (typemax(Int), 2))
+        refusals = fill(-2, 3)
+        record_group_trace!(fill(E(NaN), 2, 3), refusals, host_memory(E), Circle(one(E)), E[NaN, 0], E[0, 1], algorithm(E; linear_solver = GroupLU()), E(1) / 4, nothing, 3)
+        @test refusals == [-3, -2, -2]
+        @test collect(Into(vector) .= vector .+ first_array[2] .* E[1, 2, 3]) == E[3, 6, 9]
+        @test collect(copyto!(vector, view(second_array, [2, 1, 2]))) == E[4, 3, 4]
+        @test collect(copyto!(vector, E[7])) == E[7, 3, 4] && collect(copyto!(vector, E[])) == E[7, 3, 4]
+        @test_throws BoundsError copyto!(first_array, E[1, 2, 3])
+        @test_throws "reads an array that overlaps it" copyto!(vector, view(vector, 3:-1:1))
+    end
+
+    @testset "a group memory refuses a lane outside its group, LoneLane() for several lanes, and a cursor not of two entries" begin
+        floats, integers = zeros(E, 4), zeros(Int, 4)
+        @test_throws "lies in 1:lanes" GroupMemory(floats, integers, zeros(Int, 2), 0, 1, LoneLane())
+        @test_throws "lies in 1:lanes" GroupMemory(floats, integers, zeros(Int, 2), 3, 2, GroupBarrier())
+        @test_throws "a group of one lane" GroupMemory(floats, integers, zeros(Int, 2), 1, 2, LoneLane())
+        @test_throws "two entries" GroupMemory(floats, integers, zeros(Int, 3), 1, 1, LoneLane())
+        @test_throws "separate storage" GroupMemory(floats, integers, view(integers, 1:2), 1, 1, LoneLane())
+        @test GroupMemory(floats, integers, integers[1:2], 1, 1, LoneLane()).cursor == [0, 0]
+        @test GroupMemory(floats, integers, zeros(Int, 2), 2, 2, GroupBarrier()).lane == 2
+    end
+
+    @testset "a CPU-backend kernel of one-lane workgroups traces each start in group memory as a Vector start traces" begin
+        backend = KernelAbstractions.CPU()
+        for (system, start, direction, overrides, bound, limit, _) in parity_cases(E)
+            # Four starts a little apart, one per workgroup.
+            starts = reduce(hcat, (start .+ E(shift) .* direction for shift in (0, 1 // 100, 2 // 100, 3 // 100)))
+            directions = repeat(direction, 1, 4)
+            N = length(start)
+            settings = algorithm(E; merge(overrides, (; metric = FixedWeights(SVector{N, E}(ntuple(_ -> one(E), N))), linear_solver = GroupLU()))...)
+            @test isbits(settings)
+            points, refusals = fill(E(NaN), N, limit, 4), fill(-2, limit, 4)
+            group_trace_kernel!(backend, 1)(points, refusals, starts, directions, system, settings, E(1) / 4, bound, limit, LoneLane(); ndrange = 4)
+            KernelAbstractions.synchronize(backend)
+            for trace in 1:4
+                host_points, host_refusals = recorded_trace(system, starts[:, trace], directions[:, trace], algorithm(E; overrides...), E(1) / 4, bound, limit)
+                @test refusals[:, trace] == host_refusals
+                taken = host_refusals .!= -2
+                @test points[:, taken, trace] ≈ host_points[:, taken] atol = 10 * tolerance nans = true
+            end
         end
     end
 
@@ -1077,7 +1074,15 @@ end
     end
 end
 
-@testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin
+@testset "CUDA parity shards split the configurations and refuse a shard past them" begin
+    @test chosen_configs(String[], 12) == 1:12 && isempty(chosen_configs(["timing"], 12))
+    @test sort(reduce(vcat, [collect(chosen_configs(["parity", string(shard), "5"], 12)) for shard in 1:5])) == 1:12
+    @test_throws "holds no configuration" chosen_configs(["parity", "13", "13"], 12)
+    @test_throws "holds no configuration" chosen_configs(["parity", "0", "3"], 12)
+    @test_throws "`parity SHARD SHARDS`" chosen_configs(["parity", "1"], 12)
+end
+
+chosen(BigFloat) && @testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin
     for linear_solver in (LUFactorization(), QRFactorization())
         settings = algorithm(BigFloat; linear_solver)
         tracer = unwrap(init(CurveProblem(Pitchfork(zero(BigFloat)), BigFloat[0, -1], BigFloat[0, 1]), settings; first_step = big(3) / 10))

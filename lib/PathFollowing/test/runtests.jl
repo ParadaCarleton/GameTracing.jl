@@ -18,11 +18,15 @@ allowscalar(false)
 
 include("common.jl")
 
-"""`tracer` after two steps toward `bound`, and the bytes the second, warm `step!!` allocates."""
-function warm_bytes(tracer::T, bound::Union{Nothing, Bound})::Tuple{T, Int} where {T <: Tracer}
-    tracer, _ = step!!(tracer, bound)
-    bytes = @allocated((tracer, _) = step!!(tracer, bound))
+"""`tracer`, of group `memory` or `nothing`, after two steps toward `bound`, and the bytes the second, warm `step!!` allocates."""
+function warm_bytes(memory::Union{Nothing, GroupMemory}, tracer::T, bound::Union{Nothing, Bound})::Tuple{T, Int} where {T <: Tracer}
+    tracer, _ = step!!(memory, tracer, bound)
+    bytes = @allocated((tracer, _) = step!!(memory, tracer, bound))
     return tracer, bytes
+end
+
+function warm_bytes(tracer::T, bound::Union{Nothing, Bound})::Tuple{T, Int} where {T <: Tracer}
+    return warm_bytes(nothing, tracer, bound)
 end
 
 """`tracer` advanced by one step toward `bound` (`step!!`), and its `AcceptedStep`; a failed step throws."""
@@ -59,16 +63,15 @@ end
 
 """A workgroup memory of one lane on the host, with room for `floats` floats of `E`: a lone lane needs no barrier."""
 function host_memory(::Type{E}; floats::Integer = 512)::GroupMemory where {E <: Real}
-    return GroupMemory(zeros(E, floats), zeros(Int, 16), zeros(Int, 2), 1, 1, LoneLane())
+    return GroupMemory(zeros(E, floats), zeros(Int, 1), 1, 1, LoneLane())
 end
 
 # One trace per workgroup, every lane of the group running it on the group's `@localmem`.
 # KernelAbstractions hoists `@localmem` above the body, so the element type comes from the `where` clause.
 @kernel function group_trace_kernel!(points::AbstractArray{E}, refusals, starts, directions, system, settings, first_step, bound, limit, barrier) where {E}
     floats = @localmem E (512,)
-    integers = @localmem Int (16,)
-    cursor = @localmem Int (2,)
-    memory = GroupMemory(floats, integers, cursor, @index(Local, Linear), prod(@groupsize()), barrier)
+    cursor = @localmem Int (1,)
+    memory = GroupMemory(floats, cursor, @index(Local, Linear), prod(@groupsize()), barrier)
     trace = @index(Group, Linear)
     record_group_trace!(
         view(points, :, :, trace), view(refusals, :, trace), memory, system, view(starts, :, trace), view(directions, :, trace),
@@ -422,11 +425,11 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         tracer.work.iterate .= E[3 // 2, 1 // 100]
         copyto!(tracer.work.previous, tracer.work.iterate)
         # The start settled by a last correction of length 1/1000, which bounds its error.
-        @reset tracer.settle_error = PathFollowing.settle_error(tracer, E[1 + 1 // 1000, 0], E[1, 0])
-        @test PathFollowing.far_from_predictor(tracer, E(1) / 100)
+        @reset tracer.settle_error = PathFollowing.settle_error(nothing, tracer, E[1 + 1 // 1000, 0], E[1, 0])
+        @test PathFollowing.far_from_predictor(nothing, tracer, E(1) / 100)
         # A last correction of length 1, as a tolerance of 1 allows, cannot tell that move from the corrector's noise.
-        @reset tracer.settle_error = PathFollowing.settle_error(tracer, E[2, 0], E[1, 0])
-        @test !PathFollowing.far_from_predictor(tracer, E(1) / 100)
+        @reset tracer.settle_error = PathFollowing.settle_error(nothing, tracer, E[2, 0], E[1, 0])
+        @test !PathFollowing.far_from_predictor(nothing, tracer, E(1) / 100)
     end
 
     @testset "a step that corrects onto another branch is refused by its half steps, and its retry keeps the branch" begin
@@ -458,7 +461,7 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         tracer.work.candidate .= E[0, 1]
         tracer.work.previous .= E[0, 7 // 8]
         # The half predictor at y = 1/2 lies in the band, so the first half step fails.
-        tracer, refuses = PathFollowing.split_refused!!(tracer, check, zero(E), nothing, false, one(E))
+        tracer, refuses = PathFollowing.split_refused!!(nothing, tracer, check, zero(E), nothing, false, one(E))
         @test (refuses, tracer.work.iterate, tracer.work.candidate, tracer.work.previous) == (true, E[0, 1], E[0, 1], E[0, 7 // 8])
         # The retries: SplitMismatch at 1, NotFiniteResidual at 1/2 (in the band), and 1/4 lies on its edge.
         tracer, step = accepted(banded(60))
@@ -761,13 +764,14 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
             group_problem = CurveProblem(system, group_vector(memory, start), group_vector(memory, direction))
             group = unwrap(init(group_problem, algorithm(E; linear_solver = GroupLU(), overrides...); first_step = E(1) / 4))
             @test static.point isa SVector{N, E} && static.work.bordered isa SMatrix{N, N, E} && static.linear isa PathFollowing.StaticSolve
-            @test group.point isa GroupVector{E} && group.work.bordered isa GroupMatrix{E} && group.linear isa PathFollowing.GroupSolve
+            @test group.point isa GroupHandle{E, 1} && group.work.bordered isa GroupHandle{E, 2} && group.linear isa PathFollowing.GroupSolve
+            @test group_view(memory, group).point isa GroupVector{E} && group_view(memory, group).work.bordered isa GroupMatrix{E}
             @test static.orientation == group.orientation == in_place.orientation
             refusals, failure = 0, nothing
             for _ in 1:limit
                 in_place, expected = step!!(in_place, bound)
                 static, outcome = step!!(static, bound)
-                group, grouped = step!!(group, bound)
+                group, grouped = step!!(memory, group, bound)
                 @test is_error(outcome) == is_error(grouped) == is_error(expected)
                 if is_error(expected)
                     failure = unwrap_error(outcome)
@@ -777,12 +781,12 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
                 refusals += unwrap(outcome).refusals
                 @test unwrap(outcome).refusals == unwrap(grouped).refusals == unwrap(expected).refusals
                 @test static.point ≈ in_place.point atol = 10 * tolerance
-                @test collect(group.point) ≈ in_place.point atol = 10 * tolerance
+                @test collect(group_view(memory, group).point) ≈ in_place.point atol = 10 * tolerance
                 @test static.orientation == group.orientation == in_place.orientation
                 isnothing(bound) || static.point[bound.coordinate] != bound.value || break
             end
             @test took_its_path(refusals, failure)
-            @test isnothing(bound) || static.point[bound.coordinate] == group.point[bound.coordinate] == in_place.point[bound.coordinate] == bound.value
+            @test isnothing(bound) || static.point[bound.coordinate] == group_view(memory, group).point[bound.coordinate] == in_place.point[bound.coordinate] == bound.value
         end
     end
 
@@ -793,8 +797,11 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
             problem = CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(memory, E[0, 1]))
             settings = algorithm(E; split_check, metric = FixedWeights(SVector{2, E}(1, 1)), linear_solver = GroupLU())
             # A fresh tracer each: tracers in one group memory share their arrays, and the warm one ends on the bound.
-            @inferred step!!(unwrap(init(problem, settings; first_step = E(1) / 10)), bound)
-            @test last(warm_bytes(unwrap(init(problem, settings; first_step = E(1) / 10)), bound)) == 0
+            tracer = unwrap(init(problem, settings; first_step = E(1) / 10))
+            # Handles only: a copy of the tracer copies no array.
+            @test isbits(tracer)
+            @inferred step!!(memory, tracer, bound)
+            @test last(warm_bytes(memory, unwrap(init(problem, settings; first_step = E(1) / 10)), bound)) == 0
         end
     end
 
@@ -817,7 +824,7 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
             matrix, rhs = reshape(entries[1:(order^2)], order, order), entries[43:(42 + order)]
             memory = host_memory(E)
             bordered, column = copyto!(group_array(memory, E, (order, order)), matrix), group_vector(memory, rhs)
-            state = PathFollowing.GroupSolve(Int8(0), similar(column))
+            state = PathFollowing.GroupSolve(Int8(0), PathFollowing.stored(similar(column)))
             state, solution, solved = PathFollowing.linear_solve!!(state, bordered, column, similar(column))
             # A failed solve has a zero sign. Rounding decides a near-singular system, so only a well-conditioned one must pass.
             solved || return iszero(state.sign)
@@ -829,7 +836,7 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         memory = host_memory(E)
         cycle = copyto!(group_array(memory, E, (3, 3)), E[0 1 0; 0 0 1; 1 0 0])
         rhs = group_vector(memory, E[1, 2, 3])
-        state, solution, solved = PathFollowing.linear_solve!!(PathFollowing.GroupSolve(Int8(0), similar(rhs)), cycle, rhs, similar(rhs))
+        state, solution, solved = PathFollowing.linear_solve!!(PathFollowing.GroupSolve(Int8(0), PathFollowing.stored(similar(rhs))), cycle, rhs, similar(rhs))
         @test solved && state.sign == 1 && collect(solution) == E[3, 1, 2]
         singular = copyto!(group_array(memory, E, (2, 2)), E[1 0; 1 0])
         state, _, solved = PathFollowing.linear_solve!!(state, singular, group_vector(memory, E[1, 1]), group_vector(memory, E[0, 0]))
@@ -838,13 +845,18 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
 
     @testset "group memory hands out its entries once, refuses a foreign type and a full buffer, and needs GroupLU" begin
         memory = host_memory(E; floats = 8)
-        floats_taken, integers_taken = group_array(memory, E, (3,)), group_array(memory, Int, (2, 2))
-        @test (floats_taken.offset, integers_taken.offset, memory.cursor) == (0, 0, [3, 4])
-        @test group_array(memory, E, (5,)).offset == 3
+        taken = group_array(memory, E, (3,))
+        @test (taken.handle, memory.cursor) == (GroupHandle{E, 1}(0, (3,)), [3])
+        @test group_array(memory, E, (5,)).handle.offset == 3
         @test_throws "the group memory is full" group_array(memory, E, (1,))
         other = E === Float32 ? Float64 : Float32
-        @test_throws "its own float type and Int" group_array(memory, other, (1,))
-        @test reset_memory!(memory).cursor == [0, 0] && group_array(memory, E, (8,)).offset == 0
+        @test_throws "its own float type" group_array(memory, other, (1,))
+        @test_throws "its own float type" group_array(memory, Int, (1,))
+        @test reset_memory!(memory).cursor == [0] && group_array(memory, E, (8,)).handle.offset == 0
+        # A handle views only through a memory of its own float type.
+        @test PathFollowing.stored_view(memory, PathFollowing.stored(taken)) === taken && PathFollowing.stored(taken) === taken.handle
+        @test_throws "takes its GroupMemory beside it" PathFollowing.stored_view(nothing, taken.handle)
+        @test_throws "its memory's float type" PathFollowing.stored_view(GroupMemory(zeros(other, 4), zeros(Int, 1), 1, 1, LoneLane()), taken.handle)
         memory = host_memory(E)
         problem = CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(memory, E[0, 1]))
         @test_throws "needs linear_solver = GroupLU()" init(problem, algorithm(E); first_step = E(1) / 10)
@@ -853,6 +865,26 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test PathFollowing.set_element!!(vector, 2, E(7)) === vector && collect(vector) == E[1, 7, 3]
         @test (Into(vector) .= 2 .* vector) === vector && collect(vector) == E[2, 14, 6]
         @test collect(fill!(vector, E(5))) == E[5, 5, 5] && collect(PathFollowing.unit!!(vector, 3)) == E[0, 0, 1]
+    end
+
+    @testset "a group trace steps and lands only in the memory it started in, and lands as a Vector trace lands" begin
+        memory, other = host_memory(E), host_memory(E)
+        settings = algorithm(E; linear_solver = GroupLU())
+        tracer = unwrap(init(CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(memory, E[0, 1])), settings; first_step = E(1) / 10))
+        @test_throws "the group memory it started in" step!!(other, tracer)
+        @test_throws "the group memory it started in" step!!(tracer)
+        @test_throws "the group memory it started in" group_view(other, tracer)
+        # A wrong memory throws before the landing reads its point or its budget.
+        @test_throws "the group memory it started in" land!!(other, tracer, Bound(2, zero(E)), 0)
+        # Two memories over one buffer under separate cursors are separate memories.
+        @test_throws "the group memory it started in" land!!(GroupMemory(memory.floats, zeros(Int, 1), 1, 1, LoneLane()), tracer, Bound(2, zero(E)), 0)
+        split_problem = CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(other, E[0, 1]))
+        @test_throws "lies in its start's memory" init(split_problem, settings; first_step = E(1) / 10)
+        bound = Bound(2, E(1) / 2)
+        tracer, landed = land!!(memory, tracer, bound, 40)
+        _, expected = land!!(unwrap(init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E); first_step = E(1) / 10)), bound, 40)
+        @test unwrap(landed) isa GroupVector{E} && unwrap(landed)[2] == bound.value
+        @test collect(unwrap(landed)) ≈ unwrap(expected) atol = 10 * tolerance
     end
 
     @testset "a group array checks its own bounds, has no setindex!, and refuses a broadcast from entries it overlaps" begin
@@ -864,11 +896,11 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test_throws "setindex!" (first_array[1] = E(9))
         vector = group_vector(memory, E[1, 2, 3])
         @test_throws "reads an array that overlaps it" Into(vector) .= view(vector, 3:-1:1)
-        @test_throws "reads an array that overlaps it" Into(vector) .= view(memory.floats, (vector.offset + 3):-1:(vector.offset + 1))
+        @test_throws "reads an array that overlaps it" Into(vector) .= view(memory.floats, (vector.handle.offset + 3):-1:(vector.handle.offset + 1))
         floats = zeros(E, 8)
-        viewed = GroupMemory(view(floats, 1:8), zeros(Int, 2), zeros(Int, 2), 1, 1, LoneLane())
+        viewed = GroupMemory(view(floats, 1:8), zeros(Int, 1), 1, 1, LoneLane())
         @test_throws "reads an array that overlaps it" Into(group_vector(viewed, E[1, 2, 3])) .= view(floats, 3:-1:1)
-        @test_throws "reads an array that overlaps it" Into(group_vector(viewed, E[1, 2])) .= group_vector(GroupMemory(view(floats, 5:8), zeros(Int, 2), zeros(Int, 2), 1, 1, LoneLane()), E[1, 2])
+        @test_throws "reads an array that overlaps it" Into(group_vector(viewed, E[1, 2])) .= group_vector(GroupMemory(view(floats, 5:8), zeros(Int, 1), 1, 1, LoneLane()), E[1, 2])
         @test collect(vector) == E[1, 2, 3]
         @test_throws "not negative" group_array(memory, E, (-1,))
         @test_throws OverflowError group_array(memory, E, (typemax(Int), 2))
@@ -885,15 +917,15 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test_throws "reads an array that overlaps it" copyto!(vector, view(vector, 3:-1:1))
     end
 
-    @testset "a group memory refuses a lane outside its group, LoneLane() for several lanes, and a cursor not of two entries" begin
-        floats, integers = zeros(E, 4), zeros(Int, 4)
-        @test_throws "lies in 1:lanes" GroupMemory(floats, integers, zeros(Int, 2), 0, 1, LoneLane())
-        @test_throws "lies in 1:lanes" GroupMemory(floats, integers, zeros(Int, 2), 3, 2, GroupBarrier())
-        @test_throws "a group of one lane" GroupMemory(floats, integers, zeros(Int, 2), 1, 2, LoneLane())
-        @test_throws "two entries" GroupMemory(floats, integers, zeros(Int, 3), 1, 1, LoneLane())
-        @test_throws "separate storage" GroupMemory(floats, integers, view(integers, 1:2), 1, 1, LoneLane())
-        @test GroupMemory(floats, integers, integers[1:2], 1, 1, LoneLane()).cursor == [0, 0]
-        @test GroupMemory(floats, integers, zeros(Int, 2), 2, 2, GroupBarrier()).lane == 2
+    @testset "a group memory refuses a lane outside its group, LoneLane() for several lanes, and a cursor not of one entry" begin
+        floats, cursor = zeros(E, 4), zeros(Int, 1)
+        @test_throws "lies in 1:lanes" GroupMemory(floats, cursor, 0, 1, LoneLane())
+        @test_throws "lies in 1:lanes" GroupMemory(floats, cursor, 3, 2, GroupBarrier())
+        @test_throws "a group of one lane" GroupMemory(floats, cursor, 1, 2, LoneLane())
+        @test_throws "one entry" GroupMemory(floats, zeros(Int, 2), 1, 1, LoneLane())
+        @test_throws "separate storage" GroupMemory(floats, view(reinterpret(Int, floats), 1:1), 1, 1, LoneLane())
+        @test GroupMemory(floats, cursor, 1, 1, LoneLane()).cursor === cursor
+        @test GroupMemory(floats, cursor, 2, 2, GroupBarrier()).lane == 2
     end
 
     @testset "a GroupBarrier throws when it synchronizes outside a kernel" begin

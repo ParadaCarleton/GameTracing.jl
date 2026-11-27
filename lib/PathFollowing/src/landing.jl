@@ -1,23 +1,34 @@
 """
-    tracer, landed = land!!(tracer, bound[, max_steps])
+    tracer, landed = land!!([memory, ]tracer, bound[, max_steps])
 
 Step `tracer` toward `bound` (`step!!`) until its point lies on it. Return the advanced tracer and a copy of the landed
 point, or the `StepFailure` that ends the trace: a failed step's, or `TooManySteps` once the tracer has taken
 `max_steps` accepted steps since `init`. `max_steps` defaults to `nothing`, no budget: each step either moves the point
 past its rounding or fails. A closed curve that never meets the bound steps around it forever, so pass a budget for
-one. A point on the bound lands at once. Use only the returned tracer.
+one. A point on the bound lands at once. Use only the returned tracer. A tracer in group memory takes its
+`GroupMemory` first, and its copy takes entries from that memory.
 """
+function land!!(
+        memory::M,
+        tracer::T,
+        bound::Bound{E},
+        max_steps::Union{Nothing, Integer} = nothing,
+    )::Tuple{T, Result{viewed_type(M, V), StepFailure.Type{E}}} where {M <: TraceMemory, E <: Real, V <: StoredVector{E}, T <: Tracer{E, V}}
+    check_memory(memory, tracer)
+    while !on_bound(bound, stored_view(memory, tracer.point))
+        limit_reached(max_steps, tracer.steps) && return tracer, Err(StepFailure.TooManySteps{E}())
+        tracer, stepped = step!!(memory, tracer, bound)
+        is_error(stepped) && return tracer, Err(unwrap_error(stepped))
+    end
+    return tracer, Ok(copy(stored_view(memory, tracer.point)))
+end
+
 function land!!(
         tracer::T,
         bound::Bound{E},
         max_steps::Union{Nothing, Integer} = nothing,
     )::Tuple{T, Result{V, StepFailure.Type{E}}} where {E <: Real, V <: AbstractVector{E}, T <: Tracer{E, V}}
-    while !on_bound(bound, tracer.point)
-        limit_reached(max_steps, tracer.steps) && return tracer, Err(StepFailure.TooManySteps{E}())
-        tracer, stepped = step!!(tracer, bound)
-        is_error(stepped) && return tracer, Err(unwrap_error(stepped))
-    end
-    return tracer, Ok(copy(tracer.point))
+    return land!!(nothing, tracer, bound, max_steps)
 end
 
 """

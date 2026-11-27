@@ -1,9 +1,10 @@
 """
 A tracer's work arrays. `residual` and `jacobian` hold `H` and `∂H/∂x` at the last point the system saw, `row` is the
 border row of the next bordered system, and the `split_` arrays hold a corrected point, its tangent and its `previous`
-through the split check. `scratch`, `bordered` and `rhs` hold values only within one call.
+through the split check. `scratch`, `bordered` and `rhs` hold values only within one call. A trace in group memory
+stores `GroupHandle`s here (`stored`).
 """
-struct Workspace{V <: AbstractVector, R <: AbstractVector, J <: AbstractMatrix, B <: AbstractMatrix}
+struct Workspace{V <: StoredVector, R <: StoredVector, J <: StoredMatrix, B <: StoredMatrix}
     scratch::V
     residual::R
     jacobian::J
@@ -17,6 +18,11 @@ struct Workspace{V <: AbstractVector, R <: AbstractVector, J <: AbstractMatrix, 
     split_point::V
     split_tangent::V
     split_previous::V
+end
+
+"""`work` with `operation` applied to each of its arrays, as a stored array or its view (`stored_view`)."""
+function map_arrays(operation::Any, work::Workspace)::Workspace
+    return Workspace(map(operation, Tuple(getfields(work)))...)
 end
 
 """A zero vector like `start` in `E`: `similar` to it, so on its device, or static for a static start."""

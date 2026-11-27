@@ -24,48 +24,49 @@ synchronize_lanes(::GroupBarrier)::Nothing = (@synchronize(); nothing)
 synchronize_lanes(::LoneLane)::Nothing = nothing
 
 """
-    GroupMemory(floats, integers, cursor, lane, lanes, barrier)
+    GroupMemory(floats, cursor, lane, lanes, barrier)
 
-One workgroup's memory for a trace that each of its `lanes` runs in step: flat buffers for the trace's floats and
-`Int`s, a `cursor` of two entries (the next free float and the next free integer), this lane's index in `1:lanes`,
-and the `barrier` between lanes (`LaneBarrier`).
-In a kernel the buffers are `@localmem` arrays; on the host they are `Vector`s, with one lane and `LoneLane()`.
-`reset_memory!` empties it, and `group_array` takes arrays from it.
+One workgroup's memory for a trace that each of its `lanes` runs in step: a flat buffer for the trace's floats, a
+`cursor` of one `Int` (the count of floats taken), this lane's index in `1:lanes`, and the `barrier` between lanes
+(`LaneBarrier`). In a kernel the buffers are `@localmem` arrays; on the host they are arrays, with one lane and
+`LoneLane()`. Build one per launch and pass it beside the trace (`step!!(memory, tracer)`): the trace stores only
+`GroupHandle`s, which `group_view(memory, tracer)` reads through the memory. `reset_memory!` empties it, and `group_array` takes
+arrays from it.
 """
-struct GroupMemory{E <: Real, F <: AbstractVector{E}, I <: AbstractVector{Int}, C <: AbstractVector{Int}, B <: LaneBarrier}
+struct GroupMemory{E <: Real, F <: AbstractVector{E}, C <: AbstractVector{Int}, B <: LaneBarrier}
     floats::F
-    integers::I
     cursor::C
-    lane::Int
-    lanes::Int
+    lane::Int32
+    lanes::Int32
     barrier::B
     # Constant messages: a GPU cannot build an interpolated one.
-    function GroupMemory(floats::F, integers::I, cursor::C, lane::Integer, lanes::Integer, barrier::B)::GroupMemory{E, F, I, C, B} where {E <: Real, F <: AbstractVector{E}, I <: AbstractVector{Int}, C <: AbstractVector{Int}, B <: LaneBarrier}
+    function GroupMemory(floats::F, cursor::C, lane::Integer, lanes::Integer, barrier::B)::GroupMemory{E, F, C, B} where {E <: Real, F <: AbstractVector{E}, C <: AbstractVector{Int}, B <: LaneBarrier}
         1 <= lane <= lanes || throw(ArgumentError("a group memory's lane lies in 1:lanes"))
         barrier isa LoneLane && lanes != 1 && throw(ArgumentError("LoneLane() runs a group of one lane"))
-        length(cursor) == 2 || throw(ArgumentError("a group memory's cursor has two entries"))
-        # By identity: `allunique` compares entries, and buffers of zeros compare equal.
-        floats_root, integers_root, cursor_root = storage(floats), storage(integers), storage(cursor)
-        shared = floats_root === integers_root || integers_root === cursor_root || floats_root === cursor_root
-        shared && throw(ArgumentError("a group memory's buffers and cursor have separate storage"))
-        return new{E, F, I, C, B}(floats, integers, cursor, Int(lane), Int(lanes), barrier)
+        length(cursor) == 1 || throw(ArgumentError("a group memory's cursor has one entry"))
+        # By identity: buffers of zeros compare equal.
+        storage(floats) === storage(cursor) && throw(ArgumentError("a group memory's buffer and cursor have separate storage"))
+        return new{E, F, C, B}(floats, cursor, Int32(lane), Int32(lanes), barrier)
     end
 end
+
+"""What a trace's steps take beside it: its `GroupMemory`, or `nothing` for a start on the host or in a device array."""
+const TraceMemory = Union{Nothing, GroupMemory}
 
 """
     GroupArray
 
-An array in a workgroup's memory (`GroupMemory`) that each lane holds: its entries at `offset + 1` onward, column
-major. Every lane reads every entry. A write through `Into`, `set_element!!`, `fill!` or `copyto!` splits the entries
-over the lanes between two barriers, so every lane sees the whole array after it. It has no `setindex!`: a write
-from every lane at once races. An `Into` write throws when an argument shares the array's storage. A function that
-captures the array and reads its other entries races; Base's broadcast checks no captures either.
-`similar` takes a new array from the same memory; the memory is full when its buffers are.
+A view of a `GroupHandle` in a workgroup's memory (`stored_view`): an array that each lane holds, its entries at the
+handle's `offset + 1` onward, column major. Build it at each use, as it holds the whole memory, and store its handle
+(`stored`). Every lane reads every entry. A write through `Into`, `set_element!!`, `fill!` or `copyto!` splits the
+entries over the lanes between two barriers, so every lane sees the whole array after it. It has no `setindex!`: a
+write from every lane at once races. An `Into` write throws when an argument shares the array's storage. A function
+that captures the array and reads its other entries races; Base's broadcast checks no captures either.
+`similar` takes a new array from the same memory; the memory is full when its buffer is.
 """
-struct GroupArray{E <: Real, N, G <: GroupMemory} <: AbstractArray{E, N}
+struct GroupArray{E <: Real, N, G <: GroupMemory{E}} <: AbstractArray{E, N}
     memory::G
-    offset::Int
-    dims::NTuple{N, Int}
+    handle::GroupHandle{E, N}
 end
 
 """A `GroupArray` of one dimension: a trace's point, tangent or residual in a workgroup's memory."""
@@ -76,40 +77,91 @@ const GroupMatrix{E, G} = GroupArray{E, 2, G}
 
 # `typeof` form until a fatou release fixes jolars/fatou#156 (call-arity reads this as the only `size` method).
 function (::typeof(Base.size))(array::GroupArray)::Tuple
-    return array.dims
+    return map(Int, array.handle.dims)
 end
 
 function Base.IndexStyle(::Type{A})::IndexLinear where {A <: GroupArray}
     return IndexLinear()
 end
 
-"""The buffer of `memory` that holds `GroupArray`s of `E`: its integers for `Int`, else its floats."""
-function buffer(memory::GroupMemory, ::Type{E})::AbstractVector where {E <: Real}
-    return E === Int ? memory.integers : memory.floats
-end
-
-"""The cursor entry that counts a memory's taken entries of `E`: 2 for `Int`, else 1."""
-(cursor_slot(::Type{E})::Int) where {E <: Real} = E === Int ? 2 : 1
-
 Base.@propagate_inbounds function Base.getindex(array::GroupArray{E}, index::Int)::E where {E <: Real}
     @boundscheck checkbounds(array, index)
-    return buffer(array.memory, E)[array.offset + index]
+    return array.memory.floats[array.handle.offset + index]
 end
 
 """Write `entry` at linear `index` of `array` from this lane alone; callers split the entries over lanes between barriers."""
-Base.@propagate_inbounds function store!(array::GroupArray{E}, entry::Real, index::Int)::Nothing where {E <: Real}
+Base.@propagate_inbounds function store!(array::GroupArray, entry::Real, index::Int)::Nothing
     @boundscheck checkbounds(array, index)
-    buffer(array.memory, E)[array.offset + index] = entry
+    array.memory.floats[array.handle.offset + index] = entry
     return nothing
 end
 
+"""
+The value that a trace stores as `stored`, for use: a `GroupHandle` viewed in `memory` (`GroupMemory`) as a
+`GroupArray`, a value that holds handles with each one viewed, and any other value itself. `memory` is `nothing` for
+a trace on the host or a device array. `stored` takes the view back. It cannot tell which memory a handle came from,
+so outside the trace's own functions read through `group_view(memory, tracer)`, which checks.
+"""
+function stored_view(::TraceMemory, stored::S)::S where {S}
+    return stored
+end
+
+function stored_view(::Nothing, ::GroupHandle)::Union{}
+    throw(ArgumentError("a trace in group memory takes its GroupMemory beside it"))
+end
+
+function stored_view(::GroupMemory, ::GroupHandle)::Union{}
+    throw(ArgumentError("a group handle holds its memory's float type"))
+end
+
+function stored_view(memory::M, handle::GroupHandle{E, N})::GroupArray{E, N, M} where {E <: Real, N, M <: GroupMemory{E}}
+    return GroupArray{E, N, M}(memory, handle)
+end
+
+function stored_view(memory::GroupMemory, work::Workspace)::Workspace
+    return map_arrays(array -> stored_view(memory, array), work)
+end
+
+function stored_view(memory::GroupMemory, metric::FixedWeights)::FixedWeights
+    return FixedWeights(stored_view(memory, metric.weights))
+end
+
+function stored_view(memory::GroupMemory, problem::CurveProblem)::CurveProblem
+    return CurveProblem(problem.system!!, stored_view(memory, problem.start), stored_view(memory, problem.direction))
+end
+
+function stored(array::GroupArray{E, N})::GroupHandle{E, N} where {E <: Real, N}
+    return array.handle
+end
+
+stored(work::Workspace)::Workspace = map_arrays(stored, work)
+stored(metric::FixedWeights)::FixedWeights = FixedWeights(stored(metric.weights))
+stored(problem::CurveProblem)::CurveProblem = CurveProblem(problem.system!!, stored(problem.start), stored(problem.direction))
+
+"""
+The tag of the memory that a trace steps in: its buffer's and its cursor's addresses combined, or zero for `nothing`.
+A trace keeps its memory's tag, so a step in another memory throws, as in one that shares the buffer under another
+cursor. A buffer or cursor that has no `pointer` throws.
+"""
+memory_tag(::Nothing)::UInt = UInt(0)
+memory_tag(memory::GroupMemory)::UInt = address(pointer(memory.floats)) ⊻ bitrotate(address(pointer(memory.cursor)), 32)
+
+"""The address of a host or device pointer, as a number to compare."""
+address(start::Ptr)::UInt = UInt(start)
+address(start::Core.LLVMPtr)::UInt = reinterpret(UInt, start)
+
+"""The type that `stored_view` gives for a stored `V` in a memory of type `M` (`nothing` for none)."""
+viewed_type(::Type{<:TraceMemory}, ::Type{V}) where {V} = V
+viewed_type(::Type{M}, ::Type{GroupHandle{E, N}}) where {E <: Real, N, M <: GroupMemory{E}} = GroupArray{E, N, M}
+
+"""The memory that holds `start`'s entries: a `GroupArray`'s, or `nothing` for any other array."""
+group_memory(start::GroupArray)::GroupMemory = start.memory
+group_memory(::AbstractArray)::Nothing = nothing
+
 """Empty `memory`: lane 1 rewinds its cursor, then every lane waits. Call it before each trace's first `group_array`."""
-function reset_memory!(memory::GroupMemory)::GroupMemory
+function reset_memory!(memory::M)::M where {M <: GroupMemory}
     synchronize_lanes(memory.barrier)
-    if memory.lane == 1
-        memory.cursor[1] = 0
-        memory.cursor[2] = 0
-    end
+    memory.lane == 1 && (memory.cursor[1] = 0)
     synchronize_lanes(memory.barrier)
     return memory
 end
@@ -117,26 +169,28 @@ end
 """
     group_array(memory, E, dims)
 
-A new `GroupArray` of `E` (`memory`'s float type or `Int`) and size `dims` from `memory`'s free entries; every lane
-takes the same one. Throws for a negative dimension, and when `memory`'s buffer of `E` cannot hold it.
+A new `GroupArray` of `E` (`memory`'s float type) and size `dims` from `memory`'s free entries; every lane takes the
+same one. Throws for another type, a negative dimension, and when `memory`'s buffer cannot hold it.
 """
-function group_array(memory::M, ::Type{E}, dims::Dims{N})::GroupArray{E, N, M} where {F <: Real, M <: GroupMemory{F}, E <: Real, N}
-    E === F || E === Int || throw(ArgumentError("a group memory holds its own float type and Int"))
-    slot = cursor_slot(E)
-    offset = memory.cursor[slot]
+function group_array(memory::M, ::Type{E}, dims::Dims{N})::GroupArray{E, N, M} where {E <: Real, M <: GroupMemory{E}, N}
+    offset = memory.cursor[1]
     # Constant messages: a GPU cannot build an interpolated one.
     all(>=(0), dims) || throw(ArgumentError("a group array's dimensions are not negative"))
     count = foldl(checked_mul, dims; init = 1)
-    count <= length(buffer(memory, E)) - offset || throw(ArgumentError("the group memory is full"))
+    count <= length(memory.floats) - offset || throw(ArgumentError("the group memory is full"))
     # Every lane reads the cursor before lane 1 moves it, and sees it moved after.
     synchronize_lanes(memory.barrier)
-    memory.lane == 1 && (memory.cursor[slot] = offset + count)
+    memory.lane == 1 && (memory.cursor[1] = offset + count)
     synchronize_lanes(memory.barrier)
-    return GroupArray{E, N, M}(memory, offset, dims)
+    return GroupArray{E, N, M}(memory, GroupHandle{E, N}(Int32(offset), map(Int32, dims)))
+end
+
+function group_array(::GroupMemory, ::Type{<:Real}, ::Dims)::Union{}
+    throw(ArgumentError("a group memory holds arrays of its own float type"))
 end
 
 # `typeof` form until a fatou release fixes jolars/fatou#156 (call-arity reads this as the only `similar` method).
-function (::typeof(Base.similar))(array::GroupArray{<:Real, <:Any, M}, ::Type{E}, dims::Dims{N})::GroupArray{E, N, M} where {M <: GroupMemory, E <: Real, N}
+function (::typeof(Base.similar))(array::GroupArray, ::Type{E}, dims::Dims{N})::GroupArray{E, N} where {E <: Real, N}
     return group_array(array.memory, E, dims)
 end
 
@@ -171,14 +225,16 @@ reads_destination(destination::GroupArray, source::AbstractArray)::Bool = source
 storage(array::AbstractArray)::AbstractArray = parent(array) === array ? array : storage(parent(array))
 
 """Whether `source`, or an array it wraps (`parent`), may hold entries of `destination`."""
-function shares_entries(destination::GroupArray{E}, source::GroupArray{S})::Bool where {E <: Real, S <: Real}
-    destination_buffer, source_buffer = buffer(destination.memory, E), buffer(source.memory, S)
+function shares_entries(destination::GroupArray, source::GroupArray)::Bool
+    destination_buffer, source_buffer = destination.memory.floats, source.memory.floats
     # Two memories' buffers in one storage may lie anywhere in it.
     destination_buffer === source_buffer || return storage(destination_buffer) === storage(source_buffer)
-    return source.offset < destination.offset + length(destination) && destination.offset < source.offset + length(source)
+    return source.handle.offset < destination.handle.offset + length(destination) &&
+        destination.handle.offset < source.handle.offset + length(source)
 end
-function shares_entries(destination::GroupArray{E}, source::AbstractArray)::Bool where {E <: Real}
-    parent(source) === source && return source === storage(buffer(destination.memory, E))
+
+function shares_entries(destination::GroupArray, source::AbstractArray)::Bool
+    parent(source) === source && return source === storage(destination.memory.floats)
     return shares_entries(destination, parent(source))
 end
 
@@ -243,17 +299,17 @@ memory holds.
 """
 struct GroupLU end
 
-"""`GroupLU`'s state: the orientation sign of its last solve and the pivots of its eliminations, in group memory."""
-struct GroupSolve{V <: GroupVector}
+"""`GroupLU`'s state: the orientation sign of its last solve and the handle of its eliminations' pivots."""
+struct GroupSolve{E <: Real}
     sign::Int8
-    pivots::V
+    pivots::GroupHandle{E, 1}
 end
 
-"""`GroupLU`'s state for the bordered systems of `work`, a start in a workgroup's memory."""
+"""`GroupLU`'s state for the bordered systems of `work`, a start's work arrays viewed in a workgroup's memory."""
 function linear_state(::GroupLU, work::Workspace)::GroupSolve
     (; rhs) = work
     rhs isa GroupVector || throw(ArgumentError("GroupLU needs a start in a workgroup's memory (a GroupVector)"))
-    return GroupSolve(Int8(0), similar(rhs))
+    return GroupSolve(Int8(0), stored(similar(rhs)))
 end
 
 """
@@ -265,11 +321,10 @@ function linear_solve!!(
         bordered::GroupMatrix{E},
         rhs::GroupVector{E},
         destination::V,
-    )::Tuple{L, V, Bool} where {E <: Real, L <: GroupSolve, V <: GroupVector{E}}
+    )::Tuple{L, V, Bool} where {E <: Real, L <: GroupSolve{E}, V <: GroupVector{E}}
     (; memory) = bordered
     (; lane, lanes, barrier) = memory
-    (; pivots) = linear
-    entries = buffer(memory, E)
+    pivots, entries = stored_view(memory, linear.pivots), memory.floats
     order = length(rhs)
     sign = Int8(1)
     for column in 1:order
@@ -284,10 +339,10 @@ function linear_solve!!(
         pivot = bordered[pivot_row, column]
         sign *= pivot_sign(pivot) * ifelse(pivot_row == column, Int8(1), Int8(-1))
         # Zero for every lane alike, so every lane returns here.
-        iszero(sign) && return (GroupSolve(sign, pivots), destination, false)
+        iszero(sign) && return (GroupSolve(sign, linear.pivots), destination, false)
         # Lane `j` swaps the pivot row into place and eliminates below it in column `column + j`; `order + 1` is `rhs`.
         for later in (column + lane):lanes:(order + 1)
-            base = later <= order ? bordered.offset + (later - 1) * order : rhs.offset
+            base = later <= order ? bordered.handle.offset + (later - 1) * order : Int(rhs.handle.offset)
             top = entries[base + pivot_row]
             pivot_row == column || (entries[base + pivot_row] = entries[base + column])
             entries[base + column] = top
@@ -309,7 +364,7 @@ function linear_solve!!(
         mod1(column, lanes) == lane && store!(destination, solved, column)
         synchronize_lanes(barrier)
     end
-    return (GroupSolve(sign, pivots), destination, all(isfinite, destination))
+    return (GroupSolve(sign, linear.pivots), destination, all(isfinite, destination))
 end
 
 orientation_sign!(linear::GroupSolve, ::DeterminantSign, ::Workspace)::Int8 = linear.sign

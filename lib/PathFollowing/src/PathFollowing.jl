@@ -11,12 +11,14 @@ A trace runs on the device that holds its start. The tracer's arrays take the st
 works on them with broadcasts and reductions, so a GPU start keeps every step on that GPU. A static start (`SVector`)
 gives static arrays throughout, which a step rebuilds instead of changing (`Into`), with no allocation. `land_batch`
 traces many static problems at once, one KernelAbstractions work item each. A start in a workgroup's memory
-(`GroupVector`) gives arrays that every lane of the group holds, so one trace runs on a whole workgroup.
+(`GroupVector`) gives arrays that every lane of the group holds, so one trace runs on a whole workgroup. Its tracer
+stores `GroupHandle`s, and each step takes the `GroupMemory` beside it: `step!!(memory, tracer)`.
 """
 module PathFollowing
 
 using Accessors: @reset
 using Base.Checked: checked_mul
+using ConstructionBase: getfields
 using CommonSolve: CommonSolve
 using ErrorTypes: Err, Ok, Option, Result, is_error, none, some, unwrap, unwrap_error
 using Moshi.Data: @data
@@ -30,15 +32,18 @@ using StaticArrays: StaticArrays, SArray, SMatrix, StaticArray, StaticVector, SV
 
 export CurveProblem, PseudoArclength, Newton, StepControl, DeterminantSign, FixedWeights, StaticLU
 export Metric, MetricDistance, HalfStepCheck, correction_bound, frozen_metric, freeze_metric!!, metric_inner, metric_apply!!
-export GroupMemory, GroupArray, GroupVector, GroupMatrix, GroupLU, GroupBarrier, LoneLane, group_array, reset_memory!
+export GroupMemory, GroupArray, GroupVector, GroupMatrix, GroupHandle, GroupLU, GroupBarrier, LoneLane, group_array, group_view, reset_memory!
 export Tracer, Workspace, AcceptedStep, StepFailure, Refusal, Bound, Into, step!!, land!!, land_batch, Landing, landing_result
 export NoRefusal, NotConverged, Diverging, NotFiniteResidual, SingularSystem, AcceptRefused, TooFast, OrientationFlip, PastBound, FarFromPredictor, SplitMismatch
 # For wrappers that convert their own `reach` and contraction limit before they build a `StepControl` and a `Newton`.
 public reach_in, contraction_limit_in
+# For a metric whose state lies in group memory: it defines both for that state.
+public stored
 # For wrappers that share its optional budgets.
 public checked_limit, limit_reached
 
 include("device.jl")
+include("handle.jl")
 include("metric.jl")
 include("settings.jl")
 include("workspace.jl")

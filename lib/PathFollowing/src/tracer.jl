@@ -69,9 +69,12 @@ arrays (`Workspace`) and the linear solver's state. `init` builds one and `step!
 
 Its arrays take the start's array type: `similar` arrays on the start's device for a mutable start, static arrays for a
 static one. A step changes mutable arrays in place, so use only the tracer it returns. Read its fields; do not write
-them.
+them. A start in group memory gives a tracer of `GroupHandle`s: pass its `GroupMemory` to each step beside it
+(`step!!(memory, tracer)`), and read its arrays through it, as in `group_view(memory, tracer).point`. Its `memory_tag`
+names that memory (`memory_tag`), so a step in another memory throws. The tag is built from addresses: a memory
+freed and allocated again at those addresses passes the check, though the tracer's arrays in it are lost.
 """
-struct Tracer{E <: Real, V <: AbstractVector{E}, P <: CurveProblem, A <: PseudoArclength, M, T, W <: Workspace, L}
+struct Tracer{E <: Real, V <: StoredVector{E}, P <: CurveProblem, A <: PseudoArclength, M, T, W <: Workspace, L}
     problem::P
     algorithm::A
     point::V
@@ -84,6 +87,7 @@ struct Tracer{E <: Real, V <: AbstractVector{E}, P <: CurveProblem, A <: PseudoA
     turn_metric::T
     work::W
     linear::L
+    memory_tag::UInt
 end
 
 """
@@ -91,7 +95,7 @@ end
 
 A `Tracer` at `problem.start`, its tangent oriented along `problem.direction`, its first step `first_step` long in the
 step metric and at most the step control's `max_step`; or the `StepFailure` (`NotFiniteStart`, `SingularStart`) that
-stops it there. `first_step` must be positive and finite.
+stops it there. `first_step` must be positive and finite. A start in group memory gives a tracer of that memory.
 """
 function CommonSolve.init(
         problem::CurveProblem{S, V},
@@ -105,27 +109,56 @@ function CommonSolve.init(
         throw(ArgumentError(lazy"the step control's element type must be the start's $E; got $(typeof(algorithm.step_control))"))
     algorithm.split_check isa Union{Nothing, HalfStepCheck{E}} ||
         throw(ArgumentError(lazy"the split check's element type must be the start's $E; got $(typeof(algorithm.split_check))"))
-    (; start) = problem
-    length(problem.direction) == length(start) || throw(DimensionMismatch("start and direction differ in length"))
+    (; start, direction) = problem
+    length(direction) == length(start) || throw(DimensionMismatch("start and direction differ in length"))
+    memory = group_memory(start)
+    # Only a direction in group memory names one; the trace keeps only the start's.
+    group_memory(direction) isa GroupMemory && group_memory(direction) !== memory &&
+        throw(ArgumentError("a direction in group memory lies in its start's memory"))
     work = workspace(start, E)
     tracer = Tracer(
-        problem, algorithm, Into(zero_point(start, E)) .= start, zero_point(start, E),
-        min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E), frozen_metric(algorithm.metric, start),
-        frozen_metric(algorithm.turn_metric, start), work, linear_state(algorithm.linear_solver, work),
+        stored(problem), algorithm, stored(Into(zero_point(start, E)) .= start), stored(zero_point(start, E)),
+        min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E), stored(frozen_metric(algorithm.metric, start)),
+        stored(frozen_metric(algorithm.turn_metric, start)), stored(work), linear_state(algorithm.linear_solver, work),
+        memory_tag(memory),
     )
-    return started(tracer)
+    return started(memory, tracer)
+end
+
+"""Throw unless `memory` is the memory that `tracer` started in, by its tag (`memory_tag`)."""
+function check_memory(memory::TraceMemory, tracer::Tracer)::Nothing
+    memory_tag(memory) == tracer.memory_tag || throw(ArgumentError("a trace steps only in the group memory it started in"))
+    return nothing
+end
+
+"""
+    group_view(memory, tracer)
+
+`tracer` with each array viewed through `memory`, the `GroupMemory` it started in, so its fields read as arrays: as in
+`group_view(memory, tracer).point`. Throws for another memory. Read the view; step the tracer itself.
+"""
+function group_view(memory::TraceMemory, tracer::Tracer)::Tracer
+    check_memory(memory, tracer)
+    viewed = Base.Fix1(stored_view, memory)
+    return Tracer(
+        viewed(tracer.problem), tracer.algorithm, viewed(tracer.point), viewed(tracer.tangent), tracer.step_length, tracer.steps,
+        tracer.orientation, tracer.settle_error, viewed(tracer.metric), viewed(tracer.turn_metric), viewed(tracer.work), tracer.linear,
+        tracer.memory_tag,
+    )
 end
 
 """Whether `step` can open a trace: positive and finite."""
 valid_first_step(step::Real)::Bool = 0 < step < Inf
 
 """`tracer` with its unit tangent at its start, where `init` froze its metrics, or the `StepFailure` there."""
-function started(tracer::T)::Result{T, StepFailure.Type{E}} where {E <: Real, T <: Tracer{E}}
-    tracer, finite = evaluate!!(tracer, tracer.point)
+function started(memory::TraceMemory, tracer::T)::Result{T, StepFailure.Type{E}} where {E <: Real, T <: Tracer{E}}
+    viewed = Base.Fix1(stored_view, memory)
+    tracer, finite = evaluate!!(memory, tracer, viewed(tracer.point))
     finite || return Err(StepFailure.NotFiniteStart{E}())
-    tracer, oriented = tangent_solve!!(tracer, tracer.problem.direction)
+    tracer, oriented = tangent_solve!!(memory, tracer, viewed(tracer.problem.direction))
     is_error(oriented) && return Err(StepFailure.SingularStart{E}())
-    @reset tracer.tangent = Into(tracer.tangent) .= tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)
+    candidate = viewed(tracer.work.candidate)
+    @reset tracer.tangent = stored(Into(viewed(tracer.tangent)) .= candidate ./ metric_norm(viewed(tracer.metric), candidate))
     @reset tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
@@ -134,15 +167,15 @@ end
 `tracer` with `H` and its Jacobian at `point` in its work arrays (`CurveProblem`'s `system!!`), and whether both are
 finite. A system that returns arrays of other types than it got throws an `ArgumentError`.
 """
-function evaluate!!(tracer::T, point::AbstractVector)::Tuple{T, Bool} where {T <: Tracer}
-    (; work) = tracer
-    residual, jacobian = tracer.problem.system!!(work.residual, work.jacobian, point)
+function evaluate!!(memory::TraceMemory, tracer::T, point::AbstractVector)::Tuple{T, Bool} where {T <: Tracer}
+    given_residual, given_jacobian = stored_view(memory, tracer.work.residual), stored_view(memory, tracer.work.jacobian)
+    residual, jacobian = tracer.problem.system!!(given_residual, given_jacobian, point)
     # Folded away when the types match, as they must for the tracer to keep its type.
-    residual isa typeof(work.residual) && jacobian isa typeof(work.jacobian) || throw(
-        ArgumentError(lazy"system!! must return its residual and Jacobian as a $(typeof(work.residual)) and a $(typeof(work.jacobian))")
+    residual isa typeof(given_residual) && jacobian isa typeof(given_jacobian) || throw(
+        ArgumentError(lazy"system!! must return its residual and Jacobian as a $(typeof(given_residual)) and a $(typeof(given_jacobian))")
     )
-    @reset tracer.work.residual = residual
-    @reset tracer.work.jacobian = jacobian
+    @reset tracer.work.residual = stored(residual)
+    @reset tracer.work.jacobian = stored(jacobian)
     return tracer, all(isfinite, residual) && all(isfinite, jacobian)
 end
 
@@ -157,7 +190,7 @@ struct Bound{E <: Real}
 end
 
 """
-    tracer, outcome = step!!(tracer[, bound])
+    tracer, outcome = step!!([memory, ]tracer[, bound])
 
 Advance `tracer` by one accepted point. Return the advanced tracer and the step's `AcceptedStep`, or the `StepFailure`
 that ends the trace. Use only the returned tracer: the step changes the old one's mutable arrays in place. A refused
@@ -167,28 +200,33 @@ corrects at the bound's value, under every test of a step. A corrected point pas
 step sees the bound only at its predictor and corrected point: a curve that passes the bound and comes back within one
 step goes unseen. The resolution check judges the controller's step before the cut, as a landing always moves the
 point. A retry no shorter than the predictor it refuses fails `Unresolved`. The point must lie off the bound.
+A tracer in group memory takes its `GroupMemory` first; any other takes none.
 """
 function step!!(
+        memory::TraceMemory,
         tracer::T,
         bound::Union{Nothing, Bound{E}} = nothing,
     )::Tuple{T, Result{AcceptedStep{E}, StepFailure.Type{E}}} where {E <: Real, T <: Tracer{E}}
     (; algorithm) = tracer
-    on_bound(bound, tracer.point) && throw(ArgumentError(lazy"the point lies on the bound $bound"))
+    check_memory(memory, tracer)
+    viewed = Base.Fix1(stored_view, memory)
+    on_bound(bound, viewed(tracer.point)) && throw(ArgumentError(lazy"the point lies on the bound $bound"))
     refusals = 0
     last_refusal = NoRefusal
     taken = tracer.step_length
     shorter = true
     while shorter
-        @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ tracer.step_length .* tracer.tangent
+        point, tangent = viewed(tracer.point), viewed(tracer.tangent)
+        @reset tracer.work.predicted = stored(Into(viewed(tracer.work.predicted)) .= point .+ tracer.step_length .* tangent)
         # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
-        if unresolved(tracer.point, tracer.work.predicted, algorithm.min_step_ulps)
+        if unresolved(point, viewed(tracer.work.predicted), algorithm.min_step_ulps)
             return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
         end
-        lands = reaches(bound, tracer.point, tracer.work.predicted)
-        tracer, taken = lands ? cut_predictor!!(tracer, bound) : (tracer, tracer.step_length)
-        tracer, attempt = attempt_step!!(tracer, bound, lands, taken)
+        lands = reaches(bound, point, viewed(tracer.work.predicted))
+        tracer, taken = lands ? cut_predictor!!(memory, tracer, bound) : (tracer, tracer.step_length)
+        tracer, attempt = attempt_step!!(memory, tracer, bound, lands, taken)
         if attempt.refusal == NoRefusal
-            tracer = accept_point!!(tracer, attempt, taken)
+            tracer = accept_point!!(memory, tracer, attempt, taken)
             return tracer, Ok(AcceptedStep(taken, attempt.iterations, refusals, attempt.contraction, attempt.first_correction, attempt.turn))
         end
         last_refusal = attempt.refusal
@@ -202,6 +240,10 @@ function step!!(
         shorter = tracer.step_length < taken
     end
     return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
+end
+
+function step!!(tracer::T, bound::Union{Nothing, Bound{E}} = nothing)::Tuple{T, Result{AcceptedStep{E}, StepFailure.Type{E}}} where {E <: Real, T <: Tracer{E}}
+    return step!!(nothing, tracer, bound)
 end
 
 """
@@ -241,14 +283,16 @@ end
 Cut the predictor where its line from the point meets `bound`, and border the corrector's system with the bound's
 coordinate. The cut predictor's length in the step metric.
 """
-function cut_predictor!!(tracer::T, bound::Bound{E})::Tuple{T, E} where {E <: Real, T <: Tracer{E}}
+function cut_predictor!!(memory::TraceMemory, tracer::T, bound::Bound{E})::Tuple{T, E} where {E <: Real, T <: Tracer{E}}
     (; coordinate, value) = bound
-    from = element(tracer.point, coordinate)
-    fraction = (value - from) / (element(tracer.work.predicted, coordinate) - from)
+    viewed = Base.Fix1(stored_view, memory)
+    point, tangent = viewed(tracer.point), viewed(tracer.tangent)
+    from = element(point, coordinate)
+    fraction = (value - from) / (element(viewed(tracer.work.predicted), coordinate) - from)
     taken = fraction * tracer.step_length
-    @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ taken .* tracer.tangent
-    @reset tracer.work.predicted = set_element!!(tracer.work.predicted, coordinate, value)
-    @reset tracer.work.row = unit!!(tracer.work.row, coordinate)
+    predicted = Into(viewed(tracer.work.predicted)) .= point .+ taken .* tangent
+    @reset tracer.work.predicted = stored(set_element!!(predicted, coordinate, value))
+    @reset tracer.work.row = stored(unit!!(viewed(tracer.work.row), coordinate))
     return tracer, taken
 end
 
@@ -256,17 +300,19 @@ end
 After a correction against `bound`: a landing (`lands`) keeps the bound's value exactly; else whether the corrected
 point went past the bound.
 """
-function past_bound!!(tracer::T, ::Nothing, ::Bool)::Tuple{T, Bool} where {T <: Tracer}
+function past_bound!!(::TraceMemory, tracer::T, ::Nothing, ::Bool)::Tuple{T, Bool} where {T <: Tracer}
     return tracer, false
 end
 
-function past_bound!!(tracer::T, bound::Bound{E}, lands::Bool)::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
+function past_bound!!(memory::TraceMemory, tracer::T, bound::Bound{E}, lands::Bool)::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
+    viewed = Base.Fix1(stored_view, memory)
     if lands
         # The bordered row holds the coordinate at the value; this drops the solves' rounding.
-        @reset tracer.work.iterate = set_element!!(tracer.work.iterate, bound.coordinate, bound.value)
+        @reset tracer.work.iterate = stored(set_element!!(viewed(tracer.work.iterate), bound.coordinate, bound.value))
         return tracer, false
     end
-    return tracer, reaches(bound, tracer.point, tracer.work.iterate) && !on_bound(bound, tracer.work.iterate)
+    iterate = viewed(tracer.work.iterate)
+    return tracer, reaches(bound, viewed(tracer.point), iterate) && !on_bound(bound, iterate)
 end
 
 """
@@ -274,27 +320,30 @@ Correct the predictor, `taken` long, then test the corrected point: its distance
 `accept`, a finite system there, its tangent, step control's factor, its orientation sign and the split check. A
 landing (`lands`) holds its row from `cut_predictor!!`; any other attempt borders with the tangent.
 """
-function attempt_step!!(tracer::T, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E)::Tuple{T, Attempt{E}} where {E <: Real, T <: Tracer{E}}
+function attempt_step!!(
+        memory::TraceMemory, tracer::T, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E,
+    )::Tuple{T, Attempt{E}} where {E <: Real, T <: Tracer{E}}
     (; algorithm) = tracer
+    viewed = Base.Fix1(stored_view, memory)
     if !lands
-        @reset tracer.work.row = metric_apply!!(tracer.work.row, tracer.metric, tracer.tangent)
+        @reset tracer.work.row = stored(metric_apply!!(viewed(tracer.work.row), viewed(tracer.metric), viewed(tracer.tangent)))
     end
-    tracer, corrected = correct!!(tracer)
+    tracer, corrected = correct!!(memory, tracer)
     corrected.refusal == NoRefusal || return tracer, corrected
-    far_from_predictor(tracer, taken) && return tracer, refused(E, FarFromPredictor)
-    tracer, past = past_bound!!(tracer, bound, lands)
+    far_from_predictor(memory, tracer, taken) && return tracer, refused(E, FarFromPredictor)
+    tracer, past = past_bound!!(memory, tracer, bound, lands)
     past && return tracer, refused(E, PastBound)
-    algorithm.accept(tracer.point, tracer.work.predicted, tracer.work.iterate) || return tracer, refused(E, AcceptRefused)
-    tracer, finite = evaluate!!(tracer, tracer.work.iterate)
+    algorithm.accept(viewed(tracer.point), viewed(tracer.work.predicted), viewed(tracer.work.iterate)) || return tracer, refused(E, AcceptRefused)
+    tracer, finite = evaluate!!(memory, tracer, viewed(tracer.work.iterate))
     finite || return tracer, refused(E, NotFiniteResidual)
-    tracer, oriented = tangent_solve!!(tracer, tracer.tangent)
+    tracer, oriented = tangent_solve!!(memory, tracer, viewed(tracer.tangent))
     is_error(oriented) && return tracer, refused(E, SingularSystem)
-    turn = metric_angle(tracer.turn_metric, tracer.work.scratch, tracer.tangent, tracer.work.candidate)
+    turn = metric_angle(viewed(tracer.turn_metric), viewed(tracer.work.scratch), viewed(tracer.tangent), viewed(tracer.work.candidate))
     factor = step_factor(algorithm.step_control, corrected.contraction, corrected.first_correction, turn)
     factor > algorithm.step_control.refusal_factor && return tracer, refused(E, TooFast, factor)
     orientation = unwrap(oriented)
     flip_refused(algorithm.orientation_check, tracer.orientation, orientation) && return tracer, refused(E, OrientationFlip)
-    tracer, split = split_refused!!(tracer, algorithm.split_check, factor, bound, lands, taken)
+    tracer, split = split_refused!!(memory, tracer, algorithm.split_check, factor, bound, lands, taken)
     split && return tracer, refused(E, SplitMismatch)
     return tracer, Attempt{E}(NoRefusal, corrected.iterations, corrected.contraction, corrected.first_correction, turn, factor, orientation)
 end
@@ -305,7 +354,7 @@ without a check or under its trigger. Else the two half steps (`half_steps!!`) m
 point within the check's tolerance, in `Newton`'s `distance`. The corrected point, its tangent in `work.candidate` and
 `work.previous` come back as they were.
 """
-function split_refused!!(tracer::T, ::Nothing, ::Real, ::Any, ::Bool, ::Real)::Tuple{T, Bool} where {T <: Tracer}
+function split_refused!!(::TraceMemory, tracer::T, ::Nothing, ::Real, ::Any, ::Bool, ::Real)::Tuple{T, Bool} where {T <: Tracer}
     return tracer, false
 end
 
@@ -315,18 +364,20 @@ end
 end
 
 function split_refused!!(
-        tracer::T, check::HalfStepCheck{E}, factor::E, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E,
+        memory::TraceMemory, tracer::T, check::HalfStepCheck{E}, factor::E, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E,
     )::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
     split_fires(check, factor) || return tracer, false
-    @reset tracer.work.split_point = Into(tracer.work.split_point) .= tracer.work.iterate
-    @reset tracer.work.split_tangent = Into(tracer.work.split_tangent) .= tracer.work.candidate
-    @reset tracer.work.split_previous = Into(tracer.work.split_previous) .= tracer.work.previous
-    tracer, halves = half_steps!!(tracer, lands ? bound : nothing, taken)
+    viewed = Base.Fix1(stored_view, memory)
+    @reset tracer.work.split_point = stored(Into(viewed(tracer.work.split_point)) .= viewed(tracer.work.iterate))
+    @reset tracer.work.split_tangent = stored(Into(viewed(tracer.work.split_tangent)) .= viewed(tracer.work.candidate))
+    @reset tracer.work.split_previous = stored(Into(viewed(tracer.work.split_previous)) .= viewed(tracer.work.previous))
+    tracer, halves = half_steps!!(memory, tracer, lands ? bound : nothing, taken)
     # Negated so a NaN distance refuses; a failed half step never reaches the distance.
-    refuses = !(halves && correction_length(tracer.algorithm.corrector.distance, tracer, tracer.work.iterate, tracer.work.split_point) <= check.tolerance)
-    @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.split_point
-    @reset tracer.work.candidate = Into(tracer.work.candidate) .= tracer.work.split_tangent
-    @reset tracer.work.previous = Into(tracer.work.previous) .= tracer.work.split_previous
+    distance = tracer.algorithm.corrector.distance
+    refuses = !(halves && correction_length(memory, distance, tracer, viewed(tracer.work.iterate), viewed(tracer.work.split_point)) <= check.tolerance)
+    @reset tracer.work.iterate = stored(Into(viewed(tracer.work.iterate)) .= viewed(tracer.work.split_point))
+    @reset tracer.work.candidate = stored(Into(viewed(tracer.work.candidate)) .= viewed(tracer.work.split_tangent))
+    @reset tracer.work.previous = stored(Into(viewed(tracer.work.previous)) .= viewed(tracer.work.split_previous))
     return tracer, refuses
 end
 
@@ -336,17 +387,19 @@ the first corrects at the half predictor, and the second predicts along that poi
 corrects there. Whether both converged, the second's point in `work.iterate`. `landing` is the step's `Bound` when it
 lands there.
 """
-function half_steps!!(tracer::T, landing::Union{Nothing, Bound{E}}, taken::E)::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
-    @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ (taken / 2) .* tracer.tangent
-    @reset tracer.work.row = metric_apply!!(tracer.work.row, tracer.metric, tracer.tangent)
-    tracer, corrected = correct!!(tracer)
+function half_steps!!(memory::TraceMemory, tracer::T, landing::Union{Nothing, Bound{E}}, taken::E)::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
+    viewed = Base.Fix1(stored_view, memory)
+    point, tangent, metric = viewed(tracer.point), viewed(tracer.tangent), viewed(tracer.metric)
+    @reset tracer.work.predicted = stored(Into(viewed(tracer.work.predicted)) .= point .+ (taken / 2) .* tangent)
+    @reset tracer.work.row = stored(metric_apply!!(viewed(tracer.work.row), metric, tangent))
+    tracer, corrected = correct!!(memory, tracer)
     corrected.refusal == NoRefusal || return tracer, false
-    tracer, finite = evaluate!!(tracer, tracer.work.iterate)
+    tracer, finite = evaluate!!(memory, tracer, viewed(tracer.work.iterate))
     finite || return tracer, false
-    tracer, oriented = tangent_solve!!(tracer, tracer.tangent)
+    tracer, oriented = tangent_solve!!(memory, tracer, tangent)
     is_error(oriented) && return tracer, false
-    tracer = to_hyperplane!!(tracer, landing, taken)
-    tracer, corrected = correct!!(tracer)
+    tracer = to_hyperplane!!(memory, tracer, landing, taken)
+    tracer, corrected = correct!!(memory, tracer)
     return tracer, corrected.refusal == NoRefusal
 end
 
@@ -354,21 +407,25 @@ end
 Predict along `work.candidate` from `work.iterate` to a step's hyperplane, and border with its normal: through the
 predictor `taken` long and normal to the tangent, or the coordinate of a `Bound` the step lands on, at its value.
 """
-function to_hyperplane!!(tracer::T, ::Nothing, taken::E)::T where {E <: Real, T <: Tracer{E}}
-    (; point, tangent, metric, work) = tracer
-    offset = Into(work.scratch) .= point .+ taken .* tangent .- work.iterate
-    along = metric_inner(metric, tangent, offset) / metric_inner(metric, tangent, work.candidate)
-    @reset tracer.work.predicted = Into(work.predicted) .= work.iterate .+ along .* work.candidate
-    @reset tracer.work.row = metric_apply!!(work.row, metric, tangent)
+function to_hyperplane!!(memory::TraceMemory, tracer::T, ::Nothing, taken::E)::T where {E <: Real, T <: Tracer{E}}
+    viewed = Base.Fix1(stored_view, memory)
+    point, tangent, metric = viewed(tracer.point), viewed(tracer.tangent), viewed(tracer.metric)
+    iterate, candidate = viewed(tracer.work.iterate), viewed(tracer.work.candidate)
+    offset = Into(viewed(tracer.work.scratch)) .= point .+ taken .* tangent .- iterate
+    along = metric_inner(metric, tangent, offset) / metric_inner(metric, tangent, candidate)
+    @reset tracer.work.predicted = stored(Into(viewed(tracer.work.predicted)) .= iterate .+ along .* candidate)
+    @reset tracer.work.row = stored(metric_apply!!(viewed(tracer.work.row), metric, tangent))
     return tracer
 end
 
-function to_hyperplane!!(tracer::T, bound::Bound{E}, ::E)::T where {E <: Real, T <: Tracer{E}}
+function to_hyperplane!!(memory::TraceMemory, tracer::T, bound::Bound{E}, ::E)::T where {E <: Real, T <: Tracer{E}}
     (; coordinate, value) = bound
-    (; work) = tracer
-    along = (value - element(work.iterate, coordinate)) / element(work.candidate, coordinate)
-    @reset tracer.work.predicted = set_element!!(Into(work.predicted) .= work.iterate .+ along .* work.candidate, coordinate, value)
-    @reset tracer.work.row = unit!!(work.row, coordinate)
+    viewed = Base.Fix1(stored_view, memory)
+    iterate, candidate = viewed(tracer.work.iterate), viewed(tracer.work.candidate)
+    along = (value - element(iterate, coordinate)) / element(candidate, coordinate)
+    predicted = Into(viewed(tracer.work.predicted)) .= iterate .+ along .* candidate
+    @reset tracer.work.predicted = stored(set_element!!(predicted, coordinate, value))
+    @reset tracer.work.row = stored(unit!!(viewed(tracer.work.row), coordinate))
     return tracer
 end
 
@@ -381,21 +438,24 @@ Newton's method from the predictor `x̂` on `[H(x); r ⋅ (x - x̂)] = 0`, `r = 
 `work.iterate`. An `Attempt` with the iterations, the contraction and the first correction once `converged` holds,
 else its refusal.
 """
-function correct!!(tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Tracer{E}}
+function correct!!(memory::TraceMemory, tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Tracer{E}}
     (; corrector, step_control) = tracer.algorithm
-    @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.predicted
+    viewed = Base.Fix1(stored_view, memory)
+    @reset tracer.work.iterate = stored(Into(viewed(tracer.work.iterate)) .= viewed(tracer.work.predicted))
     before, first_correction, contraction = E(NaN32), E(NaN32), E(NaN32)
     for iteration in 1:corrector.max_iterations
-        tracer, finite = evaluate!!(tracer, tracer.work.iterate)
+        tracer, finite = evaluate!!(memory, tracer, viewed(tracer.work.iterate))
         finite || return tracer, refused(E, NotFiniteResidual)
-        (; work) = tracer
+        work = viewed(tracer.work)
         bordered = border!!(work.bordered, work.jacobian, work.row)
         rhs = negated_stack!!(work.rhs, work.residual, row_offset(work.row, work.predicted, work.iterate))
-        tracer, solved = bordered_solve!!(tracer, bordered, rhs)
+        tracer, solved = bordered_solve!!(memory, tracer, stored(bordered), stored(rhs))
         solved || return tracer, refused(E, SingularSystem)
-        @reset tracer.work.previous = Into(tracer.work.previous) .= tracer.work.iterate
-        @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.iterate .+ tracer.work.candidate
-        correction = correction_length(corrector.distance, tracer, tracer.work.previous, tracer.work.iterate)
+        @reset tracer.work.previous = stored(Into(viewed(tracer.work.previous)) .= viewed(tracer.work.iterate))
+        iterate = viewed(tracer.work.iterate)
+        @reset tracer.work.iterate = stored(Into(iterate) .= iterate .+ viewed(tracer.work.candidate))
+        previous, iterate = viewed(tracer.work.previous), viewed(tracer.work.iterate)
+        correction = correction_length(memory, corrector.distance, tracer, previous, iterate)
         if iteration == 1
             first_correction = correction
         elseif iteration == 2
@@ -405,7 +465,7 @@ function correct!!(tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Trace
         if iteration > 1 && !(correction <= corrector.contraction_limit * before)
             return tracer, refused(E, Diverging, step_factor(step_control, contraction, first_correction, E(NaN32)))
         end
-        if corrector.converged(tracer.work.previous, tracer.work.iterate, tracer.work.residual)
+        if corrector.converged(previous, iterate, viewed(tracer.work.residual))
             return tracer, Attempt{E}(NoRefusal, iteration, contraction, first_correction, E(NaN32), E(NaN32), Int8(0))
         end
         before = correction
@@ -417,8 +477,8 @@ end
 The corrector's estimate of the error left at `to`, one correction from `from`: that correction's length
 (`correction_length`), which its convergence test holds under its tolerance (`Newton`, `contraction_limit`).
 """
-function settle_error(tracer::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return correction_length(tracer.algorithm.corrector.distance, tracer, from, to)
+function settle_error(memory::TraceMemory, tracer::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return correction_length(memory, tracer.algorithm.corrector.distance, tracer, from, to)
 end
 
 """
@@ -427,19 +487,21 @@ metric, by more than the corrector's noise. The noise is the move, in Newton's `
 the start and of the point (`settle_error`). A NaN move is far.
 A move that `distance` measures as zero passes, by intent: in GameTracing such a move leaves every strategy unchanged.
 """
-function far_from_predictor(tracer::Tracer{E}, taken::E)::Bool where {E <: Real}
-    (; algorithm, work) = tracer
-    metric_distance(tracer.metric, work.scratch, work.predicted, work.iterate) <= algorithm.step_control.reach * taken && return false
-    noise = tracer.settle_error + settle_error(tracer, work.previous, work.iterate)
-    return !(correction_length(algorithm.corrector.distance, tracer, work.predicted, work.iterate) <= noise)
+function far_from_predictor(memory::TraceMemory, tracer::Tracer{E}, taken::E)::Bool where {E <: Real}
+    (; algorithm) = tracer
+    viewed = Base.Fix1(stored_view, memory)
+    predicted, iterate = viewed(tracer.work.predicted), viewed(tracer.work.iterate)
+    metric_distance(viewed(tracer.metric), viewed(tracer.work.scratch), predicted, iterate) <= algorithm.step_control.reach * taken && return false
+    noise = tracer.settle_error + settle_error(memory, tracer, viewed(tracer.work.previous), iterate)
+    return !(correction_length(memory, algorithm.corrector.distance, tracer, predicted, iterate) <= noise)
 end
 
 """A correction's length from `from` to `to`: `tracer`'s step metric norm, or the corrector's own `distance`."""
-function correction_length(::MetricDistance, tracer::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return metric_distance(tracer.metric, tracer.work.scratch, from, to)
+function correction_length(memory::TraceMemory, ::MetricDistance, tracer::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+    return metric_distance(stored_view(memory, tracer.metric), stored_view(memory, tracer.work.scratch), from, to)
 end
 
-function correction_length(distance::Any, ::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
+function correction_length(::TraceMemory, distance::Any, ::Tracer{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
     return E(distance(from, to))
 end
 
@@ -448,19 +510,22 @@ The tangent at the point whose Jacobian `work.jacobian` holds, into `work.candid
 `[J; (M previous)ᵀ] t = [0; 1]` with `M` the turn metric, so `⟨t, previous⟩` is one, positive. The orientation sign
 at that tangent (`orientation_sign!`), or `none` when the solve fails.
 """
-function tangent_solve!!(tracer::T, previous::AbstractVector{E})::Tuple{T, Option{Int8}} where {E <: Real, T <: Tracer{E}}
-    @reset tracer.work.row = metric_apply!!(tracer.work.row, tracer.turn_metric, previous)
-    (; work) = tracer
-    tracer, solved = bordered_solve!!(tracer, border!!(work.bordered, work.jacobian, work.row), unit!!(work.rhs, lastindex(work.rhs)))
+function tangent_solve!!(memory::TraceMemory, tracer::T, previous::AbstractVector{E})::Tuple{T, Option{Int8}} where {E <: Real, T <: Tracer{E}}
+    viewed = Base.Fix1(stored_view, memory)
+    @reset tracer.work.row = stored(metric_apply!!(viewed(tracer.work.row), viewed(tracer.turn_metric), previous))
+    work = viewed(tracer.work)
+    bordered, rhs = border!!(work.bordered, work.jacobian, work.row), unit!!(work.rhs, lastindex(work.rhs))
+    tracer, solved = bordered_solve!!(memory, tracer, stored(bordered), stored(rhs))
     solved || return tracer, none(Int8)
-    return tracer, some(orientation_sign!(tracer.linear, tracer.algorithm.orientation_check, tracer.work))
+    return tracer, some(orientation_sign!(tracer.linear, tracer.algorithm.orientation_check, viewed(tracer.work)))
 end
 
-"""Solve `bordered \\ rhs` into `work.candidate`; whether the solve succeeded with a finite solution."""
-function bordered_solve!!(tracer::T, bordered::AbstractMatrix, rhs::AbstractVector)::Tuple{T, Bool} where {T <: Tracer}
-    linear, candidate, solved = linear_solve!!(tracer.linear, bordered, rhs, tracer.work.candidate)
+"""Solve `bordered \\ rhs`, both as stored (`stored`), into `work.candidate`; whether it succeeded with a finite solution."""
+function bordered_solve!!(memory::TraceMemory, tracer::T, bordered::StoredMatrix, rhs::StoredVector)::Tuple{T, Bool} where {T <: Tracer}
+    viewed = Base.Fix1(stored_view, memory)
+    linear, candidate, solved = linear_solve!!(tracer.linear, viewed(bordered), viewed(rhs), viewed(tracer.work.candidate))
     @reset tracer.linear = linear
-    @reset tracer.work.candidate = candidate
+    @reset tracer.work.candidate = stored(candidate)
     return tracer, solved
 end
 
@@ -498,15 +563,17 @@ end
 Move `tracer` to `attempt`'s corrected point with the new tangent and orientation, freeze both metrics there and size
 the next step from the predictor's length `taken`.
 """
-function accept_point!!(tracer::T, attempt::Attempt{E}, taken::E)::T where {E <: Real, T <: Tracer{E}}
+function accept_point!!(memory::TraceMemory, tracer::T, attempt::Attempt{E}, taken::E)::T where {E <: Real, T <: Tracer{E}}
     (; max_step_growth, max_step) = tracer.algorithm.step_control
-    @reset tracer.point = Into(tracer.point) .= tracer.work.iterate
+    viewed = Base.Fix1(stored_view, memory)
+    @reset tracer.point = stored(Into(viewed(tracer.point)) .= viewed(tracer.work.iterate))
     @reset tracer.orientation = attempt.orientation
-    @reset tracer.metric = freeze_metric!!(tracer.metric, tracer.point)
-    @reset tracer.turn_metric = freeze_metric!!(tracer.turn_metric, tracer.point)
+    @reset tracer.metric = stored(freeze_metric!!(viewed(tracer.metric), viewed(tracer.point)))
+    @reset tracer.turn_metric = stored(freeze_metric!!(viewed(tracer.turn_metric), viewed(tracer.point)))
     # Measured after the freeze, as the next reach check measures. Only `correct!!` writes `previous`: the iterate before.
-    @reset tracer.settle_error = settle_error(tracer, tracer.work.previous, tracer.point)
-    @reset tracer.tangent = Into(tracer.tangent) .= tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)
+    @reset tracer.settle_error = settle_error(memory, tracer, viewed(tracer.work.previous), viewed(tracer.point))
+    candidate = viewed(tracer.work.candidate)
+    @reset tracer.tangent = stored(Into(viewed(tracer.tangent)) .= candidate ./ metric_norm(viewed(tracer.metric), candidate))
     @reset tracer.step_length = min(taken / max(attempt.factor, inv(max_step_growth)), max_step)
     @reset tracer.steps = tracer.steps + 1
     return tracer

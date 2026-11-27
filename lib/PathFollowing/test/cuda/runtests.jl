@@ -19,9 +19,8 @@ const FLOATS = 2048
 # KernelAbstractions hoists `@localmem` above the body, so the element type comes from the `where` clause.
 @kernel function group_trace_kernel!(points::AbstractArray{E}, refusals, starts, directions, system, settings, first_step, bound, limit) where {E}
     floats = @localmem E (FLOATS,)
-    integers = @localmem Int (16,)
-    cursor = @localmem Int (2,)
-    memory = GroupMemory(floats, integers, cursor, @index(Local, Linear), prod(@groupsize()), GroupBarrier())
+    cursor = @localmem Int (1,)
+    memory = GroupMemory(floats, cursor, @index(Local, Linear), prod(@groupsize()), GroupBarrier())
     trace = @index(Group, Linear)
     record_group_trace!(
         view(points, :, :, trace), view(refusals, :, trace), memory, system, view(starts, :, trace), view(directions, :, trace),
@@ -32,9 +31,8 @@ end
 # Each game's corrector iterations and accepted steps over `limit` steps of `TanhChain`.
 @kernel function chain_kernel!(iterations, steps, starts::AbstractMatrix{E}, directions, settings, first_step, limit) where {E}
     floats = @localmem E (FLOATS,)
-    integers = @localmem Int (16,)
-    cursor = @localmem Int (2,)
-    memory = GroupMemory(floats, integers, cursor, @index(Local, Linear), prod(@groupsize()), GroupBarrier())
+    cursor = @localmem Int (1,)
+    memory = GroupMemory(floats, cursor, @index(Local, Linear), prod(@groupsize()), GroupBarrier())
     game = @index(Group, Linear)
     chain_trace!(iterations, steps, memory, game, view(starts, :, game), view(directions, :, game), settings, first_step, limit)
 end
@@ -54,7 +52,7 @@ function chain_trace!(
         taken = 0
         tracer = unwrap(started)
         for _ in 1:limit
-            tracer, outcome = step!!(tracer)
+            tracer, outcome = step!!(memory, tracer)
             is_error(outcome) && break
             total, taken = total + unwrap(outcome).iterations, taken + 1
         end
@@ -126,7 +124,7 @@ for N in (4, 10, 16)
     E, limit = Float32, 50
     settings = group_algorithm(E, N, (;))
     # One lane on the host first: a trace past `FLOATS` throws here, where a GPU reports only a bad address.
-    memory, host_iterations, host_steps = GroupMemory(zeros(E, FLOATS), zeros(Int, 16), zeros(Int, 2), 1, 1, LoneLane()), [0], [0]
+    memory, host_iterations, host_steps = GroupMemory(zeros(E, FLOATS), zeros(Int, 1), 1, 1, LoneLane()), [0], [0]
     host_trace() = chain_trace!(host_iterations, host_steps, memory, 1, chain_start(E, N, 2π)..., settings, E(1) / 20, limit)
     host_trace()
     host_seconds = minimum(_ -> @elapsed(host_trace()), 1:5)

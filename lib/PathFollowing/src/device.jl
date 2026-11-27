@@ -44,6 +44,31 @@ function elementwise(operation::Any, arrays::AbstractArray...)::Broadcast.Broadc
 end
 
 """
+The sum in `E` of `operation` over `arrays`' entries (`elementwise`): Neumaier's compensated fold in the arrays' promoted
+element type, which keeps small terms that larger ones cancel around. Base's `sum` of 16 or more entries calls its
+recursive `mapreduce_impl`, so a kernel's stack size would have no static bound. GPU arrays sum in one GPU reduction.
+"""
+function elementwise_sum(::Type{E}, operation::Any, arrays::AbstractArray...)::E where {E <: Real}
+    S = promote_type(E, map(eltype, arrays)...)
+    total, compensation = foldl(compensated_add, elementwise(operation, arrays...); init = (zero(S), zero(S)))
+    return E(total + compensation)
+end
+
+function elementwise_sum(::Type{E}, operation::Any, arrays::AnyGPUArray...)::E where {E <: Real}
+    return E(mapreduce(identity, +, elementwise(operation, arrays...); init = zero(promote_type(E, map(eltype, arrays)...))))
+end
+
+"""
+Neumaier's step: the running `total` with `entry` added, and `compensation` with the rounding error that adds. A
+non-finite total takes no error term, so an overflow stays infinite and a NaN stays NaN.
+"""
+function compensated_add((total, compensation)::Tuple{S, S}, entry::Real)::Tuple{S, S} where {S <: Real}
+    added = total + entry
+    error = abs(total) >= abs(entry) ? (total - added) + entry : (entry - added) + total
+    return added, compensation + ifelse(isfinite(added), error, zero(error))
+end
+
+"""
     Into(destination) .= expression
 
 Write the broadcast `expression` into `destination` and return the result. A mutable array (`Vector`, `Matrix`, a GPU

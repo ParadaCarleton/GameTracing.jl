@@ -82,12 +82,17 @@ allocates(ir::AbstractString)::Bool = any(name -> occursin(name, ir), ("gpu_gc_p
 backend = CUDABackend()
 println(CUDA.name(CUDA.device()), ", CUDA ", CUDA.runtime_version())
 
+"""The CUDA parity cases: `parity_cases` and the 16-coordinate `wide_chain_case`."""
+function cases(::Type{E})::Tuple where {E <: Real}
+    return (parity_cases(E)..., wide_chain_case(E))
+end
+
 # The case's system and settings types specialize the kernel; the lane count is a launch value, so it shares the compile.
-configs = [(E, case) for E in (Float32, Float64) for case in eachindex(parity_cases(E))]
+configs = [(E, case) for E in (Float32, Float64) for case in eachindex(cases(E))]
 for (E, case) in configs[chosen_configs(ARGS, length(configs))]
     tolerance = sqrt(eps(E))
-    system, start, direction, overrides, bound, limit, _ = parity_cases(E)[case]
-    @testset "CUDA $E, parity case $case: each lane count traces step for step as a Vector start, from one compile" begin
+    system, start, direction, overrides, bound, limit, _ = cases(E)[case]
+    @testset "CUDA $E, parity case $case: each lane count traces step for step as a Vector start, with no device allocation or recursion" begin
         N = length(start)
         settings = group_algorithm(E, N, overrides)
         host_points, host_refusals = recorded_trace(system, start, direction, algorithm(E; overrides...), E(1) / 4, bound, limit)
@@ -95,9 +100,14 @@ for (E, case) in configs[chosen_configs(ARGS, length(configs))]
         for lanes in (32, 256)
             points, refusals = CuArray(fill(E(NaN), N, limit, 1)), CuArray(fill(-2, limit, 1))
             launch() = group_trace_kernel!(backend)(points, refusals, CuArray(start[:, :]), CuArray(direction[:, :]), system, settings, E(1) / 4, bound, limit; ndrange = lanes, workgroupsize = lanes)
-            # The IR hook sees only compiles: the first lane count compiles the kernel, and the second reuses it.
-            seconds = @elapsed ir = device_ir(launch)
-            @test lanes == 32 ? occursin("define", ir) && !allocates(ir) : isempty(ir)
+            # GPUCompiler compiles anew, and caches nothing, under an IR hook: so only the first lane count reads the IR.
+            if lanes == 32
+                seconds = @elapsed ir = device_ir(launch)
+                @test occursin("define", ir) && !allocates(ir)
+                @test call_cycle(ir) === nothing
+            else
+                seconds = @elapsed launch()
+            end
             @printf("first launch, %s parity case %d, %d lanes: %.2f s\n", E, case, lanes, seconds)
             KernelAbstractions.synchronize(backend)
             @test Array(refusals)[:, 1] == host_refusals
@@ -130,7 +140,8 @@ for N in (4, 10, 16)
         launch() = chain_kernel!(backend)(iterations, steps, starts, directions, settings, E(1) / 20, limit; ndrange = lanes * games, workgroupsize = lanes)
         if lanes == 32 && games == 1
             first_seconds = @elapsed ir = device_ir(launch)
-            occursin("define", ir) && !allocates(ir) || error(lazy"the chain kernel in $N coordinates allocates on the device, or compiled before")
+            cycle = call_cycle(ir)
+            occursin("define", ir) && !allocates(ir) && isnothing(cycle) || error(lazy"the chain kernel in $N coordinates allocates on the device or calls the cycle $cycle")
         else
             first_seconds = @elapsed launch()
         end

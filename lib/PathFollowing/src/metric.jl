@@ -62,7 +62,7 @@ function freeze_metric!!(frozen::F, ::AbstractVector)::F where {F <: FixedWeight
 end
 
 function metric_inner(frozen::FixedWeights, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
-    return sum(elementwise(*, frozen.weights, left, right))
+    return elementwise_sum(E, *, frozen.weights, left, right)
 end
 
 function metric_apply!!(out::V, frozen::FixedWeights, vector::AbstractVector{E})::V where {E <: Real, V <: AbstractVector{E}}
@@ -81,7 +81,7 @@ end
 
 """`row ⋅ (to - from)`, without a difference vector."""
 function row_offset(row::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return sum(elementwise((weight, start, finish) -> weight * (finish - start), row, from, to))
+    return elementwise_sum(E, (weight, start, finish) -> weight * (finish - start), row, from, to)
 end
 
 """

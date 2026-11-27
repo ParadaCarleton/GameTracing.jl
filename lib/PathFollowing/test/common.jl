@@ -10,7 +10,8 @@ struct Circle{E <: Real}
 end
 
 function (circle::Circle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return (Into(residual) .= sum(abs2, point) - circle.radius^2, Into(jacobian) .= 2 .* transpose(point))
+    # With `init`: from 16 entries Base's `sum` calls its recursive `mapreduce_impl`, which a GPU stack cannot bound.
+    return (Into(residual) .= sum(abs2, point; init = zero(E)) - circle.radius^2, Into(jacobian) .= 2 .* transpose(point))
 end
 
 """`residual` and `jacobian`, one row of two, set to `entry` and `row` (`Into`): a test system's return on any storage."""
@@ -266,6 +267,52 @@ function parity_cases(::Type{E})::Tuple where {E <: Real}
         (Wiggle(), [-E(3) / 5, -E(48) / 125], E[1, 0], (;), nothing, 16, (_, failure) -> isnothing(failure)),
         (TanhChain(), chain, chain_direction, (; metric = FixedWeights(ones(E, 4))), nothing, 16, (_, failure) -> isnothing(failure)),
     )
+end
+
+"""
+A parity case (`parity_cases`) of `TanhChain` in 16 coordinates, a 15-filer stay solve's size. `StaticLU` takes at
+most 14, so only mutable and group starts trace it.
+"""
+function wide_chain_case(::Type{E})::Tuple where {E <: Real}
+    chain, chain_direction = chain_start(E, 16, 3 // 10)
+    return (TanhChain(), chain, chain_direction, (; metric = FixedWeights(ones(E, 16))), nothing, 50, (_, failure) -> isnothing(failure))
+end
+
+"""A called function's name in LLVM IR, bare or quoted, as in `call void @name(`."""
+const CALLED_NAME = r"@(\"[^\"]+\"|[^\s(]+)\("
+
+"""
+The first cycle of calls among the functions that the LLVM IR `ir` defines, as names from a function back to itself,
+or `nothing`. Recursion leaves a kernel's stack size without a static bound.
+"""
+function call_cycle(ir::AbstractString)::Union{Nothing, Vector{String}}
+    callees = Dict{String, Vector{String}}()
+    for definition in split(ir, r"^define "m)[2:end]
+        header = match(CALLED_NAME, definition)
+        isnothing(header) && continue
+        body = SubString(definition, header.offset + ncodeunits(header.match))
+        callees[header.captures[1]] = [called.captures[1] for called in eachmatch(CALLED_NAME, body)]
+    end
+    # Depth first: a name met again on the current call path closes a cycle.
+    finished, path = Set{String}(), String[]
+    function cycle_from(name::String)::Union{Nothing, Vector{String}}
+        on_path = findfirst(==(name), path)
+        isnothing(on_path) || return [path[on_path:end]; name]
+        name in finished && return nothing
+        push!(path, name)
+        for callee in get(callees, name, String[])
+            found = cycle_from(callee)
+            isnothing(found) || return found
+        end
+        pop!(path)
+        push!(finished, name)
+        return nothing
+    end
+    for name in keys(callees)
+        found = cycle_from(name)
+        isnothing(found) || return found
+    end
+    return nothing
 end
 
 """

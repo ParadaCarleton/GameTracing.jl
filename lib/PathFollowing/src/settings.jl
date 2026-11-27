@@ -5,7 +5,7 @@ The curve `H(x) = 0` through `start`, traced toward `direction`. `system!!(resid
 (length `n`) and its Jacobian `∂H/∂x` (`n × (n + 1)`) from one evaluation, as `(residual, jacobian)` in the types of
 the arrays it gets. Mutable arrays come back changed in place, and static arrays come back new (`Into`). `start` and
 `direction` have `n + 1` entries; `direction` needs only a positive product with the tangent at `start` under the turn
-metric. A static `start` (`SVector`) needs `StaticLU`.
+metric. A static `start` (`SVector`) needs `StaticLU`, and a start in a workgroup's memory (`GroupVector`) needs `GroupLU`.
 """
 struct CurveProblem{S, V <: AbstractVector{<:Real}}
     system!!::S
@@ -229,8 +229,8 @@ Pseudo-arclength continuation with an Euler predictor along the bordered tangent
   step near a fold can land where the oriented tangent runs back along the curve.
 - `split_check`: a `HalfStepCheck`, or `nothing` to accept a converged point on another branch that passes every other
   test.
-- `linear_solver`: the LinearSolve.jl algorithm for the bordered systems of a mutable start, or `StaticLU()` for a
-  static start.
+- `linear_solver`: the LinearSolve.jl algorithm for the bordered systems of a mutable start, `StaticLU()` for a
+  static start, or `GroupLU()` for a start in a workgroup's memory.
 - `accept(start, predicted, corrected)`: whether to keep a converged point; `false` refuses the step.
 - `min_step_ulps`: a predictor that moves no coordinate by more than this many ulps of its size ends the trace
   as `Unresolved`; smaller steps cannot add a point. The check judges the step before a `Bound` cuts it.

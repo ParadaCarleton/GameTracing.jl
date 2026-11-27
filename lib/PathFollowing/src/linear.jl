@@ -17,6 +17,7 @@ end
 """The state of `solver` for the bordered systems of `work`: a `CachedSolve` for a mutable start."""
 function linear_state(solver::Any, work::Workspace)::CachedSolve
     work.bordered isa StaticArray && throw(ArgumentError(lazy"a static start needs linear_solver = StaticLU(); got $solver"))
+    work.bordered isa GroupArray && throw(ArgumentError(lazy"a start in group memory needs linear_solver = GroupLU(); got $solver"))
     # A failed solve is a refusal (`SingularSystem`), so LinearSolve's own warning would only repeat it.
     cache = LinearSolve.init(LinearSolve.LinearProblem(work.bordered, work.rhs), solver; verbose = false)
     oriented = fill!(similar(work.bordered), zero(eltype(work.bordered)))

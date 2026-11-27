@@ -60,6 +60,14 @@ trace allocates nothing, and one GPU thread can run it.
 one KernelAbstractions work item each, on the device that holds `problems`. It returns a `Landing` per problem;
 `landing_result` gives its landed point or its `StepFailure`.
 
+A start in a workgroup's memory (`GroupVector`) runs one trace on a whole KernelAbstractions workgroup, with
+`linear_solver = GroupLU()`. Each lane builds a `GroupMemory` over the group's `@localmem` buffers, with its lane
+index and `GroupBarrier()`. Every lane then runs the same `init` and `step!!`. Each array write splits its entries
+over the lanes between two barriers. Write a group array through `Into`, `fill!` or `copyto!`; it has no `setindex!`,
+and an `Into` source must not overlap it. `GroupLU` gives lane `j` column `j` of each elimination. Group memory never
+frees an array: call `reset_memory!` before each trace. On the host or the CPU backend, use one lane and `LoneLane()`,
+because that backend runs no barrier outside a kernel's own body.
+
 ```julia
 using StaticArrays: SVector
 
@@ -104,8 +112,8 @@ points = unwrap.(landing_result.(landings))
   its largest length (`correction_bound`), and its refusal must lie under that length.
 - `metric`, `turn_metric`: the step metric and the turn metric, each a symmetric positive semidefinite operator
   frozen at every accepted point (`frozen_metric`). `FixedWeights` is the constant diagonal one.
-- `linear_solver`: any LinearSolve.jl algorithm for the bordered systems of a mutable start, or `StaticLU()` for a
-  static start of at most 14 coordinates.
+- `linear_solver`: any LinearSolve.jl algorithm for the bordered systems of a mutable start, `StaticLU()` for a
+  static start of at most 14 coordinates, or `GroupLU()` for a start in a workgroup's memory.
 - `orientation_check`: `DeterminantSign` refuses a step where `sign det([J; tᵀ])` changes. A long step near a fold can
   land where the oriented tangent runs back along the curve; this check catches it. At a bifurcation the trace closes
   in on the crossing and fails `Unresolved`. `nothing` switches the check off.

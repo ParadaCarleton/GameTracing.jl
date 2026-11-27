@@ -799,9 +799,7 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
     end
 
     @testset "a trace's steps take no group memory past its start's, and 16 coordinates fit the CUDA tests' 2048 floats" begin
-        chain, chain_direction = chain_start(E, 16, 3 // 10)
-        chain_case = (TanhChain(), chain, chain_direction, (; metric = FixedWeights(ones(E, 16))), nothing, 50, nothing)
-        for (system, start, direction, overrides, bound, limit, _) in (parity_cases(E)..., chain_case)
+        for (system, start, direction, overrides, bound, limit, _) in (parity_cases(E)..., wide_chain_case(E))
             settings = algorithm(E; overrides..., linear_solver = GroupLU())
             first_step = system isa TanhChain ? E(1) / 20 : E(1) / 4
             started = host_memory(E; floats = 2048)
@@ -1072,6 +1070,21 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
             points isa Vector && all(point -> abs(point[1]^2 + (point[2] / stretch)^2 - 1) <= 100 * tolerance, points)
         end
     end
+
+    @testset "a metric sum keeps small terms that large ones cancel around, on host, static and group storage" begin
+        # Fourteen terms each under half an ulp of one: a plain fold from zero loses them all.
+        small = eps(E) / 3
+        terms = [one(E); fill(small, 14); -one(E)]
+        for storage in (terms, SVector{16, E}(terms), group_vector(host_memory(E), terms))
+            @test PathFollowing.elementwise_sum(E, identity, storage) ≈ 14 * big(small) rtol = 8 * eps(E)
+        end
+        # GPU arrays take one GPU reduction, with no compensation.
+        @test PathFollowing.elementwise_sum(E, *, JLArray(E[1, 2, 3]), JLArray(E[4, 5, 6])) == 32
+        # Float64 weights on points in E sum in their promoted type; an overflow stays infinite, and a NaN stays NaN.
+        @test metric_inner(FixedWeights([1.0, 1.0]), E[1, 2], E[1, 2]) === E(5)
+        @test metric_inner(FixedWeights(ones(E, 1)), [floatmax(E)], [floatmax(E)]) === E(Inf)
+        @test isnan(PathFollowing.elementwise_sum(E, identity, E[1, NaN, 2])) && isnan(PathFollowing.elementwise_sum(E, identity, E[Inf, -Inf]))
+    end
 end
 
 @testset "CUDA parity shards split the configurations and refuse a shard past them" begin
@@ -1080,6 +1093,16 @@ end
     @test_throws "holds no configuration" chosen_configs(["parity", "13", "13"], 12)
     @test_throws "holds no configuration" chosen_configs(["parity", "0", "3"], 12)
     @test_throws "`parity SHARD SHARDS`" chosen_configs(["parity", "1"], 12)
+end
+
+@testset "the CUDA tests' IR check names a call cycle through quoted or bare names, and passes a call chain" begin
+    definition(name::AbstractString, callees::AbstractString...)::String =
+        "define internal void @$name(ptr %a) {\n" * join("  call void @$callee(ptr %a)\n" for callee in callees) * "  ret void\n}\n"
+    quoted = "\"julia_#impl_1\""
+    @test call_cycle(definition("kernel", quoted) * definition(quoted, quoted)) == [quoted, quoted]
+    @test call_cycle(definition("kernel", "a") * definition("a", "b", "llvm.nvvm.barrier0") * definition("b", "a")) in (["a", "b", "a"], ["b", "a", "b"])
+    @test call_cycle(definition("kernel", "a", "b") * definition("a", "b") * definition("b", "llvm.nvvm.barrier0")) === nothing
+    @test call_cycle(definition("kernel", quoted) * definition(quoted)) === nothing
 end
 
 chosen(BigFloat) && @testset "PathFollowing BigFloat: the orientation check runs on a generic LU" begin

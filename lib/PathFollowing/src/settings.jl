@@ -6,8 +6,9 @@ The curve `H(x) = 0` through `start`, traced toward `direction`. `system!!(resid
 the arrays it gets. Mutable arrays come back changed in place, and static arrays come back new (`into!!`). `start` and
 `direction` have `n + 1` entries; `direction` needs only a positive product with the tangent at `start` under the turn
 metric. A static `start` (`SVector`) needs `StaticLU`, and a start in a workgroup's memory (`GroupVector`) needs `GroupLU`.
+A tracer stores its problem with `GroupHandle`s for a start in group memory.
 """
-struct CurveProblem{S, V <: AbstractVector{<:Real}}
+struct CurveProblem{S, V <: StoredVector{<:Real}}
     system!!::S
     start::V
     direction::V

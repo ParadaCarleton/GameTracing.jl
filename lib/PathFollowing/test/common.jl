@@ -217,16 +217,17 @@ function record_group_trace!(
     end
     tracer = unwrap(started)
     for step in 1:limit
-        tracer, outcome = step!!(tracer, bound)
+        tracer, outcome = step!!(memory, tracer, bound)
+        point = group_view(memory, tracer).point
         if memory.lane == 1
             refusals[step] = is_error(outcome) ? -1 : unwrap(outcome).refusals
-            for coordinate in eachindex(tracer.point)
-                points[coordinate, step] = tracer.point[coordinate]
+            for coordinate in eachindex(point)
+                points[coordinate, step] = point[coordinate]
             end
         end
         # Every lane holds the same outcome and point, so every lane leaves together.
         is_error(outcome) && return nothing
-        isnothing(bound) || tracer.point[bound.coordinate] != bound.value || return nothing
+        isnothing(bound) || point[bound.coordinate] != bound.value || return nothing
     end
     return nothing
 end

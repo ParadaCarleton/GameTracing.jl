@@ -34,7 +34,7 @@ function metric_apply!! end
 
 The constant diagonal metric `⟨a, b⟩ = Σᵢ wᵢ aᵢ bᵢ`, one positive weight per coordinate of the curve's points.
 """
-struct FixedWeights{V <: AbstractVector{<:Real}} <: Metric
+struct FixedWeights{V <: StoredVector{<:Real}} <: Metric
     weights::V
 end
 

@@ -370,7 +370,8 @@ end
 @testset "a pass without gap_bound fails at the opening, naming the method to define" begin
     game = LogitGame(UnboundedPass(GAME), TARGET_PRECISION)
     @test_throws ArgumentError trace_endpoint(game, WIDTH, BifurcationKitSettings{Float32}())
-    @test_throws r"define GameTracing\.gap_bound\(::UnboundedPass" GameTracing.gap_bound(game.pass!!)
+    # The type prints with the module that holds the test games, `Main.TestHelpers` under the test runner.
+    @test_throws r"define GameTracing\.gap_bound\(::(\w+\.)*UnboundedPass" GameTracing.gap_bound(game.pass!!)
 end
 
 @testset "Gambit's max_accel sets the growth limit ($element)" for element in (Float32, widen(Float32))

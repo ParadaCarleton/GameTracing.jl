@@ -1,5 +1,6 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
 using LinearAlgebra: I, lu
+using PathFollowing: PathFollowing
 using Random: AbstractRNG, Xoshiro
 
 # Random normal-form games whose trace to precision 1e6 once opened at λ ≈ 42426 and stalled off the map.

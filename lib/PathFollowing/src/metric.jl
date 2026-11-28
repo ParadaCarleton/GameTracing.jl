@@ -10,7 +10,7 @@ uses `M` frozen there. A metric type subtypes `Metric` and defines four function
 - `metric_inner(frozen, left, right)`: `leftᵀ M right`.
 - `metric_apply!!(out, frozen, vector)`: `M vector` in `out`, an array apart from `vector`.
 
-The two `!!` functions follow `into!!`: a mutable state or array changes in place and comes back itself, and a static
+The two `!!` functions follow `@into!!`: a mutable state or array changes in place and comes back itself, and a static
 one comes back new. The tracer uses only the returned value. `FixedWeights` is the constant diagonal metric.
 """
 abstract type Metric end
@@ -25,7 +25,7 @@ function freeze_metric!! end
 function metric_inner end
 
 """
-`M vector` under the frozen metric `frozen` (`frozen_metric`), in `out` (`into!!`); `out` is an array apart from `vector`.
+`M vector` under the frozen metric `frozen` (`frozen_metric`), in `out` (`@into!!`); `out` is an array apart from `vector`.
 """
 function metric_apply!! end
 
@@ -66,7 +66,7 @@ function metric_inner(frozen::FixedWeights, left::AbstractVector{E}, right::Abst
 end
 
 function metric_apply!!(out::V, frozen::FixedWeights, vector::AbstractVector{E})::V where {E <: Real, V <: AbstractVector{E}}
-    return into!!(out, lazy_broadcast.(frozen.weights .* vector))
+    return @into!! out .= frozen.weights .* vector
 end
 
 """`√⟨vector, vector⟩` under the frozen metric `frozen`."""
@@ -74,9 +74,9 @@ function metric_norm(frozen::Any, vector::AbstractVector{E})::E where {E <: Real
     return sqrt(metric_inner(frozen, vector, vector))
 end
 
-"""`√⟨to - from, to - from⟩` under the frozen metric `frozen`, the difference written into `scratch` (`into!!`)."""
+"""`√⟨to - from, to - from⟩` under the frozen metric `frozen`, the difference written into `scratch` (`@into!!`)."""
 function metric_distance(frozen::Any, scratch::AbstractVector{E}, from::AbstractVector{E}, to::AbstractVector{E})::E where {E <: Real}
-    return metric_norm(frozen, into!!(scratch, lazy_broadcast.(to .- from)))
+    return metric_norm(frozen, @into!!(scratch .= to .- from))
 end
 
 """`row ⋅ (to - from)`, without a difference vector."""
@@ -86,11 +86,11 @@ end
 
 """
 The angle in radians between `left` and `right` under the frozen metric `frozen`: `2 atan(‖u - v‖, ‖u + v‖)` for
-their unit vectors `u` and `v` (Kahan), accurate at every angle. `scratch` holds `u - v`, then `u + v` (`into!!`). An
+their unit vectors `u` and `v` (Kahan), accurate at every angle. `scratch` holds `u - v`, then `u + v` (`@into!!`). An
 `acos` of the cosine loses half the digits of a small angle.
 """
 function metric_angle(frozen::Any, scratch::AbstractVector{E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
     left_norm, right_norm = metric_norm(frozen, left), metric_norm(frozen, right)
-    difference = metric_norm(frozen, into!!(scratch, lazy_broadcast.(left ./ left_norm .- right ./ right_norm)))
-    return 2 * atan(difference, metric_norm(frozen, into!!(scratch, lazy_broadcast.(left ./ left_norm .+ right ./ right_norm))))
+    difference = metric_norm(frozen, @into!!(scratch .= left ./ left_norm .- right ./ right_norm))
+    return 2 * atan(difference, metric_norm(frozen, @into!!(scratch .= left ./ left_norm .+ right ./ right_norm)))
 end

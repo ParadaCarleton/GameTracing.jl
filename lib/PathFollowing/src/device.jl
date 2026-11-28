@@ -1,3 +1,66 @@
+"""
+    @into!! destination .= expression
+
+Write the broadcast `expression` into `destination` and return the result. A mutable array (`Vector`, `Matrix`, a GPU
+array) changes in place and comes back itself, so the step allocates nothing. A static array (`SVector`, `SMatrix`)
+cannot change, so a new one of its type comes back, as a GPU kernel needs. Use the returned array:
+
+```julia
+jacobian = @into!! jacobian .= 2 .* transpose(point)
+residual = @into!! residual .= sum(abs2, point) - radius^2
+```
+
+The macro hands `into!!` the fused broadcast unbuilt (`lazy_broadcast`, LazyBroadcast.jl), so `expression` builds no
+temporary. An array or a number on the right is copied or fills every entry, as Base's `.=` does. Only the dotted
+calls fuse: an undotted `a + b` of two arrays builds its array first, as in Base.
+"""
+macro into!!(assignment)
+    Meta.isexpr(assignment, :.=, 2) || throw(ArgumentError("@into!! takes `destination .= expression`, not `$assignment`"))
+    destination, expression = assignment.args
+    # A typed literal `E[1, 2]` parses as indexing `x[i]` does; `typed_literal` tells them apart by the type of `E`.
+    target = Meta.isexpr(destination, :ref) ? :($typed_literal($(map(esc, destination.args)...))) : esc(destination)
+    # `identity.` makes a bare array or number a broadcast, so `into!!` takes no eagerly built source.
+    source = dotted_call(expression) ? esc(expression) : :($identity.($(esc(expression))))
+    return :($into!!($target, $lazy_broadcast.($source)))
+end
+
+"""The typed literal `type[entries...]`, an `@into!!` destination that reads like indexing."""
+typed_literal(type::Type, entries::Any...)::AbstractArray = type[entries...]
+
+"""Throws: `@into!! x[i] .= ...` would fill a copy of `x[i]`, as `x[i]` builds one. A view writes through to `x`."""
+function typed_literal(indexed::Any, ::Any...)::Union{}
+    throw(ArgumentError(lazy"@into!! writes a whole array, not an indexed $(typeof(indexed)); write `@into!! (@view x[i]) .= ...`"))
+end
+
+"""
+Whether `expression` is a dotted call (`f.(x)`, `a .+ b`), which `lazy_broadcast` turns into a broadcast as it stands.
+A misread either way fails safe: a missed one takes an `identity.` layer, and a false one throws in `into!!`.
+"""
+function dotted_call(expression::Any)::Bool
+    Meta.isexpr(expression, :.) && return Meta.isexpr(expression.args[2], :tuple)
+    Meta.isexpr(expression, :call) && expression.args[1] isa Symbol || return false
+    # Only operators start with a dot, and `..` is the one undotted operator among them.
+    return startswith(String(expression.args[1]), '.') && expression.args[1] != :..
+end
+
+"""
+    into!!(destination, broadcast)
+
+The unbuilt `broadcast` written into `destination`, as `@into!!` documents. It takes no array or number: an eager broadcast
+`a .* b` arrives as a temporary array, so the call refuses it. Write `@into!! destination .= expression`.
+"""
+function into!!(destination::A, broadcast::Broadcast.Broadcasted)::A where {A <: AbstractArray}
+    return Broadcast.materialize!(destination, broadcast)
+end
+
+function into!!(destination::A, broadcast::Broadcast.Broadcasted)::A where {A <: SArray}
+    # As `materialize!`: the broadcast takes the destination's axes, so a scalar or a singleton fills every entry.
+    # StaticArrays' broadcast takes its result type from a static argument, which a scalar source lacks.
+    shaped = Broadcast.instantiate(Broadcast.Broadcasted(broadcast.style, broadcast.f, broadcast.args, axes(destination)))
+    indices = CartesianIndices(destination)
+    return A(ntuple(at -> @inbounds(shaped[indices[at]]), Val(length(A))))
+end
+
 """`array[index]`. A GPU array reads the one element with `@allowscalar`, a transfer to the host."""
 function element(array::AbstractArray{E}, index::Integer)::E where {E}
     return array[index]
@@ -27,7 +90,7 @@ end
 
 """`vector` set to the unit vector along `index`: one broadcast on any device, or a new static vector."""
 function unit!!(vector::V, index::Integer)::V where {E <: Real, V <: AbstractVector{E}}
-    return into!!(vector, lazy_broadcast.(E.(eachindex(vector) .== index)))
+    return @into!! vector .= E.(eachindex(vector) .== index)
 end
 
 # A broadcast over a static vector's indices builds a heap `SizedVector`.
@@ -66,38 +129,4 @@ function compensated_add((total, compensation)::Tuple{S, S}, entry::Real)::Tuple
     added = total + entry
     error = abs(total) >= abs(entry) ? (total - added) + entry : (entry - added) + total
     return added, compensation + ifelse(isfinite(added), error, zero(error))
-end
-
-"""
-    into!!(destination, lazy_broadcast.(expression))
-    into!!(destination, source)
-
-Write the broadcast `expression`, or an array or number `source`, into `destination` and return the result. A mutable
-array (`Vector`, `Matrix`, a GPU array) changes in place and comes back itself, so the step allocates nothing. A static
-array (`SVector`, `SMatrix`) cannot change, so a new one of its type comes back, as a GPU kernel needs. Use the returned
-array:
-
-```julia
-using LazyBroadcast: lazy_broadcast
-jacobian = into!!(jacobian, lazy_broadcast.(2 .* transpose(point)))
-residual = into!!(residual, sum(abs2, point) - radius^2)
-```
-
-`lazy_broadcast` (LazyBroadcast.jl) hands `into!!` the fused broadcast unbuilt; without it, a dotted `source` allocates a
-temporary. `into!!` is a call because a `.=` expression's value differs across Julia versions.
-"""
-function into!!(destination::A, broadcast::Broadcast.Broadcasted)::A where {A <: AbstractArray}
-    return Broadcast.materialize!(destination, broadcast)
-end
-
-function into!!(destination::A, broadcast::Broadcast.Broadcasted)::A where {A <: SArray}
-    # As `materialize!`: the broadcast takes the destination's axes, so a scalar or a singleton fills every entry.
-    # StaticArrays' broadcast takes its result type from a static argument, which a scalar source lacks.
-    shaped = Broadcast.instantiate(Broadcast.Broadcasted(broadcast.style, broadcast.f, broadcast.args, axes(destination)))
-    indices = CartesianIndices(destination)
-    return A(ntuple(at -> @inbounds(shaped[indices[at]]), Val(length(A))))
-end
-
-function into!!(destination::A, source::Union{AbstractArray, Number})::A where {A <: AbstractArray}
-    return into!!(destination, Broadcast.Broadcasted(identity, (source,)))
 end

@@ -19,7 +19,6 @@ end
     return fill!(array, zero(eltype(array)))
 end
 
-# `Into(array) .= 0` fails on a static array: the scalar broadcast does not fit its constructor.
 @inline function zero!!(array::A)::A where {A <: SArray}
     return zero(array)
 end

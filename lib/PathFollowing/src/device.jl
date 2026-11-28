@@ -27,7 +27,7 @@ end
 
 """`vector` set to the unit vector along `index`: one broadcast on any device, or a new static vector."""
 function unit!!(vector::V, index::Integer)::V where {E <: Real, V <: AbstractVector{E}}
-    return Into(vector) .= E.(eachindex(vector) .== index)
+    return into!!(vector, lazy_broadcast.(E.(eachindex(vector) .== index)))
 end
 
 # A broadcast over a static vector's indices builds a heap `SizedVector`.
@@ -69,29 +69,35 @@ function compensated_add((total, compensation)::Tuple{S, S}, entry::Real)::Tuple
 end
 
 """
-    Into(destination) .= expression
+    into!!(destination, lazy_broadcast.(expression))
+    into!!(destination, source)
 
-Write the broadcast `expression` into `destination` and return the result. A mutable array (`Vector`, `Matrix`, a GPU
-array) changes in place and comes back itself, so the step allocates nothing. A static array (`SVector`, `SMatrix`)
-cannot change, so a new one of its type comes back, as a GPU kernel needs. Use the returned array:
+Write the broadcast `expression`, or an array or number `source`, into `destination` and return the result. A mutable
+array (`Vector`, `Matrix`, a GPU array) changes in place and comes back itself, so the step allocates nothing. A static
+array (`SVector`, `SMatrix`) cannot change, so a new one of its type comes back, as a GPU kernel needs. Use the returned
+array:
 
 ```julia
-residual = Into(residual) .= sum(abs2, point) - radius^2
+using LazyBroadcast: lazy_broadcast
+jacobian = into!!(jacobian, lazy_broadcast.(2 .* transpose(point)))
+residual = into!!(residual, sum(abs2, point) - radius^2)
 ```
+
+`lazy_broadcast` (LazyBroadcast.jl) hands `into!!` the fused broadcast unbuilt; without it, a dotted `source` allocates a
+temporary. `into!!` is a call because a `.=` expression's value differs across Julia versions.
 """
-struct Into{A <: AbstractArray}
-    destination::A
-end
-
-function Broadcast.materialize!(into::Into{A}, broadcast::Broadcast.Broadcasted)::A where {A <: AbstractArray}
-    return into!!(into.destination, broadcast)
-end
-
-"""`broadcast` written into `destination` in place, or into a new array of `destination`'s static type."""
 function into!!(destination::A, broadcast::Broadcast.Broadcasted)::A where {A <: AbstractArray}
     return Broadcast.materialize!(destination, broadcast)
 end
 
-function into!!(::A, broadcast::Broadcast.Broadcasted)::A where {A <: SArray}
-    return A(Broadcast.materialize(broadcast))
+function into!!(destination::A, broadcast::Broadcast.Broadcasted)::A where {A <: SArray}
+    # As `materialize!`: the broadcast takes the destination's axes, so a scalar or a singleton fills every entry.
+    # StaticArrays' broadcast takes its result type from a static argument, which a scalar source lacks.
+    shaped = Broadcast.instantiate(Broadcast.Broadcasted(broadcast.style, broadcast.f, broadcast.args, axes(destination)))
+    indices = CartesianIndices(destination)
+    return A(ntuple(at -> @inbounds(shaped[indices[at]]), Val(length(A))))
+end
+
+function into!!(destination::A, source::Union{AbstractArray, Number})::A where {A <: AbstractArray}
+    return into!!(destination, Broadcast.Broadcasted(identity, (source,)))
 end

@@ -109,7 +109,7 @@ function CommonSolve.init(
     length(problem.direction) == length(start) || throw(DimensionMismatch("start and direction differ in length"))
     work = workspace(start, E)
     tracer = Tracer(
-        problem, algorithm, Into(zero_point(start, E)) .= start, zero_point(start, E),
+        problem, algorithm, into!!(zero_point(start, E), start), zero_point(start, E),
         min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E), frozen_metric(algorithm.metric, start),
         frozen_metric(algorithm.turn_metric, start), work, linear_state(algorithm.linear_solver, work),
     )
@@ -125,7 +125,7 @@ function started(tracer::T)::Result{T, StepFailure.Type{E}} where {E <: Real, T 
     finite || return Err(StepFailure.NotFiniteStart{E}())
     tracer, oriented = tangent_solve!!(tracer, tracer.problem.direction)
     is_error(oriented) && return Err(StepFailure.SingularStart{E}())
-    @reset tracer.tangent = Into(tracer.tangent) .= tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)
+    @reset tracer.tangent = into!!(tracer.tangent, lazy_broadcast.(tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)))
     @reset tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
@@ -179,7 +179,7 @@ function step!!(
     taken = tracer.step_length
     shorter = true
     while shorter
-        @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ tracer.step_length .* tracer.tangent
+        @reset tracer.work.predicted = into!!(tracer.work.predicted, lazy_broadcast.(tracer.point .+ tracer.step_length .* tracer.tangent))
         # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
         if unresolved(tracer.point, tracer.work.predicted, algorithm.min_step_ulps)
             return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
@@ -246,7 +246,7 @@ function cut_predictor!!(tracer::T, bound::Bound{E})::Tuple{T, E} where {E <: Re
     from = element(tracer.point, coordinate)
     fraction = (value - from) / (element(tracer.work.predicted, coordinate) - from)
     taken = fraction * tracer.step_length
-    @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ taken .* tracer.tangent
+    @reset tracer.work.predicted = into!!(tracer.work.predicted, lazy_broadcast.(tracer.point .+ taken .* tracer.tangent))
     @reset tracer.work.predicted = set_element!!(tracer.work.predicted, coordinate, value)
     @reset tracer.work.row = unit!!(tracer.work.row, coordinate)
     return tracer, taken
@@ -318,15 +318,15 @@ function split_refused!!(
         tracer::T, check::HalfStepCheck{E}, factor::E, bound::Union{Nothing, Bound{E}}, lands::Bool, taken::E,
     )::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
     split_fires(check, factor) || return tracer, false
-    @reset tracer.work.split_point = Into(tracer.work.split_point) .= tracer.work.iterate
-    @reset tracer.work.split_tangent = Into(tracer.work.split_tangent) .= tracer.work.candidate
-    @reset tracer.work.split_previous = Into(tracer.work.split_previous) .= tracer.work.previous
+    @reset tracer.work.split_point = into!!(tracer.work.split_point, tracer.work.iterate)
+    @reset tracer.work.split_tangent = into!!(tracer.work.split_tangent, tracer.work.candidate)
+    @reset tracer.work.split_previous = into!!(tracer.work.split_previous, tracer.work.previous)
     tracer, halves = half_steps!!(tracer, lands ? bound : nothing, taken)
     # Negated so a NaN distance refuses; a failed half step never reaches the distance.
     refuses = !(halves && correction_length(tracer.algorithm.corrector.distance, tracer, tracer.work.iterate, tracer.work.split_point) <= check.tolerance)
-    @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.split_point
-    @reset tracer.work.candidate = Into(tracer.work.candidate) .= tracer.work.split_tangent
-    @reset tracer.work.previous = Into(tracer.work.previous) .= tracer.work.split_previous
+    @reset tracer.work.iterate = into!!(tracer.work.iterate, tracer.work.split_point)
+    @reset tracer.work.candidate = into!!(tracer.work.candidate, tracer.work.split_tangent)
+    @reset tracer.work.previous = into!!(tracer.work.previous, tracer.work.split_previous)
     return tracer, refuses
 end
 
@@ -337,7 +337,7 @@ corrects there. Whether both converged, the second's point in `work.iterate`. `l
 lands there.
 """
 function half_steps!!(tracer::T, landing::Union{Nothing, Bound{E}}, taken::E)::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
-    @reset tracer.work.predicted = Into(tracer.work.predicted) .= tracer.point .+ (taken / 2) .* tracer.tangent
+    @reset tracer.work.predicted = into!!(tracer.work.predicted, lazy_broadcast.(tracer.point .+ (taken / 2) .* tracer.tangent))
     @reset tracer.work.row = metric_apply!!(tracer.work.row, tracer.metric, tracer.tangent)
     tracer, corrected = correct!!(tracer)
     corrected.refusal == NoRefusal || return tracer, false
@@ -356,9 +356,9 @@ predictor `taken` long and normal to the tangent, or the coordinate of a `Bound`
 """
 function to_hyperplane!!(tracer::T, ::Nothing, taken::E)::T where {E <: Real, T <: Tracer{E}}
     (; point, tangent, metric, work) = tracer
-    offset = Into(work.scratch) .= point .+ taken .* tangent .- work.iterate
+    offset = into!!(work.scratch, lazy_broadcast.(point .+ taken .* tangent .- work.iterate))
     along = metric_inner(metric, tangent, offset) / metric_inner(metric, tangent, work.candidate)
-    @reset tracer.work.predicted = Into(work.predicted) .= work.iterate .+ along .* work.candidate
+    @reset tracer.work.predicted = into!!(work.predicted, lazy_broadcast.(work.iterate .+ along .* work.candidate))
     @reset tracer.work.row = metric_apply!!(work.row, metric, tangent)
     return tracer
 end
@@ -367,7 +367,7 @@ function to_hyperplane!!(tracer::T, bound::Bound{E}, ::E)::T where {E <: Real, T
     (; coordinate, value) = bound
     (; work) = tracer
     along = (value - element(work.iterate, coordinate)) / element(work.candidate, coordinate)
-    @reset tracer.work.predicted = set_element!!(Into(work.predicted) .= work.iterate .+ along .* work.candidate, coordinate, value)
+    @reset tracer.work.predicted = set_element!!(into!!(work.predicted, lazy_broadcast.(work.iterate .+ along .* work.candidate)), coordinate, value)
     @reset tracer.work.row = unit!!(work.row, coordinate)
     return tracer
 end
@@ -383,7 +383,7 @@ else its refusal.
 """
 function correct!!(tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Tracer{E}}
     (; corrector, step_control) = tracer.algorithm
-    @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.predicted
+    @reset tracer.work.iterate = into!!(tracer.work.iterate, tracer.work.predicted)
     before, first_correction, contraction = E(NaN32), E(NaN32), E(NaN32)
     for iteration in 1:corrector.max_iterations
         tracer, finite = evaluate!!(tracer, tracer.work.iterate)
@@ -393,8 +393,8 @@ function correct!!(tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Trace
         rhs = negated_stack!!(work.rhs, work.residual, row_offset(work.row, work.predicted, work.iterate))
         tracer, solved = bordered_solve!!(tracer, bordered, rhs)
         solved || return tracer, refused(E, SingularSystem)
-        @reset tracer.work.previous = Into(tracer.work.previous) .= tracer.work.iterate
-        @reset tracer.work.iterate = Into(tracer.work.iterate) .= tracer.work.iterate .+ tracer.work.candidate
+        @reset tracer.work.previous = into!!(tracer.work.previous, tracer.work.iterate)
+        @reset tracer.work.iterate = into!!(tracer.work.iterate, lazy_broadcast.(tracer.work.iterate .+ tracer.work.candidate))
         correction = correction_length(corrector.distance, tracer, tracer.work.previous, tracer.work.iterate)
         if iteration == 1
             first_correction = correction
@@ -500,13 +500,13 @@ the next step from the predictor's length `taken`.
 """
 function accept_point!!(tracer::T, attempt::Attempt{E}, taken::E)::T where {E <: Real, T <: Tracer{E}}
     (; max_step_growth, max_step) = tracer.algorithm.step_control
-    @reset tracer.point = Into(tracer.point) .= tracer.work.iterate
+    @reset tracer.point = into!!(tracer.point, tracer.work.iterate)
     @reset tracer.orientation = attempt.orientation
     @reset tracer.metric = freeze_metric!!(tracer.metric, tracer.point)
     @reset tracer.turn_metric = freeze_metric!!(tracer.turn_metric, tracer.point)
     # Measured after the freeze, as the next reach check measures. Only `correct!!` writes `previous`: the iterate before.
     @reset tracer.settle_error = settle_error(tracer, tracer.work.previous, tracer.point)
-    @reset tracer.tangent = Into(tracer.tangent) .= tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)
+    @reset tracer.tangent = into!!(tracer.tangent, lazy_broadcast.(tracer.work.candidate ./ metric_norm(tracer.metric, tracer.work.candidate)))
     @reset tracer.step_length = min(taken / max(attempt.factor, inv(max_step_growth)), max_step)
     @reset tracer.steps = tracer.steps + 1
     return tracer

@@ -1,4 +1,5 @@
-using PathFollowing: Into
+using LazyBroadcast: lazy_broadcast
+using PathFollowing: into!!
 using StaticArrays: SArray, SMatrix, SVector, Size, StaticVector
 
 """
@@ -80,7 +81,7 @@ end
 
 """
 `strategy` set to the mixed strategy `softmax([0; logits[range]])` of a player whose logits in `range` are against its
-first strategy (`Into`). Use the returned strategy.
+first strategy (`into!!`). Use the returned strategy.
 """
 @inline function reference_softmax!!(strategy::V, logits::AbstractVector{E}, range::UnitRange{Int})::V where {E <: Real, V <: AbstractVector{E}}
     shift = zero(E)
@@ -92,7 +93,7 @@ first strategy (`Into`). Use the returned strategy.
         strategy = set_entry!!(strategy, exp(logits[index] - shift), firstindex(strategy) + offset)
     end
     total = sum(strategy)
-    return Into(strategy) .= strategy ./ total
+    return into!!(strategy, lazy_broadcast.(strategy ./ total))
 end
 
 """Each player's strategy of `strategies` set to its mixed strategy at the stacked `logits` (`reference_softmax!!`)."""

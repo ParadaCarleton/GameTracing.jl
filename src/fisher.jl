@@ -1,7 +1,7 @@
 using BifurcationKit: BifurcationKit
 using ErrorfreeArithmetic: two_hilo_diff, two_prod, two_sum
 using LogExpFunctions: log1pmx
-using PathFollowing: PathFollowing, Into
+using PathFollowing: PathFollowing, into!!
 using StaticArrays: SVector, StaticVector
 """The gap of strategy `index` at a point `[w; λ]`: `w[index]`, or zero for the reference strategy, `index = 0`."""
 function strategy_gap(point::AbstractVector{E}, index::Integer)::E where {E <: Real}
@@ -268,7 +268,7 @@ end
 
 function PathFollowing.freeze_metric!!(frozen::F, point::AbstractVector{E})::F where {E <: Real, F <: FrozenFisher{<:FisherMetric, E}}
     (; metric, probabilities, references, pivots) = frozen
-    copied = Into(frozen.point) .= point
+    copied = into!!(frozen.point, point)
     for (player, range) in enumerate(metric.ranges)
         normalizer = log_normalizer(point, range)
         pivots = set_entry!!(pivots, first(normalizer), player)
@@ -396,7 +396,7 @@ end
 
 """
 Player `player`'s block of `M v`, `gap_scale` times `(G J v)ᵢ = qᵢ dᵢ` (`d` as in `player_inner`), in `out[range]`
-(`Into`), and its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ qᵢ dᵢ` is the reference's `π_ref (pivot + mean)`. The
+(`into!!`), and its `Σᵢ wᵢ qᵢ dᵢ`. The deviations average to zero, so `Σᵢ qᵢ dᵢ` is the reference's `π_ref (pivot + mean)`. The
 pivot's entry closes that sum over the other rounded entries, and the gaps enter less the pivot's gap. A common move
 against an extinct reference then stays as small as its Fisher length, which rounded entries summed apart would bury.
 

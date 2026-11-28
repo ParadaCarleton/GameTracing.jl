@@ -19,7 +19,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 [compat]
 Accessors = "0.1"
 CommonSolve = "0.2.4"
-ConstructionBase = "1"
+ConstructionBase = "1.6"
 ErrorTypes = "0.5.2"
 GPUArraysCore = "0.2"
 KernelAbstractions = "0.9"

@@ -1,4 +1,5 @@
 using ErrorTypes: is_error, unwrap, unwrap_error
+using PathFollowing: PathFollowing
 using Random: Xoshiro
 
 """

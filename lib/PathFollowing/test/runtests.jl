@@ -58,6 +58,10 @@ function landing_bytes(tracer::Tracer, bound::Bound, max_steps::Integer)::Int
     return @allocated land!!(tracer, bound, max_steps)
 end
 
+# Julia 1.14.0-beta1 boxes the `Ok{Int8}` that a static `attempt_step!!` unwraps from `tangent_solve!!`: 16 bytes a step.
+# Stack: getproperty(::Ok{Int8}) at Base_compiler.jl:59, unwrap(::Option{Int8}) at ErrorTypes.jl:287, attempt_step!!.
+const BOXES_ORIENTATION = VERSION >= v"1.14.0-"
+
 """The `StepFailure` of `tracer`'s next step toward `bound`; an accepted step throws."""
 function failed_step(tracer::Tracer, bound::Union{Nothing, Bound} = nothing)::StepFailure.Type
     return unwrap_error(last(step!!(tracer, bound)))
@@ -750,7 +754,10 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
             # A static tracer allocates nothing either, and its steps infer.
             static_problem = CurveProblem(Circle(one(E)), SVector{2, E}(1, 0), SVector{2, E}(0, 1))
             static = unwrap(init(static_problem, algorithm(E; split_check = check, linear_solver = StaticLU()); first_step = E(1) / 10))
-            @test last(warm_bytes(static, bound)) == 0
+            bytes = last(warm_bytes(static, bound))
+            @test bytes == 0 broken = BOXES_ORIENTATION
+            # On 1.14 the boxed orientation is the step's one allocation.
+            BOXES_ORIENTATION && @test bytes == 16
             @inferred step!!(static, bound)
         end
     end
@@ -1033,7 +1040,12 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
             tracer, again = land!!(tracer, bound, steps)
             @test unwrap(again) == point && tracer.steps == steps
             # The returned copy of a mutable point allocates; a static landing allocates nothing.
-            start isa SVector && @test landing_bytes(tracer, Bound(2, E(4) / 5), 40) == 0
+            start isa SVector || continue
+            farther = Bound(2, E(4) / 5)
+            bytes, steps = landing_bytes(tracer, farther, 40), first(land!!(tracer, farther, 40)).steps - tracer.steps
+            @test bytes == 0 broken = BOXES_ORIENTATION
+            # On 1.14 each step boxes its orientation once and allocates nothing else.
+            BOXES_ORIENTATION && @test bytes == 16 * steps
         end
     end
 
@@ -1077,8 +1089,9 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         device_landings = similar(JLArray(problems), eltype(expected))
         PathFollowing.land_kernel!(JLBackend(), 2)(device_landings, JLArray(problems), settings, JLArray(first_steps), bound, 40; ndrange = length(problems))
         @test isequal(collect(device_landings), expected)
-        # KernelAbstractions 0.9 drops the kernel's source lines. Once this fails, delete the COV_EXCL markers in landing.jl.
-        @test only(methods(PathFollowing.cpu_land_kernel!)).line == 0
+        # KernelAbstractions 0.9 drops the kernel's source lines: its method points to no file (Julia 1.13) or into
+        # MacroTools (1.14). Once it points to landing.jl, delete the COV_EXCL markers there.
+        @test !endswith(string(only(methods(PathFollowing.cpu_land_kernel!)).file), "landing.jl")
     end
 
     @testset "land_batch aborts loud when a callback throws in a work item past the host's check" begin

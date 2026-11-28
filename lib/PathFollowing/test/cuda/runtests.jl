@@ -4,6 +4,7 @@ using PathFollowing
 using CommonSolve: init
 using CUDA: CUDA, CUDABackend, CuArray
 using ErrorTypes: is_error, unwrap
+using GPUCompiler: GPUCompiler
 using KernelAbstractions: KernelAbstractions, @groupsize, @index, @kernel, @localmem
 using LinearSolve: LUFactorization
 using Printf: @printf
@@ -81,7 +82,7 @@ allocates(ir::AbstractString)::Bool = any(name -> occursin(name, ir), ("gpu_gc_p
 
 # The configuration the README tells users to launch on.
 backend = CUDABackend(; always_inline = true)
-println(CUDA.name(CUDA.device()), ", CUDA ", CUDA.runtime_version())
+println(CUDA.name(CUDA.device()), ", CUDA ", CUDA.runtime_version(), ", CUDA.jl ", pkgversion(CUDA), ", GPUCompiler ", pkgversion(GPUCompiler))
 
 """The CUDA parity cases: `parity_cases` and the 16-coordinate `wide_chain_case`."""
 function cases(::Type{E})::Tuple where {E <: Real}

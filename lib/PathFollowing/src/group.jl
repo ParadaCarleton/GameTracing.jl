@@ -31,6 +31,7 @@ One workgroup's memory for a trace that each of its `lanes` runs in step: flat b
 and the `barrier` between lanes (`LaneBarrier`).
 In a kernel the buffers are `@localmem` arrays; on the host they are `Vector`s, with one lane and `LoneLane()`.
 `reset_memory!` empties it, and `group_array` takes arrays from it.
+On CUDA, launch on `CUDABackend(; always_inline = true)`, which asks the compiler to inline every device call (README).
 """
 struct GroupMemory{E <: Real, F <: AbstractVector{E}, I <: AbstractVector{Int}, C <: AbstractVector{Int}, B <: LaneBarrier}
     floats::F

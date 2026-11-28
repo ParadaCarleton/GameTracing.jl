@@ -179,11 +179,13 @@ function group_array(memory::M, ::Type{E}, dims::Dims{N})::GroupArray{E, N, M} w
     all(>=(0), dims) || throw(ArgumentError("a group array's dimensions are not negative"))
     count = foldl(checked_mul, dims; init = 1)
     count <= length(memory.floats) - offset || throw(ArgumentError("the group memory is full"))
+    # The `Int32` fields throw before the cursor moves, so a refused array takes no entries.
+    handle = GroupHandle{E, N}(Int32(offset), map(Int32, dims))
     # Every lane reads the cursor before lane 1 moves it, and sees it moved after.
     synchronize_lanes(memory.barrier)
     memory.lane == 1 && (memory.cursor[1] = offset + count)
     synchronize_lanes(memory.barrier)
-    return GroupArray{E, N, M}(memory, GroupHandle{E, N}(Int32(offset), map(Int32, dims)))
+    return GroupArray{E, N, M}(memory, handle)
 end
 
 function group_array(::GroupMemory, ::Type{<:Real}, ::Dims)::Union{}

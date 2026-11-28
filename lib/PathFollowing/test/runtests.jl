@@ -850,6 +850,10 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test (taken.handle, memory.cursor) == (GroupHandle{E, 1}(0, (3,)), [3])
         @test group_array(memory, E, (5,)).handle.offset == 3
         @test_throws "the group memory is full" group_array(memory, E, (1,))
+        # A dimension past `Int32` throws before the cursor moves; a `LinRange` stands in for a buffer of 2^31 entries.
+        huge = GroupMemory(LinRange{E}(0, 0, 2^31), zeros(Int, 1), 1, 1, LoneLane())
+        @test_throws InexactError group_array(huge, E, (2^31,))
+        @test huge.cursor == [0]
         other = E === Float32 ? Float64 : Float32
         @test_throws "its own float type" group_array(memory, other, (1,))
         @test_throws "its own float type" group_array(memory, Int, (1,))

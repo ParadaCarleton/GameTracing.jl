@@ -67,6 +67,9 @@ over the lanes between two barriers. Write a group array through `Into`, `fill!`
 and an `Into` source must not overlap it. `GroupLU` gives lane `j` column `j` of each elimination. Group memory never
 frees an array: call `reset_memory!` before each trace. On the host or the CPU backend, use one lane and `LoneLane()`,
 because that backend runs no barrier outside a kernel's own body.
+On CUDA, launch the kernel on `CUDABackend(; always_inline = true)`. On an RTX 5050 with GPUCompiler 2.10, inlined
+device calls cut the tracer's local memory from about 80 KB to 1 to 4 KB per lane, and a correction ran 29 times faster at
+10 coordinates and 15 times faster at 16.
 
 ```julia
 using StaticArrays: SVector

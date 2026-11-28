@@ -79,7 +79,8 @@ end
 """Whether `ir` calls an allocator: the GC pool, `malloc`, or CUDA's device heap."""
 allocates(ir::AbstractString)::Bool = any(name -> occursin(name, ir), ("gpu_gc_pool_alloc", "gpu_malloc", "@malloc"))
 
-backend = CUDABackend()
+# The configuration the README tells users to launch on.
+backend = CUDABackend(; always_inline = true)
 println(CUDA.name(CUDA.device()), ", CUDA ", CUDA.runtime_version())
 
 """The CUDA parity cases: `parity_cases` and the 16-coordinate `wide_chain_case`."""

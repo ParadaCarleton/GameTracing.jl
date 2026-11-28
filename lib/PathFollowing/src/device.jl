@@ -17,18 +17,23 @@ calls fuse: an undotted `a + b` of two arrays builds its array first, as in Base
 macro into!!(assignment)
     Meta.isexpr(assignment, :.=, 2) || throw(ArgumentError("@into!! takes `destination .= expression`, not `$assignment`"))
     destination, expression = assignment.args
-    # A typed literal `E[1, 2]` parses as indexing `x[i]` does; `typed_literal` tells them apart by the type of `E`.
-    target = Meta.isexpr(destination, :ref) ? :($typed_literal($(map(esc, destination.args)...))) : esc(destination)
+    # A typed literal `E[1, 2]` parses as indexing `x[i]` does. `literal_type` checks `E` before any entry runs, and
+    # the entries stay inside the brackets, where `end` means `lastindex`.
+    target = if Meta.isexpr(destination, :ref)
+        esc(Expr(:ref, Expr(:call, literal_type, destination.args[1]), destination.args[2:end]...))
+    else
+        esc(destination)
+    end
     # `identity.` makes a bare array or number a broadcast, so `into!!` takes no eagerly built source.
     source = dotted_call(expression) ? esc(expression) : :($identity.($(esc(expression))))
     return :($into!!($target, $lazy_broadcast.($source)))
 end
 
-"""The typed literal `type[entries...]`, an `@into!!` destination that reads like indexing."""
-typed_literal(type::Type, entries::Any...)::AbstractArray = type[entries...]
+"""`type`, whose `type[entries...]` is a typed literal: an `@into!!` destination that reads like indexing."""
+literal_type(type::Type)::Type = type
 
 """Throws: `@into!! x[i] .= ...` would fill a copy of `x[i]`, as `x[i]` builds one. A view writes through to `x`."""
-function typed_literal(indexed::Any, ::Any...)::Union{}
+function literal_type(indexed::Any)::Union{}
     throw(ArgumentError(lazy"@into!! writes a whole array, not an indexed $(typeof(indexed)); write `@into!! (@view x[i]) .= ...`"))
 end
 

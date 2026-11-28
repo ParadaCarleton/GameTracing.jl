@@ -1,6 +1,5 @@
 # Test systems and settings for the host suite (`runtests.jl`) and the CUDA script (`cuda/runtests.jl`).
 # The includer loads PathFollowing, LinearSolve, StaticArrays and CommonSolve.
-using LazyBroadcast: lazy_broadcast
 
 """
 A circle of `radius` about the origin in `(x, y)`: `H = x² + y² - radius²`. Broadcasts and reductions only, so it
@@ -12,12 +11,12 @@ end
 
 function (circle::Circle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     # With `init`: from 16 entries Base's `sum` calls its recursive `mapreduce_impl`, which a GPU stack cannot bound.
-    return (into!!(residual, sum(abs2, point; init = zero(E)) - circle.radius^2), into!!(jacobian, lazy_broadcast.(2 .* transpose(point))))
+    return (@into!!(residual .= sum(abs2, point; init = zero(E)) - circle.radius^2), @into!!(jacobian .= 2 .* transpose(point)))
 end
 
-"""`residual` and `jacobian`, one row of two, set to `entry` and `row` (`into!!`): a test system's return on any storage."""
+"""`residual` and `jacobian`, one row of two, set to `entry` and `row` (`@into!!`): a test system's return on any storage."""
 function one_row!!(residual::R, jacobian::J, entry::E, row::NTuple{2, E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    return (into!!(residual, SVector(entry)), into!!(jacobian, SMatrix{1, 2, E}(row...)))
+    return (@into!!(residual .= SVector(entry)), @into!!(jacobian .= SMatrix{1, 2, E}(row...)))
 end
 
 """The line `x = y`: `H = x - y`."""
@@ -167,8 +166,8 @@ indices only, so it runs on any storage. `chain_start` gives a point on it.
 struct TanhChain end
 
 function (::TanhChain)(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
-    residual = into!!(residual, lazy_broadcast.((row -> chain_residual(point, row)).(eachindex(residual))))
-    return residual, into!!(jacobian, lazy_broadcast.((index -> chain_slope(point, index[1], index[2])).(CartesianIndices(jacobian))))
+    residual = @into!! residual .= (row -> chain_residual(point, row)).(eachindex(residual))
+    return residual, @into!! jacobian .= (index -> chain_slope(point, index[1], index[2])).(CartesianIndices(jacobian))
 end
 
 """Row `row` of `TanhChain`'s residual at `point`."""

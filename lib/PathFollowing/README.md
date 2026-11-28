@@ -11,13 +11,12 @@ nothing.
 using PathFollowing
 using CommonSolve: init
 using ErrorTypes: is_error, unwrap
-using LazyBroadcast: lazy_broadcast
 using LinearSolve: LUFactorization
 
 # The unit circle: H(x, y) = x² + y² - 1 and its Jacobian, written into the arrays the tracer passes and returned.
 function circle!!(residual, jacobian, point)
-    residual = into!!(residual, point[1]^2 + point[2]^2 - 1)
-    jacobian = into!!(jacobian, lazy_broadcast.(2 .* transpose(point)))
+    residual = @into!! residual .= point[1]^2 + point[2]^2 - 1
+    jacobian = @into!! jacobian .= 2 .* transpose(point)
     return residual, jacobian
 end
 
@@ -64,8 +63,8 @@ one KernelAbstractions work item each, on the device that holds `problems`. It r
 A start in a workgroup's memory (`GroupVector`) runs one trace on a whole KernelAbstractions workgroup, with
 `linear_solver = GroupLU()`. Each lane builds a `GroupMemory` over the group's `@localmem` buffers, with its lane
 index and `GroupBarrier()`. Every lane then runs the same `init` and `step!!`. Each array write splits its entries
-over the lanes between two barriers. Write a group array through `into!!`, `fill!` or `copyto!`; it has no `setindex!`,
-and an `into!!` source must not overlap it. `GroupLU` gives lane `j` column `j` of each elimination. Group memory never
+over the lanes between two barriers. Write a group array through `@into!!`, `fill!` or `copyto!`; it has no `setindex!`,
+and an `@into!!` source must not overlap it. `GroupLU` gives lane `j` column `j` of each elimination. Group memory never
 frees an array: call `reset_memory!` before each trace. On the host or the CPU backend, use one lane and `LoneLane()`,
 because that backend runs no barrier outside a kernel's own body.
 On CUDA, launch the kernel on `CUDABackend(; always_inline = true)`. On an RTX 5050 with GPUCompiler 2.10, inlined
@@ -79,7 +78,7 @@ struct Circle
     radius::Float32
 end
 (circle::Circle)(residual, jacobian, point) =
-    (into!!(residual, sum(abs2, point) - circle.radius^2), into!!(jacobian, lazy_broadcast.(2 .* transpose(point))))
+    (@into!!(residual .= sum(abs2, point) - circle.radius^2), @into!!(jacobian .= 2 .* transpose(point)))
 
 # Every part of a batch algorithm must be isbits: a callable struct, static weights, StaticLU.
 struct Settled

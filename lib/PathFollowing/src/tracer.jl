@@ -117,7 +117,7 @@ function CommonSolve.init(
         throw(ArgumentError("a direction in group memory lies in its start's memory"))
     work = workspace(start, E)
     tracer = Tracer(
-        stored(problem), algorithm, stored(into!!(zero_point(start, E), start)), stored(zero_point(start, E)),
+        stored(problem), algorithm, stored(@into!!(zero_point(start, E) .= start)), stored(zero_point(start, E)),
         min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E), stored(frozen_metric(algorithm.metric, start)),
         stored(frozen_metric(algorithm.turn_metric, start)), stored(work), linear_state(algorithm.linear_solver, work),
         memory_tag(memory),
@@ -158,7 +158,7 @@ function started(memory::TraceMemory, tracer::T)::Result{T, StepFailure.Type{E}}
     tracer, oriented = tangent_solve!!(memory, tracer, viewed(tracer.problem.direction))
     is_error(oriented) && return Err(StepFailure.SingularStart{E}())
     candidate = viewed(tracer.work.candidate)
-    @reset tracer.tangent = stored(into!!(viewed(tracer.tangent), lazy_broadcast.(candidate ./ metric_norm(viewed(tracer.metric), candidate))))
+    @reset tracer.tangent = stored(@into!!(viewed(tracer.tangent) .= candidate ./ metric_norm(viewed(tracer.metric), candidate)))
     @reset tracer.orientation = unwrap(oriented)
     return Ok(tracer)
 end
@@ -217,7 +217,7 @@ function step!!(
     shorter = true
     while shorter
         point, tangent = viewed(tracer.point), viewed(tracer.tangent)
-        @reset tracer.work.predicted = stored(into!!(viewed(tracer.work.predicted), lazy_broadcast.(point .+ tracer.step_length .* tangent)))
+        @reset tracer.work.predicted = stored(@into!!(viewed(tracer.work.predicted) .= point .+ tracer.step_length .* tangent))
         # Checked before the cut: a cut predictor lands on the bound, so its length shows no stagnation.
         if unresolved(point, viewed(tracer.work.predicted), algorithm.min_step_ulps)
             return tracer, Err(StepFailure.Unresolved{E}(last_refusal, refusals))
@@ -290,7 +290,7 @@ function cut_predictor!!(memory::TraceMemory, tracer::T, bound::Bound{E})::Tuple
     from = element(point, coordinate)
     fraction = (value - from) / (element(viewed(tracer.work.predicted), coordinate) - from)
     taken = fraction * tracer.step_length
-    predicted = into!!(viewed(tracer.work.predicted), lazy_broadcast.(point .+ taken .* tangent))
+    predicted = @into!! viewed(tracer.work.predicted) .= point .+ taken .* tangent
     @reset tracer.work.predicted = stored(set_element!!(predicted, coordinate, value))
     @reset tracer.work.row = stored(unit!!(viewed(tracer.work.row), coordinate))
     return tracer, taken
@@ -368,16 +368,16 @@ function split_refused!!(
     )::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
     split_fires(check, factor) || return tracer, false
     viewed = Base.Fix1(stored_view, memory)
-    @reset tracer.work.split_point = stored(into!!(viewed(tracer.work.split_point), viewed(tracer.work.iterate)))
-    @reset tracer.work.split_tangent = stored(into!!(viewed(tracer.work.split_tangent), viewed(tracer.work.candidate)))
-    @reset tracer.work.split_previous = stored(into!!(viewed(tracer.work.split_previous), viewed(tracer.work.previous)))
+    @reset tracer.work.split_point = stored(@into!!(viewed(tracer.work.split_point) .= viewed(tracer.work.iterate)))
+    @reset tracer.work.split_tangent = stored(@into!!(viewed(tracer.work.split_tangent) .= viewed(tracer.work.candidate)))
+    @reset tracer.work.split_previous = stored(@into!!(viewed(tracer.work.split_previous) .= viewed(tracer.work.previous)))
     tracer, halves = half_steps!!(memory, tracer, lands ? bound : nothing, taken)
     # Negated so a NaN distance refuses; a failed half step never reaches the distance.
     distance = tracer.algorithm.corrector.distance
     refuses = !(halves && correction_length(memory, distance, tracer, viewed(tracer.work.iterate), viewed(tracer.work.split_point)) <= check.tolerance)
-    @reset tracer.work.iterate = stored(into!!(viewed(tracer.work.iterate), viewed(tracer.work.split_point)))
-    @reset tracer.work.candidate = stored(into!!(viewed(tracer.work.candidate), viewed(tracer.work.split_tangent)))
-    @reset tracer.work.previous = stored(into!!(viewed(tracer.work.previous), viewed(tracer.work.split_previous)))
+    @reset tracer.work.iterate = stored(@into!!(viewed(tracer.work.iterate) .= viewed(tracer.work.split_point)))
+    @reset tracer.work.candidate = stored(@into!!(viewed(tracer.work.candidate) .= viewed(tracer.work.split_tangent)))
+    @reset tracer.work.previous = stored(@into!!(viewed(tracer.work.previous) .= viewed(tracer.work.split_previous)))
     return tracer, refuses
 end
 
@@ -390,7 +390,7 @@ lands there.
 function half_steps!!(memory::TraceMemory, tracer::T, landing::Union{Nothing, Bound{E}}, taken::E)::Tuple{T, Bool} where {E <: Real, T <: Tracer{E}}
     viewed = Base.Fix1(stored_view, memory)
     point, tangent, metric = viewed(tracer.point), viewed(tracer.tangent), viewed(tracer.metric)
-    @reset tracer.work.predicted = stored(into!!(viewed(tracer.work.predicted), lazy_broadcast.(point .+ (taken / 2) .* tangent)))
+    @reset tracer.work.predicted = stored(@into!!(viewed(tracer.work.predicted) .= point .+ (taken / 2) .* tangent))
     @reset tracer.work.row = stored(metric_apply!!(viewed(tracer.work.row), metric, tangent))
     tracer, corrected = correct!!(memory, tracer)
     corrected.refusal == NoRefusal || return tracer, false
@@ -411,9 +411,9 @@ function to_hyperplane!!(memory::TraceMemory, tracer::T, ::Nothing, taken::E)::T
     viewed = Base.Fix1(stored_view, memory)
     point, tangent, metric = viewed(tracer.point), viewed(tracer.tangent), viewed(tracer.metric)
     iterate, candidate = viewed(tracer.work.iterate), viewed(tracer.work.candidate)
-    offset = into!!(viewed(tracer.work.scratch), lazy_broadcast.(point .+ taken .* tangent .- iterate))
+    offset = @into!! viewed(tracer.work.scratch) .= point .+ taken .* tangent .- iterate
     along = metric_inner(metric, tangent, offset) / metric_inner(metric, tangent, candidate)
-    @reset tracer.work.predicted = stored(into!!(viewed(tracer.work.predicted), lazy_broadcast.(iterate .+ along .* candidate)))
+    @reset tracer.work.predicted = stored(@into!!(viewed(tracer.work.predicted) .= iterate .+ along .* candidate))
     @reset tracer.work.row = stored(metric_apply!!(viewed(tracer.work.row), metric, tangent))
     return tracer
 end
@@ -423,7 +423,7 @@ function to_hyperplane!!(memory::TraceMemory, tracer::T, bound::Bound{E}, ::E)::
     viewed = Base.Fix1(stored_view, memory)
     iterate, candidate = viewed(tracer.work.iterate), viewed(tracer.work.candidate)
     along = (value - element(iterate, coordinate)) / element(candidate, coordinate)
-    predicted = into!!(viewed(tracer.work.predicted), lazy_broadcast.(iterate .+ along .* candidate))
+    predicted = @into!! viewed(tracer.work.predicted) .= iterate .+ along .* candidate
     @reset tracer.work.predicted = stored(set_element!!(predicted, coordinate, value))
     @reset tracer.work.row = stored(unit!!(viewed(tracer.work.row), coordinate))
     return tracer
@@ -441,7 +441,7 @@ else its refusal.
 function correct!!(memory::TraceMemory, tracer::T)::Tuple{T, Attempt{E}} where {E <: Real, T <: Tracer{E}}
     (; corrector, step_control) = tracer.algorithm
     viewed = Base.Fix1(stored_view, memory)
-    @reset tracer.work.iterate = stored(into!!(viewed(tracer.work.iterate), viewed(tracer.work.predicted)))
+    @reset tracer.work.iterate = stored(@into!!(viewed(tracer.work.iterate) .= viewed(tracer.work.predicted)))
     before, first_correction, contraction = E(NaN32), E(NaN32), E(NaN32)
     for iteration in 1:corrector.max_iterations
         tracer, finite = evaluate!!(memory, tracer, viewed(tracer.work.iterate))
@@ -451,9 +451,9 @@ function correct!!(memory::TraceMemory, tracer::T)::Tuple{T, Attempt{E}} where {
         rhs = negated_stack!!(work.rhs, work.residual, row_offset(work.row, work.predicted, work.iterate))
         tracer, solved = bordered_solve!!(memory, tracer, stored(bordered), stored(rhs))
         solved || return tracer, refused(E, SingularSystem)
-        @reset tracer.work.previous = stored(into!!(viewed(tracer.work.previous), viewed(tracer.work.iterate)))
+        @reset tracer.work.previous = stored(@into!!(viewed(tracer.work.previous) .= viewed(tracer.work.iterate)))
         iterate = viewed(tracer.work.iterate)
-        @reset tracer.work.iterate = stored(into!!(iterate, lazy_broadcast.(iterate .+ viewed(tracer.work.candidate))))
+        @reset tracer.work.iterate = stored(@into!!(iterate .= iterate .+ viewed(tracer.work.candidate)))
         previous, iterate = viewed(tracer.work.previous), viewed(tracer.work.iterate)
         correction = correction_length(memory, corrector.distance, tracer, previous, iterate)
         if iteration == 1
@@ -566,14 +566,14 @@ the next step from the predictor's length `taken`.
 function accept_point!!(memory::TraceMemory, tracer::T, attempt::Attempt{E}, taken::E)::T where {E <: Real, T <: Tracer{E}}
     (; max_step_growth, max_step) = tracer.algorithm.step_control
     viewed = Base.Fix1(stored_view, memory)
-    @reset tracer.point = stored(into!!(viewed(tracer.point), viewed(tracer.work.iterate)))
+    @reset tracer.point = stored(@into!!(viewed(tracer.point) .= viewed(tracer.work.iterate)))
     @reset tracer.orientation = attempt.orientation
     @reset tracer.metric = stored(freeze_metric!!(viewed(tracer.metric), viewed(tracer.point)))
     @reset tracer.turn_metric = stored(freeze_metric!!(viewed(tracer.turn_metric), viewed(tracer.point)))
     # Measured after the freeze, as the next reach check measures. Only `correct!!` writes `previous`: the iterate before.
     @reset tracer.settle_error = settle_error(memory, tracer, viewed(tracer.work.previous), viewed(tracer.point))
     candidate = viewed(tracer.work.candidate)
-    @reset tracer.tangent = stored(into!!(viewed(tracer.tangent), lazy_broadcast.(candidate ./ metric_norm(viewed(tracer.metric), candidate))))
+    @reset tracer.tangent = stored(@into!!(viewed(tracer.tangent) .= candidate ./ metric_norm(viewed(tracer.metric), candidate)))
     @reset tracer.step_length = min(taken / max(attempt.factor, inv(max_step_growth)), max_step)
     @reset tracer.steps = tracer.steps + 1
     return tracer

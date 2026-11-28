@@ -6,7 +6,6 @@ using ErrorTypes: is_error, unwrap, unwrap_error
 using GPUArraysCore: allowscalar
 using JLArrays: JLArray, JLBackend
 using KernelAbstractions: KernelAbstractions, @groupsize, @index, @kernel, @localmem
-using LazyBroadcast: lazy_broadcast
 using LinearAlgebra: LinearAlgebra, det
 using LinearSolve: LUFactorization, QRFactorization
 using Moshi.Data: isa_variant
@@ -44,6 +43,13 @@ end
 function (circle::BrittleCircle{E})(residual::R, jacobian::J, point::AbstractVector{E})::Tuple{R, J} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}}
     circle.radius > 2 && throw(DomainError(circle.radius, "BrittleCircle past radius 2"))
     return Circle(circle.radius)(residual, jacobian, point)
+end
+
+"""The bytes a warm `@into!!` broadcast and a warm `@into!!` copy into `vector` allocate, after one of each to warm them."""
+function into_bytes(vector::AbstractVector, source::AbstractVector)::Tuple{Int, Int}
+    @into!! vector .= 2 .* vector .+ source
+    @into!! vector .= source
+    return @allocated(@into!!(vector .= 2 .* vector .+ source)), @allocated(@into!!(vector .= source))
 end
 
 """The bytes a warm `land!!` of `tracer` to `bound` allocates, after one landing to warm it."""
@@ -124,7 +130,7 @@ end
 
 function PathFollowing.freeze_metric!!(frozen::F, point::AbstractVector{E})::F where {E <: Real, F <: CountingFrozen{E}}
     frozen.freezes[] += 1
-    return CountingFrozen(frozen.freezes, into!!(frozen.weights, lazy_broadcast.(1 .+ abs.(point))))
+    return CountingFrozen(frozen.freezes, @into!!(frozen.weights .= 1 .+ abs.(point)))
 end
 
 function PathFollowing.metric_inner(frozen::CountingFrozen{E}, left::AbstractVector{E}, right::AbstractVector{E})::E where {E <: Real}
@@ -132,7 +138,7 @@ function PathFollowing.metric_inner(frozen::CountingFrozen{E}, left::AbstractVec
 end
 
 function PathFollowing.metric_apply!!(out::V, frozen::CountingFrozen{E}, vector::AbstractVector{E})::V where {E <: Real, V <: AbstractVector{E}}
-    return into!!(out, lazy_broadcast.(frozen.weights .* vector))
+    return @into!! out .= frozen.weights .* vector
 end
 
 """
@@ -900,7 +906,7 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test_throws "GroupLU needs a start in a workgroup's memory" init(CurveProblem(Circle(one(E)), E[1, 0], E[0, 1]), algorithm(E; linear_solver = GroupLU()); first_step = E(1) / 10)
         vector = group_vector(memory, E[1, 2, 3])
         @test PathFollowing.set_element!!(vector, 2, E(7)) === vector && collect(vector) == E[1, 7, 3]
-        @test into!!(vector, lazy_broadcast.(2 .* vector)) === vector && collect(vector) == E[2, 14, 6]
+        @test @into!!(vector .= 2 .* vector) === vector && collect(vector) == E[2, 14, 6]
         @test collect(fill!(vector, E(5))) == E[5, 5, 5] && collect(PathFollowing.unit!!(vector, 3)) == E[0, 0, 1]
     end
 
@@ -934,12 +940,12 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test collect(second_array) == E[3, 4]
         @test_throws "setindex!" (first_array[1] = E(9))
         vector = group_vector(memory, E[1, 2, 3])
-        @test_throws "reads an array that overlaps it" into!!(vector, view(vector, 3:-1:1))
-        @test_throws "reads an array that overlaps it" into!!(vector, view(memory.floats, (vector.handle.offset + 3):-1:(vector.handle.offset + 1)))
+        @test_throws "reads an array that overlaps it" @into!! vector .= view(vector, 3:-1:1)
+        @test_throws "reads an array that overlaps it" @into!! vector .= view(memory.floats, (vector.handle.offset + 3):-1:(vector.handle.offset + 1))
         floats = zeros(E, 8)
         viewed = GroupMemory(view(floats, 1:8), zeros(Int, 1), 1, 1, LoneLane())
-        @test_throws "reads an array that overlaps it" into!!(group_vector(viewed, E[1, 2, 3]), view(floats, 3:-1:1))
-        @test_throws "reads an array that overlaps it" into!!(group_vector(viewed, E[1, 2]), group_vector(GroupMemory(view(floats, 5:8), zeros(Int, 1), 1, 1, LoneLane()), E[1, 2]))
+        @test_throws "reads an array that overlaps it" @into!! group_vector(viewed, E[1, 2, 3]) .= view(floats, 3:-1:1)
+        @test_throws "reads an array that overlaps it" @into!! group_vector(viewed, E[1, 2]) .= group_vector(GroupMemory(view(floats, 5:8), zeros(Int, 1), 1, 1, LoneLane()), E[1, 2])
         @test collect(vector) == E[1, 2, 3]
         @test_throws "not negative" group_array(memory, E, (-1,))
         @test_throws OverflowError group_array(memory, E, (typemax(Int), 2))
@@ -949,7 +955,7 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         refusals = fill(-2, 3)
         record_group_trace!(fill(E(NaN), 2, 3), refusals, host_memory(E), Circle(one(E)), E[NaN, 0], E[0, 1], algorithm(E; linear_solver = GroupLU()), E(1) / 4, nothing, 3)
         @test refusals == [-3, -2, -2]
-        @test collect(into!!(vector, lazy_broadcast.(vector .+ first_array[2] .* E[1, 2, 3]))) == E[3, 6, 9]
+        @test collect(@into!!(vector .= vector .+ first_array[2] .* E[1, 2, 3])) == E[3, 6, 9]
         @test collect(copyto!(vector, view(second_array, [2, 1, 2]))) == E[4, 3, 4]
         @test collect(copyto!(vector, E[7])) == E[7, 3, 4] && collect(copyto!(vector, E[])) == E[7, 3, 4]
         @test_throws BoundsError copyto!(first_array, E[1, 2, 3])
@@ -1127,22 +1133,38 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test Array(device_out) == E[2, 6]
     end
 
-    @testset "into!! writes a mutable array in place and rebuilds a static one" begin
+    @testset "@into!! writes a mutable array in place and rebuilds a static one; an eager source throws" begin
         vector = E[1, 2]
-        @test into!!(vector, lazy_broadcast.(2 .* vector)) === vector == E[2, 4]
+        @test @into!!(vector .= 2 .* vector) === vector == E[2, 4]
+        # A fused broadcast and a copy build no temporary.
+        @test into_bytes(vector, E[3, 4]) == (0, 0)
+        # An eager broadcast reaches `into!!` as a built array, and a number as a value: neither is a broadcast.
+        @test_throws MethodError PathFollowing.into!!(vector, 2 .* vector)
+        @test_throws MethodError PathFollowing.into!!(vector, zero(E))
+        @test_throws "@into!! takes `destination .= expression`" macroexpand(@__MODULE__, :(@into!! vector = 2 .* vector))
+        # A dotted call reaches `lazy_broadcast` bare, so it fuses as written; any other source takes `identity.`.
+        lowers_through_identity(expression) = occursin("identity", string(macroexpand(@__MODULE__, :(@into!! vector .= $expression))))
+        @test !any(lowers_through_identity, (:(2 .* vector), :(.-vector), :(abs.(vector)), :(vector .+ 1 .- vector)))
+        @test all(lowers_through_identity, (:vector, :(zero(E)), :(tracer.work.point), :(transpose(vector)), :(a .. b)))
+        # Base's `x[2:2] .= 0` writes `x` through a view; `@into!!` refuses an indexed destination, and takes a view.
+        @test_throws "not an indexed Vector{$E}; write `@into!! (@view x[i]) .= ...`" @into!! vector[2:2] .= 0
+        @test vector == E[3, 4]
+        @test @into!!((@view vector[2:end]) .= 0) == E[0] && vector == E[3, 0]
+        # A number is no array to write into, as with Base's `.=`.
+        @test_throws MethodError @into!! zero(E) .= 1
         static = SVector{2, E}(1, 2)
-        @test into!!(static, lazy_broadcast.(2 .* static)) === SVector{2, E}(2, 4)
+        @test @into!!(static .= 2 .* static) === SVector{2, E}(2, 4)
         @test static == SVector{2, E}(1, 2)
         # A scalar or a singleton fills every entry, on static and mutable arrays alike.
-        @test into!!(static, zero(E)) === SVector{2, E}(0, 0)
-        @test into!!(static, SVector{1, E}(3)) === SVector{2, E}(3, 3)
-        @test into!!(SMatrix{1, 2, E}(1, 2), lazy_broadcast.(2 .* SMatrix{1, 2, E}(3, 4))) === SMatrix{1, 2, E}(6, 8)
-        @test into!!(SMatrix{2, 2, E}(1, 2, 3, 4), SVector{2, E}(5, 6)) === SMatrix{2, 2, E}(5, 6, 5, 6)
-        @test into!!(E[1, 2], zero(E)) == E[0, 0]
-        @test_throws DimensionMismatch into!!(static, SVector{3, E}(1, 2, 3))
-        @test_throws DimensionMismatch into!!(E[1, 2], E[1, 2, 3])
+        @test @into!!(static .= zero(E)) === SVector{2, E}(0, 0)
+        @test @into!!(static .= SVector{1, E}(3)) === SVector{2, E}(3, 3)
+        @test @into!!(SMatrix{1, 2, E}(1, 2) .= 2 .* SMatrix{1, 2, E}(3, 4)) === SMatrix{1, 2, E}(6, 8)
+        @test @into!!(SMatrix{2, 2, E}(1, 2, 3, 4) .= SVector{2, E}(5, 6)) === SMatrix{2, 2, E}(5, 6, 5, 6)
+        @test @into!!(E[1, 2] .= zero(E)) == E[0, 0]
+        @test_throws DimensionMismatch @into!! static .= SVector{3, E}(1, 2, 3)
+        @test_throws DimensionMismatch @into!! E[1, 2] .= E[1, 2, 3]
         device = JLArray(E[1, 2])
-        @test into!!(device, lazy_broadcast.(2 .* device)) === device
+        @test @into!!(device .= 2 .* device) === device
         @test Array(device) == E[2, 4]
         @test PathFollowing.unit!!(SVector{3, E}(5, 5, 5), 2) === SVector{3, E}(0, 1, 0)
         @test PathFollowing.set_element!!(SVector{2, E}(1, 2), 1, E(7)) === SVector{2, E}(7, 2)

@@ -59,9 +59,9 @@ const TraceMemory = Union{Nothing, GroupMemory}
 
 A view of a `GroupHandle` in a workgroup's memory (`stored_view`): an array that each lane holds, its entries at the
 handle's `offset + 1` onward, column major. Build it at each use, as it holds the whole memory, and store its handle
-(`stored`). Every lane reads every entry. A write through `into!!`, `set_element!!`, `fill!` or `copyto!` splits the
+(`stored`). Every lane reads every entry. A write through `@into!!`, `set_element!!`, `fill!` or `copyto!` splits the
 entries over the lanes between two barriers, so every lane sees the whole array after it. It has no `setindex!`: a
-write from every lane at once races. An `into!!` write throws when an argument shares the array's storage. A function
+write from every lane at once races. An `@into!!` write throws when an argument shares the array's storage. A function
 that captures the array and reads its other entries races; Base's broadcast checks no captures either.
 `similar` takes a new array from the same memory; the memory is full when its buffer is.
 """
@@ -288,7 +288,7 @@ end
 # Concrete types in the signature: a GPU cannot build a `UnionAll` such as `FixedWeights{<:GroupVector{E}}`.
 function frozen_metric(metric::FixedWeights, point::V)::FixedWeights{V} where {E <: Real, V <: GroupVector{E}}
     matching_weights(metric, point)
-    return FixedWeights(into!!(similar(point), metric.weights))
+    return FixedWeights(@into!!(similar(point) .= metric.weights))
 end
 
 """

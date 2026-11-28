@@ -3,7 +3,7 @@
 
 The curve `H(x) = 0` through `start`, traced toward `direction`. `system!!(residual, jacobian, x)` returns `H(x)`
 (length `n`) and its Jacobian `∂H/∂x` (`n × (n + 1)`) from one evaluation, as `(residual, jacobian)` in the types of
-the arrays it gets. Mutable arrays come back changed in place, and static arrays come back new (`Into`). `start` and
+the arrays it gets. Mutable arrays come back changed in place, and static arrays come back new (`into!!`). `start` and
 `direction` have `n + 1` entries; `direction` needs only a positive product with the tangent at `start` under the turn
 metric. A static `start` (`SVector`) needs `StaticLU`, and a start in a workgroup's memory (`GroupVector`) needs `GroupLU`.
 """

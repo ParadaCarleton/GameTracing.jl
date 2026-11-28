@@ -1,13 +1,14 @@
 using BifurcationKit: BifurcationKit
 using LinearAlgebra: mul!
-using PathFollowing: Into
+using LazyBroadcast: lazy_broadcast
+using PathFollowing: into!!
 using StaticArrays: SMatrix, SVector, StaticMatrix, StaticVector, pop, push
 """
     LogitGame(pass!!, target_precision)
 
 A logit game whose equilibria solve `z = λ G(z, λ)` at precision `λ = 1 / temperature`, `G` the payoff gains the
 logits scale. `pass!!(gain, gain_slope, gain_precision_slope, z, λ)` writes `G(z, λ)`, its Jacobian `∂G/∂z` and its
-slope `∂G/∂λ` into the three arrays, from one evaluation, and returns them (`Into`): mutable arrays changed in place,
+slope `∂G/∂λ` into the three arrays, from one evaluation, and returns them (`into!!`): mutable arrays changed in place,
 static arrays new. The mutable arrays are views into the trace's own residual and Jacobian (`branch_rows!!`), so a
 pass allocates nothing of its own. A pass that needs work arrays of its own gets them from `pass_workspace`. `G` must
 be finite at `λ = 0`, where the flat logits are the only equilibrium. `target_precision` is the precision a trace ends
@@ -38,7 +39,7 @@ reachable(precision::Real)::Bool = precision >= 0 && isfinite(precision)
 
 The work arrays `pass!!` needs beyond its outputs, in the element type, length and storage of `logits`, or `nothing`
 (the default) when it needs none. A pass with work arrays is called as
-`pass!!(work, gain, gain_slope, gain_precision_slope, z, λ)` and returns the work first, then its outputs (`Into`).
+`pass!!(work, gain, gain_slope, gain_precision_slope, z, λ)` and returns the work first, then its outputs (`into!!`).
 A trace builds them once per game and shares them across every evaluation of that game. So a pass may read what
 `pass_workspace` wrote, such as the game's constants, and writes every other work array before it reads it. The work
 belongs to its game: no other game's pass gets it. Each trace builds its own, so a game shared by two traces stays
@@ -97,7 +98,7 @@ end
 
 """
 Call `pass!!` on its outputs, with its work arrays `work` unless it has none (`nothing`). Return the work and the
-three outputs, each changed in place or new (`Into`). A pass that returns anything else, such as `nothing`, throws an
+three outputs, each changed in place or new (`into!!`). A pass that returns anything else, such as `nothing`, throws an
 `ArgumentError`. The check folds away for a pass whose return type infers.
 """
 function run_pass!!(
@@ -215,7 +216,7 @@ end
 
 `game`'s branch residual `F = w - G(λ w, λ)` at `x = [w; λ]` in `residual`, and its Jacobian `[∂F/∂w  ∂F/∂λ]` in
 `jacobian`: `∂F/∂w = I - λ ∂G/∂z` and `∂F/∂λ = -(∂G/∂z w + ∂G/∂λ)`. The logits `z = λ w` go into `logits`, and the
-pass runs on its work arrays `pass_work` (`pass_workspace`). Return the four arrays (`Into`). Mutable arrays hold
+pass runs on its work arrays `pass_work` (`pass_workspace`). Return the four arrays (`into!!`). Mutable arrays hold
 `G`, `∂G/∂z` and `∂G/∂λ` in the blocks of `F` and its Jacobian (`pass_blocks`), which then form in place. Static
 arrays form new ones.
 """
@@ -229,16 +230,16 @@ function branch_rows!!(
     )::Tuple{R, J, L, W} where {E <: Real, R <: AbstractVector{E}, J <: AbstractMatrix{E}, L <: AbstractVector{E}, W}
     gaps = payoff_gaps(point)
     precision = point[end]
-    logits = Into(logits) .= precision .* gaps
+    logits = into!!(logits, lazy_broadcast.(precision .* gaps))
     gain, gain_slope, precision_column = pass_blocks(residual, jacobian)
     pass_work, gain, gain_slope, precision_column = run_pass!!(game.pass!!, pass_work, gain, gain_slope, precision_column, logits, precision)
     # `∂F/∂λ` first: it reads `∂G/∂z`, which the next line overwrites.
     precision_column = precision_slope!!(precision_column, gain_slope, gaps)
-    gain_slope = Into(gain_slope) .= .-precision .* gain_slope
+    gain_slope = into!!(gain_slope, lazy_broadcast.(.-precision .* gain_slope))
     for diagonal in axes(gain_slope, 1)
         gain_slope = set_entry!!(gain_slope, gain_slope[diagonal, diagonal] + one(E), diagonal, diagonal)
     end
-    gain = Into(gain) .= gaps .- gain
+    gain = into!!(gain, lazy_broadcast.(gaps .- gain))
     return (joined_rows!!(residual, jacobian, gain, gain_slope, precision_column)..., logits, pass_work)
 end
 
@@ -255,7 +256,7 @@ function pass_blocks(residual::StaticVector{W, E}, ::StaticMatrix)::Tuple{Static
     return residual, zeros(SMatrix{W, W, E}), zeros(SVector{W, E})
 end
 
-"""`∂F/∂λ = -(∂G/∂z w + ∂G/∂λ)` from `∂G/∂λ` in `column`, `∂G/∂z` in `slope` and the gaps `w` (`Into`)."""
+"""`∂F/∂λ = -(∂G/∂z w + ∂G/∂λ)` from `∂G/∂λ` in `column`, `∂G/∂z` in `slope` and the gaps `w` (`into!!`)."""
 function precision_slope!!(column::C, slope::AbstractMatrix{E}, gaps::AbstractVector{E})::C where {E <: Real, C <: AbstractVector{E}}
     return mul!(column, slope, gaps, -one(E), -one(E))
 end

@@ -122,7 +122,9 @@ end
     lam = element(4)
     drawn = drawn_payoffs(rng, element, (2, 2), 3)
     poisoned = [(element[NaN32 0; 0 0], element[0 0; 0 0])]
-    unsettled = (; newton_iterations = 1, distance = CorrectorDistance{element}(; tolerance = eps(element), settle_ulps = 0), max_refusals = 2)
+    # The first refusal ends the trace. A move off precision zero always resolves, and one Newton iteration settles no draw.
+    # A retry's shorter step can fall below resolution, so `max_refusals = 2` ended 1 in 9000 draws UnresolvedStep.
+    unsettled = (; newton_iterations = 1, distance = CorrectorDistance{element}(; tolerance = eps(element), settle_ulps = 0), max_refusals = 0)
     # As in logit_solve_tests.jl: 2^10 / eps ulps resolve only the move off precision zero.
     unresolved = (; min_step_ulps = round(Int, 2^10 / eps(element)))
     # A normal-form start has `∂F/∂w = I`, so PathFollowing's SingularStart cannot occur.

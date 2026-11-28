@@ -1,11 +1,4 @@
-using CondaPkg: CondaPkg
-
-# Gambit's logit QRE is the test oracle, at the version checked by hand against a 50-digit trace.
-# The pin goes into the test environment, not a package-level CondaPkg.toml that every user of GameTracing would read.
-const PYGAMBIT_VERSION = "16.7.0"
-CondaPkg.add("python"; version = "=3.12", resolve = false)
-CondaPkg.add_pip("pygambit"; version = "==$PYGAMBIT_VERSION")
-# PythonCall resolves the environment and starts Python when it loads, so it loads after the pins.
+# Gambit's logit QRE is the test oracle. runtests.jl pins its version before any worker loads PythonCall.
 using PythonCall: pyconvert, pyimport
 
 """

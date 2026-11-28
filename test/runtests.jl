@@ -1,27 +1,19 @@
-using GameTracing
-using Test
+using CondaPkg: CondaPkg
+using GameTracing: GameTracing
+using ParallelTestRunner: runtests
 
-include("games.jl")
-include("fixtures.jl")
-include("causes.jl")
-include("rounding.jl")
-include("arms.jl")
-include("gambit.jl")
+# Gambit's logit QRE is the test oracle, at the version checked by hand against a 50-digit trace. The pin goes into the
+# test environment, not a package-level CondaPkg.toml that every user of GameTracing would read. It resolves here
+# once, as workers that each wrote CondaPkg.toml would race.
+CondaPkg.add("python"; version = "=3.12", resolve = false)
+CondaPkg.add_pip("pygambit"; version = "==16.7.0")
 
-# A suite past 30 minutes is stuck: a separate process SIGQUITs it, printing every thread's backtrace.
-const WATCHDOG = run(`sh -c "timeout 1800 tail --pid=$(getpid()) -f /dev/null || kill -QUIT $(getpid())"`; wait = false)
-
-const GAME = LinearGainPass(Float32[0 1; 1 0], Float32[0.5f0, -0.25f0])
-const TARGET_PRECISION = 2.0f0
-const WIDTH = 2
-
-# Every `*_tests.jl` file runs, in name order, so none can be left out; the code rules run last. One outer testset
-# keeps a failing file from aborting the rest: a failed top-level testset throws as it ends.
-# `Pkg.test(; test_args = ["name_tests.jl"])` runs only the named files, then the code rules.
-const SELECTED_FILES = isempty(ARGS) ? sort(filter(endswith("_tests.jl"), readdir(@__DIR__))) : ARGS
-@testset "GameTracing" begin
-    for file in SELECTED_FILES
-        include(joinpath(@__DIR__, file))
-    end
-    include("code_rules.jl")
-end
+# Each `*_tests.jl` file and the code rules run in a module of their own, spread over worker processes.
+# `Pkg.test(; test_args = ["trace", "--jobs=2"])` runs only the files whose names start with `trace`, on 2 workers.
+const TEST_FILES = [filter(endswith("_tests.jl"), readdir(@__DIR__)); "code_rules.jl"]
+runtests(
+    GameTracing, ARGS;
+    testsuite = Dict(chopsuffix(file, ".jl") => :(include($(joinpath(@__DIR__, file)))) for file in TEST_FILES),
+    init_worker_code = :(include($(joinpath(@__DIR__, "helpers.jl")))),
+    init_code = :(using GameTracing; Main.TestHelpers.share_helpers!(@__MODULE__)),
+)

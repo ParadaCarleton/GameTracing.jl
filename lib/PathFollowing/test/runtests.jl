@@ -805,6 +805,17 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         end
     end
 
+    @testset "a group tracer's bytes do not grow with its coordinates: its metrics' weights lie in group memory alone" begin
+        bytes = map((4, 16)) do N
+            memory = host_memory(E; floats = 2048)
+            start, direction = chain_start(E, N, 2π)
+            settings = algorithm(E; metric = FixedWeights(SVector{N, E}(ntuple(_ -> one(E), N))), linear_solver = GroupLU())
+            problem = CurveProblem(TanhChain(), group_vector(memory, start), group_vector(memory, direction))
+            return sizeof(unwrap(init(problem, settings; first_step = E(1) / 20)))
+        end
+        @test allequal(bytes)
+    end
+
     @testset "a trace's steps take no group memory past its start's, and 16 coordinates fit the CUDA tests' 2048 floats" begin
         for (system, start, direction, overrides, bound, limit, _) in (parity_cases(E)..., wide_chain_case(E))
             settings = algorithm(E; overrides..., linear_solver = GroupLU())

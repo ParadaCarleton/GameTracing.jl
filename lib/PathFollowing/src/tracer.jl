@@ -65,7 +65,8 @@ end
 The state of a trace: the last accepted `point`, its unit `tangent` in the step metric, the next `step_length`, the
 accepted `steps`, the `orientation` sign at `point` (zero without an orientation check), the corrector's estimate of
 the error left at `point` (`settle_error`; zero at the start), the step and turn metrics frozen at `point`, the work
-arrays (`Workspace`) and the linear solver's state. `init` builds one and `step!!` advances it.
+arrays (`Workspace`) and the linear solver's state. Its `algorithm` is `init`'s algorithm without the two metrics
+and the linear solver (`step_settings`). `init` builds one and `step!!` advances it.
 
 Its arrays take the start's array type: `similar` arrays on the start's device for a mutable start, static arrays for a
 static one. A step changes mutable arrays in place, so use only the tracer it returns. Read its fields; do not write
@@ -74,7 +75,7 @@ them. A start in group memory gives a tracer of `GroupHandle`s: pass its `GroupM
 names that memory (`memory_tag`), so a step in another memory throws. The tag is built from addresses: a memory
 freed and allocated again at those addresses passes the check, though the tracer's arrays in it are lost.
 """
-struct Tracer{E <: Real, V <: StoredVector{E}, P <: CurveProblem, A <: PseudoArclength, M, T, W <: Workspace, L}
+struct Tracer{E <: Real, V <: StoredVector{E}, P <: CurveProblem, A <: NamedTuple, M, T, W <: Workspace, L}
     problem::P
     algorithm::A
     point::V
@@ -117,12 +118,21 @@ function CommonSolve.init(
         throw(ArgumentError("a direction in group memory lies in its start's memory"))
     work = workspace(start, E)
     tracer = Tracer(
-        stored(problem), algorithm, stored(Into(zero_point(start, E)) .= start), stored(zero_point(start, E)),
+        stored(problem), step_settings(algorithm), stored(Into(zero_point(start, E)) .= start), stored(zero_point(start, E)),
         min(E(first_step), algorithm.step_control.max_step), 0, Int8(0), zero(E), stored(frozen_metric(algorithm.metric, start)),
         stored(frozen_metric(algorithm.turn_metric, start)), stored(work), linear_state(algorithm.linear_solver, work),
         memory_tag(memory),
     )
     return started(memory, tracer)
+end
+
+"""
+`algorithm`'s settings that a step reads: all but its metrics and linear solver, which only `init` reads. The tracer
+holds the frozen metrics and the solver's state, so a metric's per-coordinate weights do not take tracer bytes twice.
+"""
+function step_settings(algorithm::PseudoArclength)::NamedTuple
+    (; corrector, step_control, orientation_check, split_check, accept, min_step_ulps, max_refusals) = algorithm
+    return (; corrector, step_control, orientation_check, split_check, accept, min_step_ulps, max_refusals)
 end
 
 """Throw unless `memory` is the memory that `tracer` started in, by its tag (`memory_tag`)."""

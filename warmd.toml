@@ -1,0 +1,10 @@
+# The warm Julia daemon of lib/PathFollowing's tests (ParadaCarleton/WarmDaemon.jl). Run `warmd test` in a boxrun job.
+name = "pathfollowing"
+package = "lib/PathFollowing"
+project = "test"
+# A change to either restarts the daemon cold; the Manifests are untracked and resolve on each box.
+hashed = ["lib/PathFollowing/Project.toml", "lib/PathFollowing/test/Project.toml"]
+
+[test]
+mode = "script"
+entry = "test/runtests.jl"

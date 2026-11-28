@@ -872,6 +872,9 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test collect(vector) == E[1, 2, 3]
         @test_throws "not negative" group_array(memory, E, (-1,))
         @test_throws OverflowError group_array(memory, E, (typemax(Int), 2))
+        # A broadcast inlines the overlap check for views, so only a direct call covers its signature line.
+        @test PathFollowing.shares_entries(vector, view(vector, 1:2)) && PathFollowing.shares_entries(vector, memory.floats)
+        @test !PathFollowing.shares_entries(vector, E[1, 2, 3]) && !PathFollowing.shares_entries(vector, view(E[1, 2, 3], 1:2))
         refusals = fill(-2, 3)
         record_group_trace!(fill(E(NaN), 2, 3), refusals, host_memory(E), Circle(one(E)), E[NaN, 0], E[0, 1], algorithm(E; linear_solver = GroupLU()), E(1) / 4, nothing, 3)
         @test refusals == [-3, -2, -2]
@@ -891,6 +894,10 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test_throws "separate storage" GroupMemory(floats, integers, view(integers, 1:2), 1, 1, LoneLane())
         @test GroupMemory(floats, integers, integers[1:2], 1, 1, LoneLane()).cursor == [0, 0]
         @test GroupMemory(floats, integers, zeros(Int, 2), 2, 2, GroupBarrier()).lane == 2
+    end
+
+    @testset "a GroupBarrier throws when it synchronizes outside a kernel" begin
+        @test_throws "@synchronize used outside kernel" PathFollowing.synchronize_lanes(GroupBarrier())
     end
 
     @testset "a CPU-backend kernel of one-lane workgroups traces each start in group memory as a Vector start traces" begin

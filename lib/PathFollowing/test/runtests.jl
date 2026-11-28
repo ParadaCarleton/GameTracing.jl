@@ -1148,7 +1148,11 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test all(lowers_through_identity, (:vector, :(zero(E)), :(tracer.work.point), :(transpose(vector)), :(a .. b)))
         # Base's `x[2:2] .= 0` writes `x` through a view; `@into!!` refuses an indexed destination, and takes a view.
         @test_throws "not an indexed Vector{$E}; write `@into!! (@view x[i]) .= ...`" @into!! vector[2:2] .= 0
-        @test vector == E[3, 4]
+        # The refusal comes before any index runs, and `end` keeps its meaning inside the brackets.
+        indices = [1]
+        @test_throws "not an indexed Vector{$E}" @into!! vector[pop!(indices)] .= 0
+        @test_throws "not an indexed Vector{$E}" @into!! vector[1:end] .= 0
+        @test indices == [1] && vector == E[3, 4]
         @test @into!!((@view vector[2:end]) .= 0) == E[0] && vector == E[3, 0]
         # A number is no array to write into, as with Base's `.=`.
         @test_throws MethodError @into!! zero(E) .= 1

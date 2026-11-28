@@ -879,6 +879,8 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         @test_throws "the group memory it started in" land!!(other, tracer, Bound(2, zero(E)), 0)
         # Two memories over one buffer under separate cursors are separate memories.
         @test_throws "the group memory it started in" land!!(GroupMemory(memory.floats, zeros(Int, 1), 1, 1, LoneLane()), tracer, Bound(2, zero(E)), 0)
+        # A device memory's tag reads device pointers, which the host builds from an integer address.
+        @test PathFollowing.address(reinterpret(Core.LLVMPtr{E, 1}, UInt(64))) == PathFollowing.address(Ptr{E}(64)) == UInt(64)
         split_problem = CurveProblem(Circle(one(E)), group_vector(memory, E[1, 0]), group_vector(other, E[0, 1]))
         @test_throws "lies in its start's memory" init(split_problem, settings; first_step = E(1) / 10)
         bound = Bound(2, E(1) / 2)

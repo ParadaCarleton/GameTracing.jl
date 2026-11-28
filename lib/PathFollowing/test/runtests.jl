@@ -67,6 +67,30 @@ function host_memory(::Type{E}; floats::Integer = 512)::GroupMemory where {E <: 
     return GroupMemory(zeros(E, floats), zeros(Int, 1), 1, 1, LoneLane())
 end
 
+"""`γ_n = n u / (1 - n u)`, `u = eps(E) / 2`: the relative error bound of `n` rounded operations in `E` (Higham 2002, Lemma 3.1)."""
+function rounding_factor(::Type{E}, steps::Integer)::BigFloat where {E <: Real}
+    unit = big(eps(E)) / 2
+    steps * unit < 1 || throw(DomainError(steps, "γ_n needs n eps($E) / 2 < 1"))
+    return steps * unit / (1 - steps * unit)
+end
+
+"""
+`‖rhs - matrix solution‖∞` over its bound, exact in BigFloat, for a pivoted elimination whose multipliers are at most 1
+and whose upper factor `U` is `strict_upper`'s strict upper triangle with `pivots` on its diagonal.
+
+Higham (2002, Theorems 9.3 and 9.4) bounds `|rhs - matrix x|` by `γ_3n |L||U||x|`, so by `γ_3n sum(|U||x|)` when `|L| <= 1`.
+Gradual underflow adds an error `η <= nextfloat(0) / 2` to each product and quotient, never to a sum. Carried through the
+elimination and both substitutions, it adds at most `2η (n² + sum|p| + n sum|x| + sum|p x|)`, `p` the pivots.
+"""
+function lu_residual_ratio(matrix::AbstractMatrix{E}, rhs::AbstractVector{E}, strict_upper::AbstractMatrix{E}, pivots::AbstractVector{E}, solution::AbstractVector{E})::BigFloat where {E <: Real}
+    order = length(rhs)
+    upper, pivot, x = big.(LinearAlgebra.triu(strict_upper, 1)) + LinearAlgebra.Diagonal(big.(pivots)), big.(pivots), big.(solution)
+    residual = maximum(abs, big.(rhs) - big.(matrix) * x)
+    # `2η` is the least subnormal.
+    underflow = big(nextfloat(zero(E))) * (order^2 + sum(abs, pivot) + order * sum(abs, x) + sum(abs, pivot .* x))
+    return residual / (rounding_factor(E, 3 * order) * sum(abs.(upper) * abs.(x)) + underflow)
+end
+
 # One trace per workgroup, every lane of the group running it on the group's `@localmem`.
 # KernelAbstractions hoists `@localmem` above the body, so the element type comes from the `where` clause.
 @kernel function group_trace_kernel!(points::AbstractArray{E}, refusals, starts, directions, system, settings, first_step, bound, limit, barrier) where {E}
@@ -819,19 +843,22 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         end
     end
 
-    @testset "GroupLU solves as LAPACK's LU and gives the sign of the determinant, its row swaps counted" begin
+    @testset "GroupLU solves within its backward error bound and gives the sign of the determinant, its row swaps counted" begin
         entry = Data.Floats{E}(; minimum = -E(4), maximum = E(4), nans = false, infs = false)
-        @check max_examples = 60 function as_lapack(order = Data.Integers(1, 6), entries = Data.Vectors(entry; min_size = 49, max_size = 49))
+        @check max_examples = 60 function within_bound(order = Data.Integers(1, 6), entries = Data.Vectors(entry; min_size = 49, max_size = 49))
             matrix, rhs = reshape(entries[1:(order^2)], order, order), entries[43:(42 + order)]
             memory = host_memory(E)
             bordered, column = copyto!(group_array(memory, E, (order, order)), matrix), group_vector(memory, rhs)
             state = PathFollowing.GroupSolve(Int8(0), PathFollowing.stored(similar(column)))
             state, solution, solved = PathFollowing.linear_solve!!(state, bordered, column, similar(column))
-            # A failed solve has a zero sign. Rounding decides a near-singular system, so only a well-conditioned one must pass.
-            solved || return iszero(state.sign)
-            wide = Float64.(matrix)
-            LinearAlgebra.cond(wide) < 100 || return all(isfinite, solution)
-            return state.sign == sign(det(wide)) && isapprox(collect(solution), wide \ Float64.(rhs); rtol = 1000 * eps(E))
+            # A failed solve met a zero pivot, so a zero sign, or overflowed to a solution that is not finite.
+            solved || return iszero(state.sign) || !all(isfinite, collect(solution))
+            pivots = collect(PathFollowing.stored_view(memory, state.pivots))
+            lu_residual_ratio(matrix, rhs, collect(bordered), pivots, collect(solution)) <= 1 || return false
+            # Rounding can flip the determinant's sign only near a singular matrix.
+            LinearAlgebra.cond(Float64.(matrix)) < 100 || return true
+            # A Float64 determinant of subnormal entries underflows to zero, so the exact sign comes from BigFloat.
+            return state.sign == sign(det(big.(matrix)))
         end
         # Two row swaps cancel in the sign; a zero column fails the solve.
         memory = host_memory(E)
@@ -842,6 +869,11 @@ all(in(("Float32", "Float64", "BigFloat")), ARGS) || error(lazy"test_args name F
         singular = copyto!(group_array(memory, E, (2, 2)), E[1 0; 1 0])
         state, _, solved = PathFollowing.linear_solve!!(state, singular, group_vector(memory, E[1, 1]), group_vector(memory, E[0, 0]))
         @test !solved && state.sign == 0
+        # A CI draw: the least subnormal pivot overflows the solution, so the solve fails with the pivot's sign.
+        tiny = nextfloat(zero(E))
+        lone, past_range = copyto!(group_array(memory, E, (1, 1)), fill(-tiny, 1, 1)), group_vector(memory, [ldexp(one(E), exponent(floatmax(E)) + 1 + exponent(tiny))])
+        state, solution, solved = PathFollowing.linear_solve!!(state, lone, past_range, group_vector(memory, E[0]))
+        @test !solved && state.sign == -1 && collect(solution) == E[-Inf]
     end
 
     @testset "group memory hands out its entries once, refuses a foreign type and a full buffer, and needs GroupLU" begin

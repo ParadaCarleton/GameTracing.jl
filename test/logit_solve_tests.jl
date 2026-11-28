@@ -447,7 +447,9 @@ end
     narrow = NormalFormGains(map(table -> Float32.(table), payoffs))
     path_following = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = PathFollowingSettings{Float32}()))
     @test path_following.cause == TraceCause.TraceStuck{Float32}(GameTracing.UnresolvedStep)
-    @test path_following.engine.failure.last_refusal == PathFollowing.Diverging
+    # Its corrector refuses each step near the fold as Diverging or FarFromPredictor, each past its limit by 28% or more.
+    # Rounding picks the attempt that ends the trace, so either reason may come last.
+    @test path_following.engine.failure.last_refusal in (PathFollowing.Diverging, PathFollowing.FarFromPredictor)
     @test abs(path_following.stop.precision - 315.68f0) < 1
     bifurcation_kit = unwrap_error(logit_solve(narrow; maxregret = 1.0f-4, settings = BifurcationKitSettings{Float32}()))
     @test failed_as(bifurcation_kit, TraceCause.PrecisionExhausted)
